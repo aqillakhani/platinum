@@ -9,6 +9,8 @@ Sessions 6/8/13 to reject AI-generated assets before human review.
 from __future__ import annotations
 
 import json
+import math
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -42,9 +44,12 @@ def _ffprobe_duration(path: Path) -> float:
     result = subprocess.run(
         [
             "ffprobe",
-            "-v", "quiet",
-            "-print_format", "json",
-            "-show_entries", "format=duration",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_entries",
+            "format=duration",
             str(path),
         ],
         capture_output=True,
@@ -75,6 +80,67 @@ def check_duration_match(
             f"failed: {measured:.2f}s deviates {delta:.2f}s from target "
             f"{target_seconds:.2f}s (tolerance {tolerance_seconds:.2f}s)"
         )
-    return CheckResult(
-        passed=passed, metric=measured, threshold=target_seconds, reason=reason
+    return CheckResult(passed=passed, metric=measured, threshold=target_seconds, reason=reason)
+
+
+def _measure_lufs(path: Path) -> float:
+    """Return integrated LUFS via ffmpeg loudnorm. -inf for silent audio."""
+    if not path.exists():
+        raise FileNotFoundError(f"Audio file not found: {path}")
+    if shutil.which("ffmpeg") is None:
+        raise FileNotFoundError("ffmpeg not on PATH.")
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-nostats",
+            "-i",
+            str(path),
+            "-af",
+            "loudnorm=print_format=json",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
     )
+    # loudnorm prints JSON to stderr after the analysis pass.
+    match = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", result.stderr, re.DOTALL)
+    if not match:
+        raise RuntimeError(f"loudnorm output not parseable: {result.stderr[-400:]}")
+    data = json.loads(match.group(0))
+    raw = data.get("input_i", "-inf")
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float("-inf")
+
+
+def check_audio_levels(
+    audio_path: Path,
+    *,
+    target_lufs: float,
+    tolerance_db: float,
+) -> CheckResult:
+    """Pass if measured integrated LUFS is within tolerance_db of target_lufs."""
+    measured = _measure_lufs(Path(audio_path))
+    if math.isinf(measured) and measured < 0:
+        return CheckResult(
+            passed=False,
+            metric=measured,
+            threshold=target_lufs,
+            reason="failed: silent audio (-inf LUFS)",
+        )
+    delta = abs(measured - target_lufs)
+    passed = delta <= tolerance_db
+    if passed:
+        reason = (
+            f"passed: {measured:.1f} LUFS within {tolerance_db:.1f} dB of target {target_lufs:.1f}"
+        )
+    else:
+        reason = (
+            f"failed: {measured:.1f} LUFS deviates {delta:.1f} dB from target "
+            f"{target_lufs:.1f} (tolerance {tolerance_db:.1f} dB)"
+        )
+    return CheckResult(passed=passed, metric=measured, threshold=target_lufs, reason=reason)
