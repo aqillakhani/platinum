@@ -1,0 +1,191 @@
+"""Typer CLI entry point.
+
+Most commands are stubs until later sessions implement them. ``status`` is
+real from Session 1 so the checkpoint contract is exercisable end-to-end.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from platinum.config import Config
+from platinum.models.db import StageRunRow, StoryRow, create_all, sync_session
+from platinum.models.story import StageStatus
+from platinum.pipeline.orchestrator import CANONICAL_STAGE_NAMES
+
+app = typer.Typer(
+    name="platinum",
+    help="Cinematic AI short-film pipeline.",
+    no_args_is_help=True,
+)
+console = Console()
+
+
+_NOT_YET_IMPLEMENTED = (
+    "Command '{name}' is not implemented yet — scheduled for {session}. "
+    "See the implementation plan for details."
+)
+
+
+def _stub(name: str, session: str) -> None:
+    console.print(f"[yellow]{_NOT_YET_IMPLEMENTED.format(name=name, session=session)}[/yellow]")
+    raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# Real commands
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def status(
+    story: Optional[str] = typer.Option(
+        None, "--story", "-s", help="Show actual state for this story id (resolved from SQLite)."
+    ),
+) -> None:
+    """Show pipeline status.
+
+    With no args, prints the canonical 18-stage pipeline definition with
+    every stage marked PENDING. With ``--story <id>``, resolves the most
+    recent StageRun per stage from SQLite.
+    """
+    if story is None:
+        _print_canonical()
+        return
+
+    cfg = Config()
+    create_all(cfg.data_dir / "platinum.db")
+    with sync_session(cfg.data_dir / "platinum.db") as session:
+        story_row = session.get(StoryRow, story)
+        if story_row is None:
+            console.print(f"[red]Story not found:[/red] {story}")
+            raise typer.Exit(code=1)
+
+        # Latest StageRun per stage for this story
+        runs = (
+            session.query(StageRunRow)
+            .filter(StageRunRow.story_id == story)
+            .order_by(StageRunRow.id)
+            .all()
+        )
+    latest: dict[str, StageRunRow] = {}
+    for r in runs:
+        latest[r.stage] = r  # later rows overwrite earlier → latest wins
+
+    _print_story_status(story_row, latest)
+
+
+# ---------------------------------------------------------------------------
+# Stubs — one command per future session
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def fetch(
+    track: str = typer.Option(..., "--track", "-t", help="Track id (e.g. atmospheric_horror)."),
+    limit: int = typer.Option(10, "--limit", "-n", help="How many candidates to fetch."),
+) -> None:
+    """Fetch candidate source stories for a track."""
+    _stub("fetch", "Session 2 (source fetchers)")
+
+
+@app.command()
+def curate() -> None:
+    """Interactive curator — walk fetched candidates, approve/reject/skip."""
+    _stub("curate", "Session 3 (story curator CLI)")
+
+
+@app.command()
+def adapt(
+    story: str = typer.Argument(..., help="Story id to adapt."),
+) -> None:
+    """Adapt an approved story → polished narration script + scenes + visual prompts."""
+    _stub("adapt", "Session 4 (Claude integration)")
+
+
+@app.command()
+def render(
+    story: str = typer.Argument(..., help="Story id to render."),
+) -> None:
+    """Run the render pipeline (keyframes → video → upscale → voice → mix → grade)."""
+    _stub("render", "Sessions 6-14 (render pipeline)")
+
+
+@app.command()
+def review(
+    target: str = typer.Argument(..., help="What to review: 'keyframes' or 'final'."),
+    story: str = typer.Argument(..., help="Story id."),
+) -> None:
+    """Launch a review UI gate (Flask). 'keyframes' after stage 6, 'final' after stage 14."""
+    if target not in {"keyframes", "final"}:
+        console.print(f"[red]Unknown review target:[/red] {target} (use 'keyframes' or 'final')")
+        raise typer.Exit(code=1)
+    _stub("review", "Sessions 7 / 15 (review UIs)")
+
+
+@app.command()
+def publish(
+    story: str = typer.Argument(..., help="Story id to publish."),
+) -> None:
+    """Publish a finished story to YouTube."""
+    _stub("publish", "Session 16 (publisher)")
+
+
+@app.command("report-costs")
+def report_costs(
+    story: Optional[str] = typer.Option(None, "--story", "-s", help="Filter to one story."),
+) -> None:
+    """Sum Anthropic + cloud GPU costs across stories or for one story."""
+    _stub("report-costs", "Session 4 (cost tracking) / Session 17 (report)")
+
+
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+
+def _print_canonical() -> None:
+    table = Table(
+        title="Platinum pipeline — canonical stage definition",
+        show_lines=False,
+    )
+    table.add_column("#", justify="right", style="dim", width=4)
+    table.add_column("Stage", style="cyan")
+    table.add_column("Status", style="yellow")
+    for i, name in enumerate(CANONICAL_STAGE_NAMES, start=1):
+        table.add_row(str(i), name, StageStatus.PENDING.value.upper())
+    console.print(table)
+
+
+def _print_story_status(
+    story_row: StoryRow, latest: dict[str, "StageRunRow"]
+) -> None:
+    table = Table(
+        title=f"Story {story_row.id} — {story_row.track} ({story_row.status})",
+        show_lines=False,
+    )
+    table.add_column("#", justify="right", style="dim", width=4)
+    table.add_column("Stage", style="cyan")
+    table.add_column("Status", style="yellow")
+    table.add_column("Completed at", style="green")
+    table.add_column("Error", style="red")
+    for i, name in enumerate(CANONICAL_STAGE_NAMES, start=1):
+        run = latest.get(name)
+        if run is None:
+            status_label = StageStatus.PENDING.value.upper()
+            completed = ""
+            error = ""
+        else:
+            status_label = run.status.upper()
+            completed = run.completed_at.isoformat(timespec="seconds") if run.completed_at else ""
+            error = (run.error or "")[:60]
+        table.add_row(str(i), name, status_label, completed, error)
+    console.print(table)
+
+
+if __name__ == "__main__":
+    app()
