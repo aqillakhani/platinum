@@ -61,3 +61,37 @@ def test_calculate_cost_unknown_model_raises() -> None:
             input_tokens=1, output_tokens=1,
             cache_read_input_tokens=0, cache_creation_input_tokens=0,
         )
+
+
+def test_claude_usage_is_frozen_dataclass() -> None:
+    from platinum.utils.claude import ClaudeUsage
+    u = ClaudeUsage(
+        model="claude-opus-4-7",
+        input_tokens=100,
+        output_tokens=50,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+        cost_usd=0.0,
+    )
+    import dataclasses
+    assert dataclasses.is_dataclass(u)
+    import pytest
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        u.input_tokens = 200  # type: ignore[misc]
+
+
+def test_claude_result_holds_tool_input_and_usage() -> None:
+    from platinum.utils.claude import ClaudeResult, ClaudeUsage
+    r = ClaudeResult(
+        tool_input={"hello": "world"},
+        text="",
+        usage=ClaudeUsage(
+            model="claude-opus-4-7",
+            input_tokens=10, output_tokens=5,
+            cache_creation_input_tokens=0, cache_read_input_tokens=0,
+            cost_usd=0.001,
+        ),
+        raw={"id": "msg_123"},
+    )
+    assert r.tool_input == {"hello": "world"}
+    assert r.usage.cost_usd == 0.001
