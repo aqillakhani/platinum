@@ -47,6 +47,17 @@ class Config:
         # Global settings
         self.settings: dict[str, Any] = self._load_yaml("settings.yaml")
 
+        # Env-var overrides for live-rental hosts (set per smoke run).
+        # See docs/runbooks/vast-ai-keyframe-smoke.md for details.
+        _ENV_OVERRIDES: tuple[tuple[tuple[str, str], str], ...] = (
+            (("comfyui", "host"), "PLATINUM_COMFYUI_HOST"),
+            (("aesthetics", "host"), "PLATINUM_AESTHETICS_HOST"),
+        )
+        for (section, key), env_var in _ENV_OVERRIDES:
+            env_value = os.environ.get(env_var)
+            if env_value:
+                self.settings.setdefault(section, {})[key] = env_value
+
         # Per-track configs
         self.tracks: dict[str, dict[str, Any]] = {}
         tracks_dir = self.config_dir / "tracks"
