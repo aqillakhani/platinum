@@ -5,9 +5,16 @@ Only file in platinum that imports `anthropic`. Single integration point.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
+from platinum.models.db import ApiUsageRow, sync_session
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -99,3 +106,115 @@ def resolve_api_key() -> str:
             "Get a key at console.anthropic.com and add it to secrets/.env."
         )
     return key
+
+
+class ClaudeProtocolError(RuntimeError):
+    """Anthropic returned a response shape we don't understand."""
+
+
+def _attach_cache_control(system: list[dict]) -> list[dict]:
+    """Return a copy of `system` with cache_control on the final block.
+
+    Anthropic accepts up to 4 cache breakpoints; we put one at the end of
+    the system blocks so all preceding text (including track style guides)
+    is cached together.
+    """
+    if not system:
+        return []
+    out: list[dict] = [dict(b) for b in system]
+    out[-1] = {**out[-1], "cache_control": {"type": "ephemeral"}}
+    return out
+
+
+def _extract_tool_use(response: dict) -> tuple[dict, str]:
+    """Return (tool_input, fallback_text) from a Claude response or raise."""
+    content = response.get("content", [])
+    text_chunks: list[str] = []
+    for block in content:
+        if block.get("type") == "tool_use":
+            return dict(block.get("input", {})), ""
+        if block.get("type") == "text":
+            text_chunks.append(block.get("text", ""))
+    raise ClaudeProtocolError(
+        f"Expected tool_use in response.content, got: "
+        f"types={[b.get('type') for b in content]}, text={'; '.join(text_chunks)[:200]}"
+    )
+
+
+def _write_usage_row(
+    *,
+    db_path: Path,
+    story_id: str | None,
+    usage: ClaudeUsage,
+    when: datetime,
+) -> None:
+    """Best-effort ApiUsageRow write. Never fails the call."""
+    try:
+        with sync_session(db_path) as session:
+            session.add(
+                ApiUsageRow(
+                    story_id=story_id,
+                    provider="anthropic",
+                    model=usage.model,
+                    input_tokens=usage.input_tokens
+                    + usage.cache_creation_input_tokens
+                    + usage.cache_read_input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cost_usd=usage.cost_usd,
+                    ts=when,
+                )
+            )
+    except Exception as exc:
+        logger.warning("Failed to record ApiUsageRow (cost tracking only): %s", exc)
+
+
+async def call(
+    *,
+    model: str,
+    system: list[dict],
+    messages: list[dict],
+    tool: dict,
+    story_id: str | None,
+    stage: str,
+    db_path: Path,
+    recorder: Recorder | None = None,
+) -> ClaudeResult:
+    """One Claude call in tool-use forced mode.
+
+    With `recorder=None` (production), talks to the real SDK [Task 8].
+    With a recorder injected (tests / fixture-replay), the recorder owns
+    the request -> response transformation.
+    """
+    request = {
+        "model": model,
+        "max_tokens": 8192,
+        "system": _attach_cache_control(system),
+        "messages": messages,
+        "tools": [tool],
+        "tool_choice": {"type": "tool", "name": tool["name"]},
+    }
+
+    if recorder is None:
+        raise NotImplementedError(
+            "Live SDK path not wired yet; pass a recorder for tests."
+        )
+    response = await recorder(request)
+
+    tool_input, fallback = _extract_tool_use(response)
+    raw_usage = response.get("usage", {})
+    usage = ClaudeUsage(
+        model=model,
+        input_tokens=int(raw_usage.get("input_tokens", 0)),
+        output_tokens=int(raw_usage.get("output_tokens", 0)),
+        cache_creation_input_tokens=int(raw_usage.get("cache_creation_input_tokens", 0)),
+        cache_read_input_tokens=int(raw_usage.get("cache_read_input_tokens", 0)),
+        cost_usd=calculate_cost_usd(
+            model=model,
+            input_tokens=int(raw_usage.get("input_tokens", 0)),
+            output_tokens=int(raw_usage.get("output_tokens", 0)),
+            cache_creation_input_tokens=int(raw_usage.get("cache_creation_input_tokens", 0)),
+            cache_read_input_tokens=int(raw_usage.get("cache_read_input_tokens", 0)),
+        ),
+    )
+    _write_usage_row(db_path=db_path, story_id=story_id, usage=usage, when=datetime.now())
+    return ClaudeResult(tool_input=tool_input, text=fallback, usage=usage, raw=response)

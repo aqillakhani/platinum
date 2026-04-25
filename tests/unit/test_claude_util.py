@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from platinum.utils.claude import calculate_cost_usd
 
 
@@ -133,3 +135,147 @@ def test_resolve_api_key_missing_raises_clear_error(monkeypatch) -> None:
     import pytest
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
         resolve_api_key()
+
+
+@pytest.mark.asyncio
+async def test_call_uses_recorder_response_and_returns_claude_result(tmp_path) -> None:
+    from platinum.utils.claude import call
+
+    async def synthetic_recorder(request: dict) -> dict:
+        return {
+            "id": "msg_synthetic",
+            "content": [
+                {"type": "tool_use", "name": request["tool_choice"]["name"],
+                 "input": {"title": "T", "synopsis": "S"}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {
+                "input_tokens": 100, "output_tokens": 50,
+                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            },
+        }
+
+    db_path = tmp_path / "test.db"
+    from platinum.models.db import create_all
+    create_all(db_path)
+
+    result = await call(
+        model="claude-opus-4-7",
+        system=[{"type": "text", "text": "You are an editor."}],
+        messages=[{"role": "user", "content": "Hello"}],
+        tool={"name": "submit_story", "input_schema": {"type": "object"}},
+        story_id="story_test_001",
+        stage="story_adapter",
+        db_path=db_path,
+        recorder=synthetic_recorder,
+    )
+    assert result.tool_input == {"title": "T", "synopsis": "S"}
+    assert result.usage.input_tokens == 100
+    assert result.usage.output_tokens == 50
+    assert result.usage.cost_usd > 0
+
+
+@pytest.mark.asyncio
+async def test_call_raises_protocol_error_when_no_tool_use(tmp_path) -> None:
+    from platinum.utils.claude import ClaudeProtocolError, call
+
+    async def text_only(request: dict) -> dict:
+        return {
+            "id": "msg_text",
+            "content": [{"type": "text", "text": "Sorry, no tool use today."}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 5, "output_tokens": 5,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        }
+
+    db_path = tmp_path / "p.db"
+    from platinum.models.db import create_all
+    create_all(db_path)
+
+    with pytest.raises(ClaudeProtocolError, match="tool_use"):
+        await call(
+            model="claude-opus-4-7",
+            system=[{"type": "text", "text": ""}],
+            messages=[{"role": "user", "content": "x"}],
+            tool={"name": "t", "input_schema": {}},
+            story_id=None, stage="story_adapter",
+            db_path=db_path, recorder=text_only,
+        )
+
+
+@pytest.mark.asyncio
+async def test_call_request_carries_tool_choice_forced(tmp_path) -> None:
+    from platinum.utils.claude import call
+
+    captured = {}
+
+    async def capture(request: dict) -> dict:
+        captured.update(request)
+        return {
+            "id": "x",
+            "content": [{"type": "tool_use", "name": "t", "input": {}}],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 1, "output_tokens": 1,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        }
+
+    db_path = tmp_path / "p.db"
+    from platinum.models.db import create_all
+    create_all(db_path)
+
+    await call(
+        model="claude-opus-4-7",
+        system=[{"type": "text", "text": "S"}],
+        messages=[{"role": "user", "content": "M"}],
+        tool={"name": "t", "input_schema": {"type": "object"}},
+        story_id=None, stage="visual_prompts",
+        db_path=db_path, recorder=capture,
+    )
+    assert captured["tool_choice"] == {"type": "tool", "name": "t"}
+    assert captured["tools"] == [{"name": "t", "input_schema": {"type": "object"}}]
+    assert captured["model"] == "claude-opus-4-7"
+    assert captured["system"][-1]["cache_control"] == {"type": "ephemeral"}
+
+
+@pytest.mark.asyncio
+async def test_call_writes_api_usage_row(tmp_path) -> None:
+    from platinum.models.db import ApiUsageRow, create_all, sync_session
+    from platinum.utils.claude import call
+
+    async def synth(request):
+        return {
+            "id": "x",
+            "content": [{"type": "tool_use", "name": "t", "input": {"a": 1}}],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 1000, "output_tokens": 500,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        }
+
+    from datetime import datetime
+
+    from platinum.models.db import StoryRow
+
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+    with sync_session(db_path) as s:
+        s.add(StoryRow(id="story_x", track="atmospheric_horror", status="pending",
+                        created_at=datetime.now(), updated_at=datetime.now()))
+
+    await call(
+        model="claude-opus-4-7",
+        system=[{"type": "text", "text": "S"}],
+        messages=[{"role": "user", "content": "M"}],
+        tool={"name": "t", "input_schema": {}},
+        story_id="story_x", stage="story_adapter",
+        db_path=db_path, recorder=synth,
+    )
+
+    with sync_session(db_path) as s:
+        rows = s.query(ApiUsageRow).all()
+        assert len(rows) == 1
+        assert rows[0].model == "claude-opus-4-7"
+        assert rows[0].input_tokens == 1000
+        assert rows[0].output_tokens == 500
+        assert rows[0].provider == "anthropic"
+        assert rows[0].story_id == "story_x"
+        assert rows[0].cost_usd > 0
