@@ -9,7 +9,6 @@ from sqlalchemy import inspect
 
 from platinum.models.db import (
     ApiUsageRow,
-    Base,
     SceneRow,
     StageRunRow,
     StoryRow,

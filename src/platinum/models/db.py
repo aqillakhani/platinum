@@ -9,10 +9,10 @@ make paid API calls (see ``utils/claude.py`` in Session 4).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncIterator, Iterator, Optional
 
 from sqlalchemy import (
     DateTime,
@@ -41,7 +41,6 @@ from sqlalchemy.orm import (
 
 from platinum.models.story import StageStatus, Story
 
-
 # ---------------------------------------------------------------------------
 # Declarative base + tables
 # ---------------------------------------------------------------------------
@@ -59,7 +58,7 @@ class StoryRow(Base):
     status: Mapped[str] = mapped_column(String, default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime)
-    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
 
@@ -86,16 +85,16 @@ class StageRunRow(Base):
     )
     stage: Mapped[str] = mapped_column(String, index=True)
     status: Mapped[str] = mapped_column(String)
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ApiUsageRow(Base):
     __tablename__ = "api_usage"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    story_id: Mapped[Optional[str]] = mapped_column(
+    story_id: Mapped[str | None] = mapped_column(
         String,
         ForeignKey("stories.id", ondelete="SET NULL"),
         nullable=True,
@@ -206,7 +205,7 @@ def sync_from_story(
     session: Session,
     story: Story,
     *,
-    now: Optional[datetime] = None,
+    now: datetime | None = None,
 ) -> None:
     """Upsert the stories/scenes/stage_runs rows for a single Story.
 

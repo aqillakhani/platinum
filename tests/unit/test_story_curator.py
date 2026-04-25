@@ -21,7 +21,6 @@ from platinum.models.story import (
     Story,
 )
 
-
 # ---------------------------------------------------------------------------
 # apply_decision — pure transformation on the Story dataclass
 # ---------------------------------------------------------------------------
@@ -411,6 +410,7 @@ def test_render_story_card_includes_key_fields(story: Story) -> None:
 def quiet_console():
     """A Console that swallows output so tests don't dirty the captured log."""
     import os
+
     from rich.console import Console
 
     f = open(os.devnull, "w")

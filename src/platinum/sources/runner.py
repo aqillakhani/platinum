@@ -13,9 +13,9 @@ safe (no concurrent fetches expected) and human-greppable.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
 
 import httpx
 
@@ -23,7 +23,6 @@ from platinum.config import Config
 from platinum.models.db import create_all, sync_from_story, sync_session
 from platinum.models.story import Source, StageRun, StageStatus, Story
 from platinum.sources.registry import build_fetcher
-
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ def _default_client_factory() -> httpx.AsyncClient:
 # ---------------------------------------------------------------------------
 
 
-def next_story_id(stories_dir: Path, when: Optional[datetime] = None) -> str:
+def next_story_id(stories_dir: Path, when: datetime | None = None) -> str:
     """Compute the next ``story_YYYY_MM_DD_NNN`` id for the given day."""
     now = when or datetime.now()
     date_str = now.strftime("%Y_%m_%d")
@@ -83,7 +82,7 @@ async def fetch_track_sources(
     track_cfg: dict,
     limit: int,
     *,
-    client_factory: Optional[Callable[[], httpx.AsyncClient]] = None,
+    client_factory: Callable[[], httpx.AsyncClient] | None = None,
 ) -> list[Source]:
     """Drive every fetcher listed under ``track_cfg['sources']`` in order
     until ``limit`` Sources are collected. One client is built per fetcher
@@ -128,7 +127,7 @@ def persist_source_as_story(
     source: Source,
     track: str,
     *,
-    when: Optional[datetime] = None,
+    when: datetime | None = None,
 ) -> Story:
     """Wrap a fetched ``Source`` in a fresh ``Story`` and write to disk.
 

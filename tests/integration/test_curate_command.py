@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 import yaml
@@ -26,7 +25,6 @@ from platinum.models.story import (
     StageStatus,
     Story,
 )
-
 
 # ---------------------------------------------------------------------------
 # Project fixture (same shape as the fetch integration test's cli_project)

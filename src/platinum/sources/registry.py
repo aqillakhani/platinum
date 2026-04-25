@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import httpx
 
 from platinum.sources.base import SourceFetcher
 from platinum.sources.gutenberg import GutendexFetcher
 from platinum.sources.reddit import RedditFetcher
 from platinum.sources.wikisource import WikisourceFetcher
-
 
 REGISTRY: dict[str, type[SourceFetcher]] = {
     GutendexFetcher.type: GutendexFetcher,
@@ -20,8 +17,8 @@ REGISTRY: dict[str, type[SourceFetcher]] = {
 
 
 def build_fetcher(
-    type_: str, *, client: Optional[httpx.AsyncClient] = None
-) -> Optional[SourceFetcher]:
+    type_: str, *, client: httpx.AsyncClient | None = None
+) -> SourceFetcher | None:
     """Return a fetcher instance for ``type_`` or ``None`` if unknown.
 
     Unknown types are logged-and-skipped at the runner level; raising would

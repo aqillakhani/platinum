@@ -16,14 +16,13 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
-from typing import Any, ClassVar, Optional
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 import httpx
 
 from platinum.models.story import Source
 from platinum.sources.base import SourceFetcher
-
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +66,7 @@ def _clean_wikitext(raw: str) -> str:
     return text.strip()
 
 
-def _extract_author(raw: str) -> Optional[str]:
+def _extract_author(raw: str) -> str | None:
     m = _AUTHOR_RE.search(raw)
     if not m:
         return None
@@ -90,7 +89,7 @@ class WikisourceFetcher(SourceFetcher):
     USER_AGENT: ClassVar[str] = "Platinum/1.0 (cinematic short film pipeline)"
     CATEGORY_LIMIT: ClassVar[int] = 50
 
-    def __init__(self, client: Optional[httpx.AsyncClient] = None) -> None:
+    def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._client = client
 
     async def fetch(self, filters: dict[str, Any], limit: int) -> list[Source]:
@@ -138,7 +137,7 @@ class WikisourceFetcher(SourceFetcher):
                             title=title,
                             author=_extract_author(raw),
                             raw_text=body,
-                            fetched_at=datetime.now(timezone.utc),
+                            fetched_at=datetime.now(UTC),
                             license="PD-Old",
                         )
                     )
@@ -175,7 +174,7 @@ class WikisourceFetcher(SourceFetcher):
 
     async def _fetch_wikitext(
         self, client: httpx.AsyncClient, page_title: str
-    ) -> Optional[str]:
+    ) -> str | None:
         params = {
             "action": "parse",
             "page": page_title,

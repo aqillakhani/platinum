@@ -15,7 +15,6 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
-
 _ROOT = Path(__file__).resolve().parents[2]  # platinum/ project root
 
 

@@ -15,8 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -43,24 +42,24 @@ class StageStatus(str, Enum):
 # ---------------------------------------------------------------------------
 
 
-def _path_to_str(p: Optional[Path]) -> Optional[str]:
+def _path_to_str(p: Path | None) -> str | None:
     if p is None:
         return None
     # POSIX-style separators keep the JSON portable across platforms.
     return str(p).replace("\\", "/")
 
 
-def _str_to_path(s: Any) -> Optional[Path]:
+def _str_to_path(s: Any) -> Path | None:
     if s is None:
         return None
     return Path(s)
 
 
-def _dt_to_str(dt: Optional[datetime]) -> Optional[str]:
+def _dt_to_str(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
 
 
-def _str_to_dt(s: Any) -> Optional[datetime]:
+def _str_to_dt(s: Any) -> datetime | None:
     if s is None:
         return None
     return datetime.fromisoformat(s)
@@ -76,7 +75,7 @@ class Source:
     type: str              # "gutenberg" | "wikisource" | "reddit" | "standard_ebooks"
     url: str
     title: str
-    author: Optional[str]
+    author: str | None
     raw_text: str
     fetched_at: datetime
     license: str           # "PD-US" | "CC-BY-4.0" | ...
@@ -93,7 +92,7 @@ class Source:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Source":
+    def from_dict(cls, d: dict[str, Any]) -> Source:
         fetched = _str_to_dt(d["fetched_at"])
         assert fetched is not None, "Source.fetched_at is required"
         return cls(
@@ -127,7 +126,7 @@ class Adapted:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Adapted":
+    def from_dict(cls, d: dict[str, Any]) -> Adapted:
         return cls(
             title=d["title"],
             synopsis=d["synopsis"],
@@ -144,19 +143,19 @@ class Scene:
     index: int
     narration_text: str
     narration_duration_seconds: float = 0.0
-    narration_audio_path: Optional[Path] = None
-    visual_prompt: Optional[str] = None
-    negative_prompt: Optional[str] = None
-    ip_adapter_reference: Optional[Path] = None
-    controlnet_depth: Optional[Path] = None
+    narration_audio_path: Path | None = None
+    visual_prompt: str | None = None
+    negative_prompt: str | None = None
+    ip_adapter_reference: Path | None = None
+    controlnet_depth: Path | None = None
     keyframe_candidates: list[Path] = field(default_factory=list)
     keyframe_scores: list[float] = field(default_factory=list)
-    keyframe_path: Optional[Path] = None
-    video_path: Optional[Path] = None
-    video_upscaled_path: Optional[Path] = None
-    video_graded_path: Optional[Path] = None
+    keyframe_path: Path | None = None
+    video_path: Path | None = None
+    video_upscaled_path: Path | None = None
+    video_graded_path: Path | None = None
     video_duration_seconds: float = 0.0
-    music_cue: Optional[str] = None
+    music_cue: str | None = None
     sfx_cues: list[str] = field(default_factory=list)
     validation: dict[str, Any] = field(default_factory=dict)
     review_status: ReviewStatus = ReviewStatus.PENDING
@@ -186,7 +185,7 @@ class Scene:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Scene":
+    def from_dict(cls, d: dict[str, Any]) -> Scene:
         return cls(
             id=d["id"],
             index=d["index"],
@@ -218,9 +217,9 @@ class StageRun:
 
     stage: str
     status: StageStatus
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    error: Optional[str] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
     artifacts: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -234,7 +233,7 @@ class StageRun:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "StageRun":
+    def from_dict(cls, d: dict[str, Any]) -> StageRun:
         return cls(
             stage=d["stage"],
             status=StageStatus(d["status"]),
@@ -250,7 +249,7 @@ class Story:
     id: str                                      # "story_2026_04_24_001"
     track: str                                   # "atmospheric_horror"
     source: Source
-    adapted: Optional[Adapted] = None
+    adapted: Adapted | None = None
     scenes: list[Scene] = field(default_factory=list)
     audio: dict[str, Any] = field(default_factory=dict)
     video: dict[str, Any] = field(default_factory=dict)
@@ -275,7 +274,7 @@ class Story:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Story":
+    def from_dict(cls, d: dict[str, Any]) -> Story:
         return cls(
             id=d["id"],
             track=d["track"],
@@ -317,13 +316,13 @@ class Story:
             raise
 
     @classmethod
-    def load(cls, path: Path) -> "Story":
+    def load(cls, path: Path) -> Story:
         with Path(path).open("r", encoding="utf-8") as f:
             return cls.from_dict(json.load(f))
 
     # --- Convenience -----------------------------------------------------
 
-    def latest_stage_run(self, stage_name: str) -> Optional[StageRun]:
+    def latest_stage_run(self, stage_name: str) -> StageRun | None:
         """Most recent StageRun for the named stage (or None)."""
         for run in reversed(self.stages):
             if run.stage == stage_name:

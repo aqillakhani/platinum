@@ -24,11 +24,12 @@ import logging
 import os
 import shlex
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -37,7 +38,6 @@ from rich.table import Table
 from platinum.config import Config
 from platinum.models.db import create_all, sync_from_story, sync_session
 from platinum.models.story import StageRun, StageStatus, Story
-
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def apply_decision(
     story: Story,
     decision: Decision,
     *,
-    when: Optional[datetime] = None,
+    when: datetime | None = None,
 ) -> Story:
     """Mutate ``story`` to record a curator decision.
 
@@ -118,7 +118,7 @@ def apply_decision(
 def load_pending_candidates(
     cfg: Config,
     *,
-    track: Optional[str] = None,
+    track: str | None = None,
 ) -> list[Story]:
     """Load every Story under ``cfg.stories_dir`` (no filter yet)."""
     if not cfg.stories_dir.exists():
@@ -160,7 +160,7 @@ def _default_editor_argv() -> list[str]:
 def open_in_editor(
     path: Path,
     *,
-    runner: Optional[Callable[[list[str]], Any]] = None,
+    runner: Callable[[list[str]], Any] | None = None,
 ) -> None:
     """Open ``path`` in ``$EDITOR`` (or the platform default).
 
@@ -297,7 +297,7 @@ def curate(
     *,
     decide: Callable[[Story], Decision],
     save: Callable[[Story], None],
-    track: Optional[str] = None,
+    track: str | None = None,
 ) -> CurateSummary:
     """Walk every pending candidate, applying the user's decision to each.
 

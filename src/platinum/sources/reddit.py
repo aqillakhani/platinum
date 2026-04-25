@@ -22,14 +22,13 @@ Filters expected (from per-track YAML):
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from typing import Any, ClassVar, Optional
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 import httpx
 
 from platinum.models.story import Source
 from platinum.sources.base import SourceFetcher
-
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ class RedditFetcher(SourceFetcher):
     LICENSE: ClassVar[str] = "Reddit-CC-BY-NC-Adapt"
     PER_REQUEST_LIMIT: ClassVar[int] = 25
 
-    def __init__(self, client: Optional[httpx.AsyncClient] = None) -> None:
+    def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._client = client
 
     async def fetch(self, filters: dict[str, Any], limit: int) -> list[Source]:
@@ -99,7 +98,7 @@ class RedditFetcher(SourceFetcher):
                                 f"u/{post['author']}" if post.get("author") else None
                             ),
                             raw_text=selftext,
-                            fetched_at=datetime.now(timezone.utc),
+                            fetched_at=datetime.now(UTC),
                             license=self.LICENSE,
                         )
                     )

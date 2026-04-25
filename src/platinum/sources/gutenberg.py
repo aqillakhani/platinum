@@ -20,14 +20,13 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
-from typing import Any, ClassVar, Optional
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 import httpx
 
 from platinum.models.story import Source
 from platinum.sources.base import SourceFetcher
-
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +57,7 @@ def _strip_boilerplate(raw: str) -> str:
     return body[: end.start()].strip()
 
 
-def _pick_text_url(formats: dict[str, str]) -> Optional[str]:
+def _pick_text_url(formats: dict[str, str]) -> str | None:
     """Pick the best plain-text format URL from a Gutendex ``formats`` map."""
     for mime in (
         "text/plain; charset=utf-8",
@@ -96,7 +95,7 @@ class GutendexFetcher(SourceFetcher):
     EBOOK_URL: ClassVar[str] = "https://www.gutenberg.org/ebooks/{id}"
     USER_AGENT: ClassVar[str] = "Platinum/1.0 (cinematic short film pipeline)"
 
-    def __init__(self, client: Optional[httpx.AsyncClient] = None) -> None:
+    def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         # Inject a pre-built client (with MockTransport) for tests; otherwise
         # build a fresh one per call so timeouts and headers are predictable.
         self._client = client
@@ -174,7 +173,7 @@ class GutendexFetcher(SourceFetcher):
                             title=book.get("title", ""),
                             author=primary_author,
                             raw_text=body,
-                            fetched_at=datetime.now(timezone.utc),
+                            fetched_at=datetime.now(UTC),
                             license="PD-US",
                         )
                     )

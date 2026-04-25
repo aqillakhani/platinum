@@ -17,7 +17,6 @@ from platinum.models.story import StageRun, StageStatus, Story
 from platinum.pipeline.context import PipelineContext
 from platinum.pipeline.stage import Stage
 
-
 # Canonical stage order defined by PRD + plan §6 (17 stages plus added 8.5).
 # Used by ``platinum status`` to display the pipeline definition independent
 # of a concrete run.

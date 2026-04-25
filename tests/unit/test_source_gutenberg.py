@@ -7,7 +7,8 @@ tests. Live access is exercised in the CLI smoke test only.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -18,7 +19,6 @@ from platinum.sources.gutenberg import (
     _pick_text_url,
     _strip_boilerplate,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test helpers
