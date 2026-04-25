@@ -76,6 +76,9 @@ def _build_request(
 
 
 def _zip_into_scenes(story_scenes: list[Scene], tool_input: dict) -> list[Scene]:
+    """Mutate each Scene with visual_prompt + negative_prompt by index match.
+    Raises ClaudeProtocolError on count mismatch or missing scene index.
+    """
     raw = tool_input.get("scenes", [])
     if len(raw) != len(story_scenes):
         raise ClaudeProtocolError(
@@ -99,6 +102,11 @@ async def visual_prompts(
     *, story: Story, track_cfg: dict, prompts_dir: Path,
     db_path: Path, recorder: Recorder | None = None,
 ) -> tuple[list[Scene], ClaudeResult]:
+    """Run the visual_prompts call. Mutates story.scenes in place
+    (sets visual_prompt and negative_prompt per scene) and returns it
+    alongside the ClaudeResult. Raises if story.scenes is empty or
+    if the response count/indexes don't match story.scenes.
+    """
     if not story.scenes:
         raise RuntimeError(
             f"visual_prompts requires scene_breakdown to have populated story.scenes "
