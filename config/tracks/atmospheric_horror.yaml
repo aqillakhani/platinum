@@ -111,6 +111,16 @@ track:
     outline_width: 2
     position: bottom_center
 
+  # Quality gates -- automated thresholds enforced before human review (Session 5).
+  quality_gates:
+    aesthetic_min_score: 6.0          # LAION-Aesthetics v2 (0-10); horror runs ~0.5 lower than bright tracks
+    black_frame_max_ratio: 0.02       # max share of near-black frames; horror has intentional fade-to-blacks
+    luminance_threshold: 8.0          # 0-255 mean below = "black frame"
+    motion_min_flow_magnitude: 0.5    # Farneback dense flow, pixels/frame; below = still image
+    audio_target_lufs: -16.0          # YouTube narration standard
+    audio_lufs_tolerance_db: 1.5      # +/- around target
+    duration_tolerance_seconds: 0.5   # narration audio vs. scene target
+
   # Publish metadata defaults
   publish:
     title_template: "{title} | A Tale of Dread by {author}"
