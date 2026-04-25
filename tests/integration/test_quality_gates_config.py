@@ -52,3 +52,18 @@ def test_all_tracks_have_quality_gates(track_id: str) -> None:
     gates = track["quality_gates"]
     missing = EXPECTED_KEYS - set(gates.keys())
     assert not missing, f"{track_id}.quality_gates missing keys: {missing}"
+
+
+def test_check_audio_levels_round_trips_with_real_ffmpeg(tmp_path: Path) -> None:
+    """Generate a tone, measure with loudnorm, verify check_audio_levels matches."""
+    from platinum.utils.validate import _measure_lufs, check_audio_levels
+    from tests._fixtures import make_test_audio
+
+    audio = tmp_path / "tone.wav"
+    make_test_audio(audio, seconds=3.0, freq_hz=1000.0, amplitude=0.25)
+    measured = _measure_lufs(audio)
+    assert measured > -50.0  # not silent
+    assert measured < 0.0    # not clipping above 0 dB FS
+    r = check_audio_levels(audio, target_lufs=measured, tolerance_db=0.5)
+    assert r.passed
+    assert "passed" in r.reason
