@@ -1,0 +1,20 @@
+Adapt the following public-domain horror short story into a polished narrated script for a {{ target_seconds }}-second short film (target pace: {{ pace_wpm }} words per minute).
+
+TITLE: {{ title }}
+{% if author %}AUTHOR: {{ author }}{% endif %}
+
+SOURCE TEXT
+---
+{{ raw_text }}
+---
+
+REQUIREMENTS
+1. Produce a narration_script of approximately {{ (target_seconds * pace_wpm / 60) | int }} words, give or take 5 percent.
+2. Preserve the source's plot, voice, and ending. Do not invent new events.
+3. Modernize phrasing where archaic syntax would slow the listener; keep period-appropriate vocabulary where it carries atmosphere.
+4. Insert emotion tags (whisper / breath / pause) sparingly, only where a real voice actor would benefit.
+5. Provide a synopsis of <= 400 characters that does NOT spoil the climax.
+6. Provide tone_notes (a few sentences) describing pacing, register, and any tricky moments.
+7. Provide an arc breakdown (setup / rising / climax / resolution) -- one paragraph each.
+
+Submit your adaptation via the submit_adapted_story tool. The schema is strict; every required field must be populated.

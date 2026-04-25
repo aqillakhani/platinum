@@ -52,3 +52,26 @@ def test_system_template_includes_voice_and_aesthetic() -> None:
     assert track_cfg["visual"]["aesthetic"] in out
     assert "[whisper]" in out
     assert "[pause]" in out
+
+
+def test_adapt_template_renders_with_source_and_target() -> None:
+    from platinum.utils.prompts import render_template
+
+    repo_root = Path(__file__).resolve().parents[2]
+    out = render_template(
+        prompts_dir=repo_root / "config" / "prompts",
+        track="atmospheric_horror",
+        name="adapt.j2",
+        context={
+            "title": "The Cask of Amontillado",
+            "author": "Edgar Allan Poe",
+            "raw_text": "The thousand injuries of Fortunato I had borne...",
+            "target_seconds": 600,
+            "pace_wpm": 130,
+        },
+    )
+    assert "Cask of Amontillado" in out
+    assert "Edgar Allan Poe" in out
+    assert "600" in out
+    assert "130" in out
+    assert "thousand injuries" in out
