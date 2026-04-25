@@ -101,3 +101,27 @@ async def test_remote_scorer_non_200_raises(tmp_path: Path) -> None:
             await scorer.score(image)
     finally:
         await scorer.aclose()
+
+
+async def test_remote_scorer_nan_raises(tmp_path: Path) -> None:
+    from platinum.utils.aesthetics import RemoteAestheticScorer
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        # Send literal NaN in the JSON body. Python's json.loads is lenient
+        # about NaN by default; our scorer must catch it via math.isfinite.
+        return httpx.Response(
+            200,
+            content=b'{"score": NaN}',
+            headers={"content-type": "application/json"},
+        )
+
+    scorer = RemoteAestheticScorer(
+        host="http://test:8189", transport=httpx.MockTransport(handler)
+    )
+    image = tmp_path / "x.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n")
+    try:
+        with pytest.raises(ValueError, match="non-finite"):
+            await scorer.score(image)
+    finally:
+        await scorer.aclose()
