@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from platinum.models.story import Scene
-from platinum.utils.claude import ClaudeProtocolError
+from platinum.models.story import Scene, Story
+from platinum.utils.claude import ClaudeProtocolError, ClaudeResult, Recorder
+from platinum.utils.claude import call as claude_call
+from platinum.utils.prompts import render_template
 
 logger = logging.getLogger(__name__)
 
@@ -101,3 +104,139 @@ def scenes_from_tool_input(tool_input: dict) -> list[Scene]:
             )
         )
     return out
+
+
+def _build_request(
+    *,
+    story: Story,
+    track_cfg: dict,
+    prompts_dir: Path,
+    deviation_feedback: str,
+) -> tuple[list[dict], list[dict]]:
+    """Build system and user messages for breakdown call.
+
+    Args:
+        story: The Story object (must have adapted set).
+        track_cfg: Track configuration dict (from track YAML).
+        prompts_dir: Path to prompts directory.
+        deviation_feedback: Feedback from previous attempt; "" on first try.
+
+    Returns:
+        Tuple of (system messages list, user messages list).
+    """
+    assert story.adapted is not None, "scene_breakdown requires story.adapted set"
+    target_seconds = int(track_cfg["length"]["target_seconds"])
+    min_s = int(track_cfg["length"]["min_seconds"])
+    max_s = int(track_cfg["length"]["max_seconds"])
+    # Tolerance derived from min/max so it tracks the track config exactly.
+    tolerance = max(target_seconds - min_s, max_s - target_seconds)
+
+    system = [
+        {
+            "type": "text",
+            "text": render_template(
+                prompts_dir=prompts_dir,
+                track=story.track,
+                name="system.j2",
+                context={"track": track_cfg},
+            ),
+        }
+    ]
+    messages = [
+        {
+            "role": "user",
+            "content": render_template(
+                prompts_dir=prompts_dir,
+                track=story.track,
+                name="breakdown.j2",
+                context={
+                    "narration_script": story.adapted.narration_script,
+                    "target_seconds": target_seconds,
+                    "pace_wpm": int(track_cfg["voice"]["pace_wpm"]),
+                    "tolerance_seconds": tolerance,
+                    "deviation_feedback": deviation_feedback,
+                    "music_moods": list(track_cfg["music"]["moods"]),
+                },
+            ),
+        }
+    ]
+    return system, messages
+
+
+async def breakdown(
+    *,
+    story: Story,
+    track_cfg: dict,
+    prompts_dir: Path,
+    db_path: Path,
+    recorder: Recorder | None = None,
+) -> tuple[list[Scene], BreakdownReport, ClaudeResult]:
+    """Run the breakdown call. Regen once on tolerance miss; accept second.
+
+    Args:
+        story: The Story object (must have adapted set).
+        track_cfg: Track configuration dict (from track YAML).
+        prompts_dir: Path to prompts directory.
+        db_path: Path to SQLite database for cost tracking.
+        recorder: Optional mock Recorder for testing; None = real API call.
+
+    Returns:
+        Tuple of (scenes list, BreakdownReport, ClaudeResult).
+        Scenes are always returned; in_tolerance flag indicates if second attempt
+        should be regenerated (Task 17). First success short-circuits the loop.
+    """
+    pace_wpm = int(track_cfg["voice"]["pace_wpm"])
+    target = int(track_cfg["length"]["target_seconds"])
+    min_s = int(track_cfg["length"]["min_seconds"])
+    max_s = int(track_cfg["length"]["max_seconds"])
+
+    deviation_feedback = ""
+    last_scenes: list[Scene] = []
+    last_total: float = 0.0
+    last_result: ClaudeResult | None = None
+
+    for attempt in (1, 2):
+        system, messages = _build_request(
+            story=story,
+            track_cfg=track_cfg,
+            prompts_dir=prompts_dir,
+            deviation_feedback=deviation_feedback,
+        )
+        result = await claude_call(
+            model=MODEL,
+            system=system,
+            messages=messages,
+            tool=BREAKDOWN_TOOL,
+            story_id=story.id,
+            stage="scene_breakdown",
+            db_path=db_path,
+            recorder=recorder,
+        )
+        scenes = scenes_from_tool_input(result.tool_input)
+        total = estimate_total_seconds(scenes, pace_wpm=pace_wpm)
+        last_scenes, last_total, last_result = scenes, total, result
+        if min_s <= total <= max_s:
+            return (
+                scenes,
+                BreakdownReport(attempts=attempt, final_seconds=total, in_tolerance=True),
+                result,
+            )
+        direction = "Lengthen" if total < min_s else "Shorten"
+        deviation_feedback = (
+            f"Previous breakdown totalled {total:.0f}s; target is {target}s with "
+            f"min={min_s}s and max={max_s}s. {direction} scenes to land in range."
+        )
+        logger.info(
+            "scene_breakdown attempt %d off-tolerance: %.1fs vs target %ds. Regenerating.",
+            attempt,
+            total,
+            target,
+        )
+
+    # Second attempt also off-tolerance; accept and flag.
+    assert last_result is not None  # the loop ran at least once
+    return (
+        last_scenes,
+        BreakdownReport(attempts=2, final_seconds=last_total, in_tolerance=False),
+        last_result,
+    )
