@@ -172,3 +172,63 @@ async def generate_for_scene(
         selected_index=selected_index,
         selected_via_fallback=selected_via_fallback,
     )
+
+
+async def generate(
+    story: Any,
+    *,
+    config: Any,
+    comfy: Any,
+    scorer: Any,
+    output_root: Path,
+    mp_hands_factory: Callable[[], Any] | None = None,
+) -> list[KeyframeReport]:
+    """Run keyframe generation for every scene whose keyframe_path is None.
+
+    Mutates each scene in-place: keyframe_candidates, keyframe_scores,
+    keyframe_path, validation["keyframe_anatomy"],
+    validation["keyframe_selected_via_fallback"].
+    """
+    from platinum.utils.workflow import load_workflow
+
+    track_cfg = config.track(story.track)
+    track_visual = dict(track_cfg.get("visual", {}))
+    quality_gates = dict(track_cfg.get("quality_gates", {}))
+    workflow_template = load_workflow("flux_dev_keyframe", config_dir=config.config_dir)
+
+    reports: list[KeyframeReport] = []
+    for scene in story.scenes:
+        if scene.keyframe_path is not None:
+            logger.info(
+                "scene %d already has keyframe_path=%s; skipping (resume)",
+                scene.index,
+                scene.keyframe_path,
+            )
+            continue
+        scene_dir = output_root / f"scene_{scene.index:03d}"
+        report = await generate_for_scene(
+            scene,
+            track_visual=track_visual,
+            quality_gates=quality_gates,
+            comfy=comfy,
+            scorer=scorer,
+            output_dir=scene_dir,
+            workflow_template=workflow_template,
+            mp_hands_factory=mp_hands_factory,
+        )
+        scene.keyframe_candidates = list(report.candidates)
+        scene.keyframe_scores = list(report.scores)
+        scene.keyframe_path = report.candidates[report.selected_index]
+        scene.validation["keyframe_anatomy"] = list(report.anatomy_passed)
+        scene.validation["keyframe_selected_via_fallback"] = (
+            report.selected_via_fallback
+        )
+        reports.append(report)
+        logger.info(
+            "scene %d selected candidate %d (score=%.2f, fallback=%s)",
+            scene.index,
+            report.selected_index,
+            report.scores[report.selected_index],
+            report.selected_via_fallback,
+        )
+    return reports

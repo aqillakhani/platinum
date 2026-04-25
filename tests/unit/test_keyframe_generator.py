@@ -342,3 +342,106 @@ def test_generate_for_scene_seeds_default_to_index_offset() -> None:
     assert _seeds_for_scene(0, 3) == (0, 1, 2)
     assert _seeds_for_scene(7, 3) == (7000, 7001, 7002)
     assert _seeds_for_scene(12, 4) == (12000, 12001, 12002, 12003)
+
+
+def _build_story_with_n_scenes(n: int):
+    """Story factory for generate() tests."""
+    from datetime import datetime
+
+    from platinum.models.story import Scene, Source, Story
+
+    scenes = [
+        Scene(
+            id=f"scene_{i:03d}",
+            index=i,
+            narration_text=f"Scene {i} narration.",
+            narration_duration_seconds=5.0,
+            visual_prompt=f"a candle in dark hallway scene {i}",
+            negative_prompt="bright daylight",
+        )
+        for i in range(n)
+    ]
+    return Story(
+        id="story_test_001",
+        track="atmospheric_horror",
+        source=Source(
+            type="gutenberg",
+            url="http://example.test",
+            title="Test Story",
+            author="Test",
+            raw_text="x",
+            fetched_at=datetime(2026, 4, 25),
+            license="PD-US",
+        ),
+        scenes=scenes,
+    )
+
+
+async def test_generate_iterates_all_scenes(tmp_path: Path) -> None:
+    """generate() returns one KeyframeReport per scene and mutates Scene
+    fields."""
+    from platinum.pipeline.keyframe_generator import generate
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_fake_hands_factory
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    fixtures = _fixture_dir()
+
+    n_scenes = 2
+    story = _build_story_with_n_scenes(n_scenes)
+
+    responses: dict[str, list[Path]] = {}
+    for scene in story.scenes:
+        for i, seed in enumerate((
+            scene.index * 1000,
+            scene.index * 1000 + 1,
+            scene.index * 1000 + 2,
+        )):
+            wf = inject(
+                wf_template,
+                prompt=(
+                    f"cinematic dark, candlelight a candle in dark hallway "
+                    f"scene {scene.index}"
+                ),
+                negative_prompt="bright daylight",
+                seed=seed,
+                width=1024,
+                height=1024,
+                output_prefix=f"scene_{scene.index:03d}_candidate_{i}",
+            )
+            responses[workflow_signature(wf)] = [fixtures / f"candidate_{i}.png"]
+    comfy = FakeComfyClient(responses=responses)
+
+    track_dict = {
+        "visual": _TRACK_VISUAL,
+        "quality_gates": _GATES,
+    }
+
+    class _Cfg:
+        config_dir = repo_root / "config"
+
+        def track(self, _id: str) -> dict:
+            return track_dict
+
+    reports = await generate(
+        story,
+        config=_Cfg(),
+        comfy=comfy,
+        scorer=FakeAestheticScorer(fixed_score=7.5),
+        output_root=tmp_path,
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+    assert len(reports) == n_scenes
+    assert reports[0].scene_index == 0
+    assert reports[1].scene_index == 1
+    assert all(r.selected_via_fallback is False for r in reports)
+    # Mutated Scene fields:
+    for scene in story.scenes:
+        assert scene.keyframe_path is not None
+        assert len(scene.keyframe_candidates) == 3
+        assert len(scene.keyframe_scores) == 3
+        assert scene.validation.get("keyframe_anatomy") == [True, True, True]
+        assert scene.validation.get("keyframe_selected_via_fallback") is False
