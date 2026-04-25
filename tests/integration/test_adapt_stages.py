@@ -163,3 +163,99 @@ async def test_visual_prompts_stage_run_populates_prompts(tmp_path, repo_root) -
     assert story.scenes[0].visual_prompt == "vault, candle"
     assert story.scenes[1].negative_prompt == "neon"
     assert artifacts["model"] == "claude-opus-4-7"
+
+
+@pytest.mark.asyncio
+async def test_three_stages_in_sequence_produces_complete_story(tmp_path, repo_root) -> None:
+    """Run StoryAdapterStage -> SceneBreakdownStage -> VisualPromptsStage
+    via the orchestrator and verify the final Story has all three populated."""
+    from platinum.models.story import StageStatus
+    from platinum.pipeline.orchestrator import Orchestrator
+    from platinum.pipeline.scene_breakdown import SceneBreakdownStage
+    from platinum.pipeline.story_adapter import StoryAdapterStage
+    from platinum.pipeline.visual_prompts import VisualPromptsStage
+
+    async def router(req):
+        # Distinguish by tool_choice name to dispatch the right canned response.
+        tool_name = req["tool_choice"]["name"]
+        if tool_name == "submit_adapted_story":
+            return {
+                "id": "ad", "content": [{"type": "tool_use", "name": tool_name, "input": {
+                    "title": "T", "synopsis": "S", "narration_script": "word " * 1300,
+                    "tone_notes": "N",
+                    "arc": {"setup":"a","rising":"b","climax":"c","resolution":"d"},
+                }}], "stop_reason": "tool_use",
+                "usage": {"input_tokens": 1, "output_tokens": 1,
+                          "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            }
+        if tool_name == "submit_scene_breakdown":
+            return {
+                "id": "br", "content": [{"type": "tool_use", "name": tool_name, "input": {
+                    "scenes": [
+                        {"index": i, "narration_text": " ".join(["w"] * 162),
+                         "mood": "ambient_drone", "sfx_cues": []}
+                        for i in range(1, 9)
+                    ],
+                }}], "stop_reason": "tool_use",
+                "usage": {"input_tokens": 1, "output_tokens": 1,
+                          "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            }
+        if tool_name == "submit_visual_prompts":
+            return {
+                "id": "vp", "content": [{"type": "tool_use", "name": tool_name, "input": {
+                    "scenes": [{"index": i, "visual_prompt": f"vp{i}",
+                                 "negative_prompt": f"np{i}"} for i in range(1, 9)],
+                }}], "stop_reason": "tool_use",
+                "usage": {"input_tokens": 1, "output_tokens": 1,
+                          "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            }
+        raise AssertionError(f"unexpected tool_choice: {tool_name}")
+
+    ctx = _make_context(tmp_path, repo_root, recorder=router)
+    story = _seeded_story()
+
+    orch = Orchestrator(stages=[
+        StoryAdapterStage(), SceneBreakdownStage(), VisualPromptsStage(),
+    ])
+    final = await orch.run(story, ctx)
+
+    assert final.adapted is not None
+    assert len(final.scenes) == 8
+    assert all(s.visual_prompt for s in final.scenes)
+    completed = [r for r in final.stages if r.status == StageStatus.COMPLETE]
+    assert {r.stage for r in completed} >= {"story_adapter", "scene_breakdown", "visual_prompts"}
+
+
+@pytest.mark.asyncio
+async def test_resume_skips_completed_stage(tmp_path, repo_root) -> None:
+    """A pre-existing COMPLETE story_adapter run should make that stage skip."""
+    from platinum.models.story import StageRun, StageStatus
+    from platinum.pipeline.orchestrator import Orchestrator
+    from platinum.pipeline.story_adapter import StoryAdapterStage
+
+    calls = {"n": 0}
+
+    async def synth(req):
+        calls["n"] += 1
+        return {
+            "id": "x", "content": [{"type": "tool_use", "name": "submit_adapted_story",
+                                     "input": {"title": "T", "synopsis": "S",
+                                                "narration_script": "x", "tone_notes": "n",
+                                                "arc": {"setup":"a","rising":"b",
+                                                         "climax":"c","resolution":"d"}}}],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 1, "output_tokens": 1,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        }
+
+    ctx = _make_context(tmp_path, repo_root, recorder=synth)
+    story = _seeded_story()
+    # Mark adapter already complete.
+    story.stages.append(StageRun(
+        stage="story_adapter", status=StageStatus.COMPLETE,
+        started_at=datetime(2026, 4, 25), completed_at=datetime(2026, 4, 25),
+    ))
+
+    orch = Orchestrator(stages=[StoryAdapterStage()])
+    await orch.run(story, ctx)
+    assert calls["n"] == 0  # adapter was skipped
