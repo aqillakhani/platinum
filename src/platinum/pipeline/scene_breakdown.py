@@ -10,9 +10,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from platinum.models.story import Scene, Story
+from platinum.pipeline.context import PipelineContext
+from platinum.pipeline.stage import Stage
 from platinum.utils.claude import ClaudeProtocolError, ClaudeResult, Recorder
 from platinum.utils.claude import call as claude_call
 from platinum.utils.prompts import render_template
@@ -240,3 +242,34 @@ async def breakdown(
         BreakdownReport(attempts=2, final_seconds=last_total, in_tolerance=False),
         last_result,
     )
+
+
+class SceneBreakdownStage(Stage):
+    """Orchestrator wrapper for the scene breakdown Claude call."""
+
+    name: ClassVar[str] = "scene_breakdown"
+
+    async def run(self, story: Story, ctx: PipelineContext) -> dict[str, Any]:
+        if story.adapted is None:
+            raise RuntimeError(
+                f"scene_breakdown requires story_adapter to have populated story.adapted "
+                f"first (story={story.id})."
+            )
+        track_cfg = ctx.config.track(story.track)
+        recorder = ctx.config.settings.get("test", {}).get("claude_recorder")
+        scenes, report, claude_result = await breakdown(
+            story=story, track_cfg=track_cfg,
+            prompts_dir=ctx.config.prompts_dir,
+            db_path=ctx.db_path, recorder=recorder,
+        )
+        story.scenes = scenes
+        return {
+            "model": claude_result.usage.model,
+            "input_tokens": claude_result.usage.input_tokens,
+            "output_tokens": claude_result.usage.output_tokens,
+            "cache_read_input_tokens": claude_result.usage.cache_read_input_tokens,
+            "cost_usd": claude_result.usage.cost_usd,
+            "attempts": report.attempts,
+            "final_seconds": report.final_seconds,
+            "in_tolerance": report.in_tolerance,
+        }

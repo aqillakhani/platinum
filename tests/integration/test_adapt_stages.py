@@ -90,3 +90,38 @@ async def test_story_adapter_stage_run_populates_adapted(tmp_path, repo_root) ->
     assert story.adapted.arc["climax"] == "c"
     assert artifacts["model"] == "claude-opus-4-7"
     assert artifacts["cost_usd"] > 0
+
+
+@pytest.mark.asyncio
+async def test_scene_breakdown_stage_run_populates_scenes(tmp_path, repo_root) -> None:
+    from platinum.models.story import Adapted
+    from platinum.pipeline.scene_breakdown import SceneBreakdownStage
+
+    async def synth(req):
+        scenes = [{
+            "index": i, "narration_text": " ".join(["w"] * 162),
+            "mood": "ambient_drone", "sfx_cues": [],
+        } for i in range(1, 9)]
+        return {
+            "id": "x", "content": [{"type": "tool_use",
+                                     "name": "submit_scene_breakdown",
+                                     "input": {"scenes": scenes}}],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 1, "output_tokens": 1,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        }
+
+    ctx = _make_context(tmp_path, repo_root, recorder=synth)
+    story = _seeded_story()
+    story.adapted = Adapted(
+        title="t", synopsis="s", narration_script="word " * 1300,
+        estimated_duration_seconds=600.0, tone_notes="n",
+        arc={"setup":"a","rising":"b","climax":"c","resolution":"d"},
+    )
+    stage = SceneBreakdownStage()
+    artifacts = await stage.run(story, ctx)
+
+    assert len(story.scenes) == 8
+    assert artifacts["attempts"] == 1
+    assert artifacts["in_tolerance"] is True
+    assert artifacts["final_seconds"] > 0
