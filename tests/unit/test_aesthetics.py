@@ -83,3 +83,21 @@ def test_remote_scorer_missing_host_raises() -> None:
 
     with pytest.raises(ValueError, match="PLATINUM_AESTHETICS_HOST"):
         RemoteAestheticScorer(host="")
+
+
+async def test_remote_scorer_non_200_raises(tmp_path: Path) -> None:
+    from platinum.utils.aesthetics import RemoteAestheticScorer
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="model loading")
+
+    scorer = RemoteAestheticScorer(
+        host="http://test:8189", transport=httpx.MockTransport(handler)
+    )
+    image = tmp_path / "x.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n")
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            await scorer.score(image)
+    finally:
+        await scorer.aclose()
