@@ -113,3 +113,29 @@ def test_breakdown_template_includes_target_and_optional_feedback() -> None:
         },
     )
     assert "Previous breakdown totalled 540s" in out2
+
+
+def test_visual_prompts_template_includes_aesthetic_and_scenes() -> None:
+    from platinum.utils.prompts import render_template
+
+    repo_root = Path(__file__).resolve().parents[2]
+
+    out = render_template(
+        prompts_dir=repo_root / "config" / "prompts",
+        track="atmospheric_horror",
+        name="visual_prompts.j2",
+        context={
+            "aesthetic": "cinematic dark",
+            "default_negative": "bright, anime",
+            "palette": "deep shadow",
+            "scenes": [
+                {"index": 1, "narration_text": "It was a dark night."},
+                {"index": 2, "narration_text": "He went into the cellar."},
+            ],
+        },
+    )
+    assert "cinematic dark" in out
+    assert "bright, anime" in out
+    assert "1." in out
+    assert "dark night" in out
+    assert "into the cellar" in out
