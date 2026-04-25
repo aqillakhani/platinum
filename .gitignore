@@ -24,6 +24,9 @@ htmlcov/
 data/platinum.db
 data/platinum.db-journal
 data/logs/*.log
+# Per-story working data is regeneratable via `platinum fetch` and never committed.
+# Only the data/stories/.gitkeep placeholder is tracked.
+data/stories/*/
 data/stories/*/keyframes/
 data/stories/*/clips/
 data/stories/*/audio/
