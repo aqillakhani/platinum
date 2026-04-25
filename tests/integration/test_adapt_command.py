@@ -179,3 +179,33 @@ def test_cli_adapt_story_filter_targets_one(
     )
     assert a["adapted"] is not None
     assert b["adapted"] is None
+
+
+def test_cli_adapt_then_status_reflects_complete(
+    cli_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from platinum import cli as cli_mod
+
+    monkeypatch.chdir(cli_project)
+    monkeypatch.setattr("platinum.config._ROOT", cli_project, raising=False)
+
+    original_init = cli_mod.Config.__init__
+
+    def init_with_recorder(self: Any, root: Any = None) -> None:
+        original_init(self, root=root)
+        self.settings.setdefault("test", {})["claude_recorder"] = _router_factory()
+
+    monkeypatch.setattr(
+        cli_mod, "Config",
+        type("C", (cli_mod.Config,), {"__init__": init_with_recorder}),
+    )
+
+    _seed_curated_story(cli_project, "story_x")
+
+    runner = CliRunner()
+    assert runner.invoke(cli_mod.app, ["adapt"]).exit_code == 0
+
+    status = runner.invoke(cli_mod.app, ["status", "--story", "story_x"])
+    assert status.exit_code == 0
+    assert "story_adapter" in status.output
+    assert status.output.count("COMPLETE") >= 3
