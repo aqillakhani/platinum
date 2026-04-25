@@ -119,3 +119,17 @@ def test_recorder_protocol_accepts_synthetic_recorder() -> None:
 
     rec: Recorder = FakeRec()  # would fail static-typing if not satisfying the protocol
     assert callable(rec)
+
+
+def test_resolve_api_key_reads_env(monkeypatch) -> None:
+    from platinum.utils.claude import resolve_api_key
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-123")
+    assert resolve_api_key() == "sk-test-123"
+
+
+def test_resolve_api_key_missing_raises_clear_error(monkeypatch) -> None:
+    from platinum.utils.claude import resolve_api_key
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    import pytest
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        resolve_api_key()

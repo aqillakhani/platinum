@@ -5,6 +5,7 @@ Only file in platinum that imports `anthropic`. Single integration point.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -82,3 +83,19 @@ def calculate_cost_usd(
         + cache_creation_input_tokens * in_rate * 1.25
     ) / 1_000_000
     return round(cost, 6)
+
+
+def resolve_api_key() -> str:
+    """Return the Anthropic API key from env, or raise a clear error.
+
+    Loaded from `secrets/.env` by `platinum.config.Config` at process start.
+    Raising here -- before any HTTP call -- gives a much clearer signal than
+    Anthropic's generic 401.
+    """
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY not set in environment or secrets/.env. "
+            "Get a key at console.anthropic.com and add it to secrets/.env."
+        )
+    return key
