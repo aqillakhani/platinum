@@ -18,12 +18,14 @@ def test_keyframe_report_is_frozen_and_carries_fields() -> None:
         candidates=[Path("a"), Path("b"), Path("c")],
         scores=[7.0, 5.0, 3.0],
         anatomy_passed=[True, True, False],
+        scoring_succeeded=[True, True, True],
         selected_index=0,
         selected_via_fallback=False,
     )
     assert r.scene_index == 0
     assert r.selected_index == 0
     assert not r.selected_via_fallback
+    assert r.scoring_succeeded == [True, True, True]
     with pytest.raises(FrozenInstanceError):
         r.scene_index = 1  # type: ignore[misc]
 
@@ -130,6 +132,34 @@ async def test_generate_for_scene_happy_path_picks_highest_scoring(tmp_path: Pat
     assert report.anatomy_passed == [True, True, True]
     assert report.selected_index == 1   # candidate_1 had highest score
     assert not report.selected_via_fallback
+
+
+async def test_scoring_succeeded_populated_on_happy_path(tmp_path: Path) -> None:
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(idx=0)
+    output_dir = tmp_path / "scene_000"
+    score_map = {
+        output_dir / "candidate_0.png": 6.5,
+        output_dir / "candidate_1.png": 8.0,
+        output_dir / "candidate_2.png": 7.0,
+    }
+    scorer = MappedFakeScorer(scores_by_path=score_map, default=0.0)
+    comfy, wf_template = _build_fake_comfy_with_three_candidates()
+    report = await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates=_GATES,
+        comfy=comfy,
+        scorer=scorer,
+        output_dir=output_dir,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+    assert report.scoring_succeeded == [True, True, True]
 
 
 async def test_generate_for_scene_ties_selected_lowest_index(tmp_path: Path) -> None:

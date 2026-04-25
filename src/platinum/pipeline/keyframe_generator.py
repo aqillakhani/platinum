@@ -32,6 +32,7 @@ class KeyframeReport:
     candidates: list[Path]
     scores: list[float]
     anatomy_passed: list[bool]
+    scoring_succeeded: list[bool]
     selected_index: int
     selected_via_fallback: bool
 
@@ -137,19 +138,25 @@ async def generate_for_scene(
 
     scores: list[float] = []
     anatomy_passed: list[bool] = []
+    scoring_succeeded: list[bool] = []
     for path, candidate_exc in zip(candidate_paths, candidate_exceptions, strict=True):
         if candidate_exc is not None or not path.exists():
             scores.append(0.0)
             anatomy_passed.append(False)
+            scoring_succeeded.append(False)
             continue
         try:
             score = await scorer.score(path)
+            scoring_ok = True
         except Exception as scorer_exc:  # noqa: BLE001
             logger.warning("scorer failed for %s: %r", path, scorer_exc)
             score = 0.0
+            scoring_ok = False
         if not _is_finite(score):
             score = 0.0
+            scoring_ok = False
         scores.append(float(score))
+        scoring_succeeded.append(scoring_ok)
         result = check_hand_anomalies(path, mp_hands_factory=mp_hands_factory)
         anatomy_passed.append(result.passed)
 
@@ -171,6 +178,7 @@ async def generate_for_scene(
         candidates=candidate_paths,
         scores=scores,
         anatomy_passed=anatomy_passed,
+        scoring_succeeded=scoring_succeeded,
         selected_index=selected_index,
         selected_via_fallback=selected_via_fallback,
     )
