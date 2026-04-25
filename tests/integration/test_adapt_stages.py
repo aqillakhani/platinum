@@ -125,3 +125,41 @@ async def test_scene_breakdown_stage_run_populates_scenes(tmp_path, repo_root) -
     assert artifacts["attempts"] == 1
     assert artifacts["in_tolerance"] is True
     assert artifacts["final_seconds"] > 0
+
+
+@pytest.mark.asyncio
+async def test_visual_prompts_stage_run_populates_prompts(tmp_path, repo_root) -> None:
+    from platinum.models.story import Adapted, Scene
+    from platinum.pipeline.visual_prompts import VisualPromptsStage
+
+    async def synth(req):
+        return {
+            "id": "x",
+            "content": [{"type": "tool_use", "name": "submit_visual_prompts", "input": {
+                "scenes": [
+                    {"index": 1, "visual_prompt": "vault, candle", "negative_prompt": "bright"},
+                    {"index": 2, "visual_prompt": "fog, stones", "negative_prompt": "neon"},
+                ],
+            }}],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 1, "output_tokens": 1,
+                      "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        }
+
+    ctx = _make_context(tmp_path, repo_root, recorder=synth)
+    story = _seeded_story()
+    story.adapted = Adapted(
+        title="t", synopsis="s", narration_script="word " * 1300,
+        estimated_duration_seconds=600.0, tone_notes="n",
+        arc={"setup":"a","rising":"b","climax":"c","resolution":"d"},
+    )
+    story.scenes = [
+        Scene(id="scene_001", index=1, narration_text="It was night."),
+        Scene(id="scene_002", index=2, narration_text="The vault opened."),
+    ]
+    stage = VisualPromptsStage()
+    artifacts = await stage.run(story, ctx)
+
+    assert story.scenes[0].visual_prompt == "vault, candle"
+    assert story.scenes[1].negative_prompt == "neon"
+    assert artifacts["model"] == "claude-opus-4-7"
