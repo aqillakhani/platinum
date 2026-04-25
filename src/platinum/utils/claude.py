@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+import anthropic
+
 from platinum.models.db import ApiUsageRow, sync_session
+from platinum.utils.retry import retry
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +182,7 @@ async def call(
     stage: str,
     db_path: Path,
     recorder: Recorder | None = None,
+    client_factory: Callable[[], anthropic.AsyncAnthropic] | None = None,
 ) -> ClaudeResult:
     """One Claude call in tool-use forced mode.
 
@@ -194,11 +199,10 @@ async def call(
         "tool_choice": {"type": "tool", "name": tool["name"]},
     }
 
-    if recorder is None:
-        raise NotImplementedError(
-            "Live SDK path not wired yet; pass a recorder for tests."
-        )
-    response = await recorder(request)
+    if recorder is not None:
+        response = await recorder(request)
+    else:
+        response = await _live_call(request, client_factory=client_factory)
 
     tool_input, fallback = _extract_tool_use(response)
     raw_usage = response.get("usage", {})
@@ -218,3 +222,22 @@ async def call(
     )
     _write_usage_row(db_path=db_path, story_id=story_id, usage=usage, when=datetime.now())
     return ClaudeResult(tool_input=tool_input, text=fallback, usage=usage, raw=response)
+
+
+@retry(
+    max_retries=4,
+    base_delay=1.0,
+    max_delay=16.0,
+    exceptions=(anthropic.RateLimitError, anthropic.APIStatusError),
+)
+async def _live_call(
+    request: dict,
+    *,
+    client_factory: Callable[[], anthropic.AsyncAnthropic] | None,
+) -> dict:
+    """Hit AsyncAnthropic; raise on auth/4xx, retry on 429/5xx."""
+    api_key = resolve_api_key()
+    factory = client_factory or (lambda: anthropic.AsyncAnthropic(api_key=api_key))
+    client = factory()
+    msg = await client.messages.create(**request)
+    return msg.model_dump()

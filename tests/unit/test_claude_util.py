@@ -279,3 +279,123 @@ async def test_call_writes_api_usage_row(tmp_path) -> None:
         assert rows[0].provider == "anthropic"
         assert rows[0].story_id == "story_x"
         assert rows[0].cost_usd > 0
+
+
+@pytest.mark.asyncio
+async def test_default_live_recorder_calls_async_anthropic(monkeypatch, tmp_path) -> None:
+    """When recorder=None and a fake AsyncAnthropic is injected via
+    client_factory, call() should hit it."""
+    from platinum.models.db import create_all
+    from platinum.utils.claude import call
+
+    captured = {}
+
+    class FakeMessage:
+        def model_dump(self):
+            return {
+                "id": "msg_live",
+                "content": [{"type": "tool_use", "name": "t", "input": {"ok": True}}],
+                "stop_reason": "tool_use",
+                "usage": {
+                    "input_tokens": 10, "output_tokens": 5,
+                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+                },
+            }
+
+    class FakeMessages:
+        async def create(self, **kwargs):
+            captured.update(kwargs)
+            return FakeMessage()
+
+    class FakeAnthropic:
+        def __init__(self, **_kwargs):
+            self.messages = FakeMessages()
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+
+    result = await call(
+        model="claude-opus-4-7",
+        system=[{"type": "text", "text": "S"}],
+        messages=[{"role": "user", "content": "M"}],
+        tool={"name": "t", "input_schema": {"type": "object"}},
+        story_id=None, stage="story_adapter",
+        db_path=db_path,
+        client_factory=lambda: FakeAnthropic(),
+    )
+    assert result.tool_input == {"ok": True}
+    assert captured["model"] == "claude-opus-4-7"
+    assert captured["tool_choice"] == {"type": "tool", "name": "t"}
+
+
+@pytest.mark.asyncio
+async def test_call_retries_on_rate_limit(monkeypatch, tmp_path) -> None:
+    """Retry decorator should kick in for RateLimitError."""
+    import anthropic
+
+    from platinum.models.db import create_all
+    from platinum.utils.claude import call
+
+    attempt = {"n": 0}
+
+    class FakeMessages:
+        async def create(self, **kwargs):
+            attempt["n"] += 1
+            if attempt["n"] < 3:
+                raise anthropic.RateLimitError(
+                    message="rate limited",
+                    response=type("R", (), {"status_code": 429, "headers": {}, "request": None})(),
+                    body=None,
+                )
+            return type("Msg", (), {
+                "model_dump": lambda self: {
+                    "id": "ok", "content": [{"type": "tool_use", "name": "t", "input": {}}],
+                    "stop_reason": "tool_use",
+                    "usage": {"input_tokens": 1, "output_tokens": 1,
+                              "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+                }
+            })()
+
+    class FakeAnthropic:
+        def __init__(self, **_): self.messages = FakeMessages()
+
+    async def noop_sleep(_seconds):
+        pass
+
+    monkeypatch.setattr("platinum.utils.retry.asyncio.sleep", noop_sleep)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+
+    result = await call(
+        model="claude-opus-4-7",
+        system=[{"type": "text", "text": "S"}],
+        messages=[{"role": "user", "content": "M"}],
+        tool={"name": "t", "input_schema": {}},
+        story_id=None, stage="story_adapter",
+        db_path=db_path,
+        client_factory=lambda: FakeAnthropic(),
+    )
+    assert attempt["n"] == 3
+    assert result.tool_input == {}
+
+
+@pytest.mark.asyncio
+async def test_missing_api_key_raises_before_request(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from platinum.models.db import create_all
+    from platinum.utils.claude import call
+
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        await call(
+            model="claude-opus-4-7",
+            system=[{"type": "text", "text": ""}],
+            messages=[{"role": "user", "content": ""}],
+            tool={"name": "t", "input_schema": {}},
+            story_id=None, stage="story_adapter",
+            db_path=db_path,
+        )
