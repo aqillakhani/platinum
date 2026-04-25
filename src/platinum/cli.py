@@ -108,7 +108,7 @@ def fetch(
         track_cfg = cfg.track(track)
     except KeyError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
     if not track_cfg.get("sources"):
         console.print(

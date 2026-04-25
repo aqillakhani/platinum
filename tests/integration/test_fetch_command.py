@@ -172,9 +172,22 @@ async def test_fetch_track_sources_pulls_from_three_fetchers() -> None:
     track_cfg = {
         "id": "atmospheric_horror",
         "sources": [
-            {"type": "gutenberg", "filters": {"authors": ["Edgar Allan Poe"], "min_words": 100}},
-            {"type": "wikisource", "filters": {"categories": ["Horror_short_stories"], "min_words": 100}},
-            {"type": "reddit", "filters": {"subreddits": ["nosleep"], "min_score": 100, "min_words": 100}},
+            {
+                "type": "gutenberg",
+                "filters": {"authors": ["Edgar Allan Poe"], "min_words": 100},
+            },
+            {
+                "type": "wikisource",
+                "filters": {"categories": ["Horror_short_stories"], "min_words": 100},
+            },
+            {
+                "type": "reddit",
+                "filters": {
+                    "subreddits": ["nosleep"],
+                    "min_score": 100,
+                    "min_words": 100,
+                },
+            },
         ],
     }
     sources = await fetch_track_sources(
@@ -190,7 +203,14 @@ async def test_fetch_track_sources_stops_when_limit_reached() -> None:
     track_cfg = {
         "sources": [
             {"type": "gutenberg", "filters": {"authors": ["Poe"], "min_words": 100}},
-            {"type": "reddit", "filters": {"subreddits": ["nosleep"], "min_score": 100, "min_words": 100}},
+            {
+                "type": "reddit",
+                "filters": {
+                    "subreddits": ["nosleep"],
+                    "min_score": 100,
+                    "min_words": 100,
+                },
+            },
         ],
     }
     sources = await fetch_track_sources(
@@ -205,7 +225,14 @@ async def test_fetch_track_sources_skips_unknown_type() -> None:
     track_cfg = {
         "sources": [
             {"type": "made_up", "filters": {}},
-            {"type": "reddit", "filters": {"subreddits": ["nosleep"], "min_score": 100, "min_words": 100}},
+            {
+                "type": "reddit",
+                "filters": {
+                    "subreddits": ["nosleep"],
+                    "min_score": 100,
+                    "min_words": 100,
+                },
+            },
         ],
     }
     sources = await fetch_track_sources(
