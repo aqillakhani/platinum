@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 from PIL import Image
 
 from platinum.utils.validate import CheckResult
 from tests._fixtures import (
+    make_fake_hands_factory,
     make_silent_audio,
     make_test_audio,
     make_test_video,
@@ -180,31 +179,11 @@ def _write_solid_image(
     Image.new("RGB", size, color=color).save(path)
 
 
-def _make_fake_hands_factory(landmarks_per_hand: list[int] | None):
-    """Return a factory that produces a Hands-stub returning configured results."""
-    def factory():
-        instance = MagicMock()
-        if landmarks_per_hand is None:
-            result = SimpleNamespace(multi_hand_landmarks=None)
-        else:
-            hands = []
-            for n in landmarks_per_hand:
-                lm = SimpleNamespace(
-                    landmark=[SimpleNamespace(x=0.0, y=0.0, z=0.0) for _ in range(n)]
-                )
-                hands.append(lm)
-            result = SimpleNamespace(multi_hand_landmarks=hands)
-        instance.process.return_value = result
-        instance.close.return_value = None
-        return instance
-    return factory
-
-
 def test_check_hand_anomalies_no_hands_passes(tmp_path: Path) -> None:
     from platinum.utils.validate import check_hand_anomalies
     img = tmp_path / "blank.png"
     _write_solid_image(img)
-    r = check_hand_anomalies(img, mp_hands_factory=_make_fake_hands_factory(None))
+    r = check_hand_anomalies(img, mp_hands_factory=make_fake_hands_factory(None))
     assert r.passed
     assert "no hands" in r.reason.lower()
 
@@ -213,7 +192,7 @@ def test_check_hand_anomalies_valid_hands_passes(tmp_path: Path) -> None:
     from platinum.utils.validate import check_hand_anomalies
     img = tmp_path / "valid.png"
     _write_solid_image(img)
-    r = check_hand_anomalies(img, mp_hands_factory=_make_fake_hands_factory([21, 21]))
+    r = check_hand_anomalies(img, mp_hands_factory=make_fake_hands_factory([21, 21]))
     assert r.passed
 
 
@@ -221,7 +200,7 @@ def test_check_hand_anomalies_extra_landmarks_fails(tmp_path: Path) -> None:
     from platinum.utils.validate import check_hand_anomalies
     img = tmp_path / "anom.png"
     _write_solid_image(img)
-    r = check_hand_anomalies(img, mp_hands_factory=_make_fake_hands_factory([21, 22]))
+    r = check_hand_anomalies(img, mp_hands_factory=make_fake_hands_factory([21, 22]))
     assert not r.passed
     assert "22" in r.reason or "anomaly" in r.reason.lower()
 
@@ -229,4 +208,4 @@ def test_check_hand_anomalies_extra_landmarks_fails(tmp_path: Path) -> None:
 def test_check_hand_anomalies_missing_file(tmp_path: Path) -> None:
     from platinum.utils.validate import check_hand_anomalies
     with pytest.raises(FileNotFoundError):
-        check_hand_anomalies(tmp_path / "nope.png", mp_hands_factory=_make_fake_hands_factory(None))
+        check_hand_anomalies(tmp_path / "nope.png", mp_hands_factory=make_fake_hands_factory(None))

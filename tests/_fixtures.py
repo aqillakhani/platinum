@@ -178,3 +178,33 @@ def make_synthetic_png(
         Image.fromarray(arr, "RGB").save(path)
         return
     raise ValueError(f"unknown kind: {kind!r}")
+
+
+def make_fake_hands_factory(landmarks_per_hand: list[int] | None) -> Callable[[], Any]:
+    """Return a factory that yields a Hands-stub returning configured results.
+
+    Used by tests that exercise check_hand_anomalies (and the keyframe
+    generator's anatomy gate) without mediapipe. Pass None to simulate
+    "no hands detected"; pass [21, 21] for two valid hands; pass [21, 22]
+    to simulate an anomaly.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    def factory() -> Any:
+        instance = MagicMock()
+        if landmarks_per_hand is None:
+            result = SimpleNamespace(multi_hand_landmarks=None)
+        else:
+            hands = []
+            for n in landmarks_per_hand:
+                lm = SimpleNamespace(
+                    landmark=[SimpleNamespace(x=0.0, y=0.0, z=0.0) for _ in range(n)]
+                )
+                hands.append(lm)
+            result = SimpleNamespace(multi_hand_landmarks=hands)
+        instance.process.return_value = result
+        instance.close.return_value = None
+        return instance
+
+    return factory
