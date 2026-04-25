@@ -114,3 +114,37 @@ def test_load_workflow_raises_on_missing_file(tmp_path: Path) -> None:
     (tmp_path / "workflows").mkdir()
     with pytest.raises(FileNotFoundError):
         load_workflow("nope", config_dir=tmp_path)
+
+
+def test_flux_dev_keyframe_workflow_loads_and_injects() -> None:
+    """The shipped flux_dev_keyframe.json must round-trip through inject without errors."""
+    from platinum.utils.workflow import inject, load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    # All required roles must be present and resolve to actual node ids.
+    roles = wf["_meta"]["role"]
+    assert {"positive_prompt", "negative_prompt", "empty_latent", "sampler", "save_image"} <= set(
+        roles.keys()
+    )
+    for role_name, node_id in roles.items():
+        assert node_id in wf, f"role {role_name!r} points at missing node {node_id!r}"
+    out = inject(
+        wf,
+        prompt="a candle in a dark hallway",
+        negative_prompt="bright daylight, neon",
+        seed=12345,
+        width=1024, height=1024,
+        output_prefix="scene_001_candidate_0",
+    )
+    pos_id = roles["positive_prompt"]
+    neg_id = roles["negative_prompt"]
+    latent_id = roles["empty_latent"]
+    sampler_id = roles["sampler"]
+    save_id = roles["save_image"]
+    assert out[pos_id]["inputs"]["text"] == "a candle in a dark hallway"
+    assert out[neg_id]["inputs"]["text"] == "bright daylight, neon"
+    assert out[latent_id]["inputs"]["width"] == 1024
+    assert out[latent_id]["inputs"]["height"] == 1024
+    assert out[sampler_id]["inputs"]["seed"] == 12345
+    assert out[save_id]["inputs"]["filename_prefix"] == "scene_001_candidate_0"
