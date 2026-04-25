@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 
 
@@ -116,3 +117,163 @@ async def test_fake_comfy_client_upload_image_returns_basename(tmp_path: Path) -
     client = FakeComfyClient(responses={})
     name = await client.upload_image(img)
     assert name == "my_face.png"
+
+
+def _build_mock_handler(handlers: dict[tuple[str, str], httpx.Response]):
+    """Build a MockTransport handler that dispatches by (method, path-prefix)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        for (method, prefix), response in handlers.items():
+            if request.method == method and request.url.path.startswith(prefix):
+                return response
+        return httpx.Response(404, json={"error": f"unmatched {request.method} {request.url}"})
+
+    return handler
+
+
+async def test_http_comfy_client_health_check_200_returns_true() -> None:
+    from platinum.utils.comfyui import HttpComfyClient
+
+    handler = _build_mock_handler(
+        {("GET", "/system_stats"): httpx.Response(200, json={"system": {"os": "linux"}})}
+    )
+    transport = httpx.MockTransport(handler)
+    client = HttpComfyClient(host="http://stub:8188", transport=transport)
+    assert await client.health_check() is True
+
+
+async def test_http_comfy_client_health_check_500_returns_false() -> None:
+    from platinum.utils.comfyui import HttpComfyClient
+
+    handler = _build_mock_handler(
+        {("GET", "/system_stats"): httpx.Response(500, json={"err": "boom"})}
+    )
+    transport = httpx.MockTransport(handler)
+    client = HttpComfyClient(host="http://stub:8188", transport=transport)
+    assert await client.health_check() is False
+
+
+async def test_http_comfy_client_generate_image_happy_path(tmp_path: Path) -> None:
+    """POST /prompt -> poll /history/<id> -> GET /view -> write bytes to output_path."""
+    from platinum.utils.comfyui import HttpComfyClient
+
+    expected_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32  # plausible PNG header + padding
+    history_payload = {
+        "abc123": {
+            "status": {"completed": True, "status_str": "success"},
+            "outputs": {
+                "8": {
+                    "images": [
+                        {"filename": "flux_dev_00001_.png", "subfolder": "", "type": "output"}
+                    ]
+                }
+            },
+        }
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/prompt":
+            body = json.loads(request.content)
+            assert "prompt" in body and "client_id" in body
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        if request.method == "GET" and request.url.path == "/history/abc123":
+            return httpx.Response(200, json=history_payload)
+        if request.method == "GET" and request.url.path == "/view":
+            assert request.url.params["filename"] == "flux_dev_00001_.png"
+            return httpx.Response(200, content=expected_bytes)
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    client = HttpComfyClient(host="http://stub:8188", transport=transport, poll_interval=0.0)
+    out = tmp_path / "scene_001" / "candidate_0.png"
+    result = await client.generate_image(
+        workflow={"6": {"class_type": "KSampler", "inputs": {"seed": 1}}},
+        output_path=out,
+    )
+    assert result == out
+    assert out.read_bytes() == expected_bytes
+
+
+async def test_http_comfy_client_generate_image_polls_until_complete(tmp_path: Path) -> None:
+    """Two polling responses: first incomplete, second complete."""
+    from platinum.utils.comfyui import HttpComfyClient
+
+    expected_bytes = b"\x89PNG\r\n\x1a\n_done"
+    poll_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/prompt":
+            return httpx.Response(200, json={"prompt_id": "p1"})
+        if request.method == "GET" and request.url.path == "/history/p1":
+            poll_count["n"] += 1
+            if poll_count["n"] < 2:
+                return httpx.Response(200, json={})  # not yet in history
+            return httpx.Response(
+                200,
+                json={
+                    "p1": {
+                        "status": {"completed": True, "status_str": "success"},
+                        "outputs": {
+                            "8": {
+                                "images": [
+                                    {"filename": "x.png", "subfolder": "", "type": "output"}
+                                ]
+                            }
+                        },
+                    }
+                },
+            )
+        if request.method == "GET" and request.url.path == "/view":
+            return httpx.Response(200, content=expected_bytes)
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    client = HttpComfyClient(host="http://stub:8188", transport=transport, poll_interval=0.0)
+    out = tmp_path / "x.png"
+    await client.generate_image(workflow={}, output_path=out)
+    assert poll_count["n"] >= 2
+    assert out.read_bytes() == expected_bytes
+
+
+async def test_http_comfy_client_generate_image_raises_on_error_status(tmp_path: Path) -> None:
+    from platinum.utils.comfyui import HttpComfyClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/prompt":
+            return httpx.Response(200, json={"prompt_id": "errp"})
+        if request.method == "GET" and request.url.path == "/history/errp":
+            return httpx.Response(
+                200,
+                json={
+                    "errp": {
+                        "status": {"completed": False, "status_str": "error"},
+                        "outputs": {},
+                    }
+                },
+            )
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    client = HttpComfyClient(host="http://stub:8188", transport=transport, poll_interval=0.0)
+    out = tmp_path / "x.png"
+    with pytest.raises(RuntimeError) as exc:
+        await client.generate_image(workflow={}, output_path=out)
+    assert "error" in str(exc.value).lower()
+
+
+async def test_http_comfy_client_upload_image_form_shape(tmp_path: Path) -> None:
+    from platinum.utils.comfyui import HttpComfyClient
+
+    img = tmp_path / "ref.png"
+    img.write_bytes(b"\x89PNG_face")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/upload/image":
+            assert b"ref.png" in request.content
+            return httpx.Response(200, json={"name": "uploaded_ref.png"})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    client = HttpComfyClient(host="http://stub:8188", transport=transport)
+    name = await client.upload_image(img)
+    assert name == "uploaded_ref.png"

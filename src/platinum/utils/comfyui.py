@@ -11,12 +11,19 @@ transport (or fake transport).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 import shutil
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
+import httpx
+
+logger = logging.getLogger(__name__)
 
 
 def workflow_signature(workflow: dict[str, Any]) -> str:
@@ -85,3 +92,129 @@ class FakeComfyClient:
 
     async def health_check(self) -> bool:
         return True
+
+
+class HttpComfyClient:
+    """Async httpx-based ComfyUI client.
+
+    `transport` plumbs through to httpx.AsyncClient; tests pass MockTransport
+    for unit-level wire-shape verification without a Fake.
+
+    `poll_interval` defaults to 2.0s for production; tests pass 0.0 to get
+    instant polling.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        *,
+        timeout: float = 600.0,
+        poll_interval: float = 2.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+        max_polls: int = 600,
+    ) -> None:
+        self.host = host.rstrip("/")
+        self.timeout = timeout
+        self.poll_interval = poll_interval
+        self.transport = transport
+        self.max_polls = max_polls
+
+    def _client(self, *, timeout: float | None = None) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self.host,
+            timeout=timeout or self.timeout,
+            transport=self.transport,
+        )
+
+    async def health_check(self) -> bool:
+        try:
+            async with self._client(timeout=10.0) as client:
+                resp = await client.get("/system_stats")
+                return resp.status_code == 200
+        except Exception:
+            return False
+
+    async def upload_image(self, image_path: Path) -> str:
+        path = Path(image_path)
+        async with self._client(timeout=60.0) as client:
+            with path.open("rb") as fh:
+                resp = await client.post(
+                    "/upload/image",
+                    files={"image": (path.name, fh, "image/png")},
+                    data={"overwrite": "true"},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+                return payload.get("name", path.name)
+
+    async def generate_image(
+        self,
+        *,
+        workflow: dict[str, Any],
+        output_path: Path,
+    ) -> Path:
+        prompt_id = await self._submit(workflow)
+        result = await self._poll(prompt_id)
+        await self._download(result, output_path)
+        return output_path
+
+    async def _submit(self, workflow: dict[str, Any]) -> str:
+        async with self._client(timeout=30.0) as client:
+            payload = {"prompt": workflow, "client_id": str(uuid.uuid4())}
+            resp = await client.post("/prompt", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            prompt_id = data.get("prompt_id")
+            if not prompt_id:
+                raise RuntimeError(f"No prompt_id in /prompt response: {data!r}")
+            logger.info("submitted ComfyUI workflow, prompt_id=%s", prompt_id)
+            return prompt_id
+
+    async def _poll(self, prompt_id: str) -> dict[str, Any]:
+        async with self._client(timeout=30.0) as client:
+            for _attempt in range(self.max_polls):
+                resp = await client.get(f"/history/{prompt_id}")
+                if resp.status_code == 200:
+                    body = resp.json()
+                    if prompt_id in body:
+                        result = body[prompt_id]
+                        status = result.get("status", {})
+                        if status.get("status_str") == "error":
+                            raise RuntimeError(f"ComfyUI workflow error: {result!r}")
+                        if status.get("completed"):
+                            return result
+                if self.poll_interval > 0:
+                    await asyncio.sleep(self.poll_interval)
+            raise RuntimeError(
+                f"Timed out polling /history/{prompt_id} after {self.max_polls} attempts"
+            )
+
+    async def _download(self, result: dict[str, Any], output_path: Path) -> None:
+        outputs = result.get("outputs", {})
+        for _node_id, node_output in outputs.items():
+            files = (
+                node_output.get("images")
+                or node_output.get("gifs")
+                or node_output.get("videos")
+                or []
+            )
+            if not files:
+                continue
+            file_info = files[0]
+            params = {
+                "filename": file_info.get("filename", ""),
+                "subfolder": file_info.get("subfolder", ""),
+                "type": file_info.get("type", "output"),
+            }
+            async with self._client() as client:
+                resp = await client.get("/view", params=params)
+                resp.raise_for_status()
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(resp.content)
+                logger.info(
+                    "downloaded ComfyUI output to %s (%d bytes)",
+                    output_path,
+                    len(resp.content),
+                )
+                return
+        raise RuntimeError(f"No output files found in ComfyUI result. Keys: {list(outputs.keys())}")
