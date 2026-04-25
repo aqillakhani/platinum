@@ -17,7 +17,9 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
+
+from platinum.pipeline.stage import Stage
 
 logger = logging.getLogger(__name__)
 
@@ -232,3 +234,80 @@ async def generate(
             report.selected_via_fallback,
         )
     return reports
+
+
+class KeyframeGeneratorStage(Stage):
+    """Per-story keyframe generation stage. See module docstring."""
+
+    name: ClassVar[str] = "keyframe_generator"
+
+    async def run(self, story: Any, ctx: Any) -> dict[str, Any]:
+        from platinum.utils.aesthetics import RemoteAestheticScorer
+        from platinum.utils.comfyui import HttpComfyClient
+
+        test_overrides = ctx.config.settings.get("test", {})
+        comfy = test_overrides.get("comfy_client") or HttpComfyClient(
+            host=ctx.config.settings.get("comfyui", {}).get(
+                "host", "http://localhost:8188"
+            ),
+        )
+        scorer = test_overrides.get("aesthetic_scorer") or RemoteAestheticScorer(
+            host=ctx.config.settings.get("aesthetics", {}).get("host", "")
+        )
+        mp_hands_factory = test_overrides.get("mp_hands_factory")
+
+        # Compute output_root: prefer the story_path-derived dir if ctx supports it,
+        # else fall back to data/stories/<id>/keyframes/.
+        story_dir: Path
+        if hasattr(ctx, "story_path"):
+            try:
+                story_dir = Path(ctx.story_path(story)).parent
+            except Exception:  # noqa: BLE001 -- defensive fallback
+                story_dir = Path("data/stories") / story.id
+        else:
+            story_dir = Path("data/stories") / story.id
+        output_root = story_dir / "keyframes"
+
+        scenes_total = len(story.scenes)
+        try:
+            reports = await generate(
+                story,
+                config=ctx.config,
+                comfy=comfy,
+                scorer=scorer,
+                output_root=output_root,
+                mp_hands_factory=mp_hands_factory,
+            )
+        except KeyframeGenerationError:
+            # Save what we have so far before re-raising.
+            try:
+                if hasattr(ctx, "story_path"):
+                    story.save(ctx.story_path(story))
+            except Exception:  # noqa: BLE001 -- save best-effort on the failure path
+                logger.exception("failed to save story.json after KeyframeGenerationError")
+            raise
+
+        # Atomic save at end of stage.
+        try:
+            if hasattr(ctx, "story_path"):
+                story.save(ctx.story_path(story))
+        except Exception:  # noqa: BLE001 -- save best-effort
+            logger.exception("failed to save story.json after stage completion")
+
+        scenes_via_fallback = sum(1 for r in reports if r.selected_via_fallback)
+        scenes_succeeded_now = sum(1 for s in story.scenes if s.keyframe_path is not None)
+        return {
+            "scenes_total": scenes_total,
+            "scenes_succeeded": scenes_succeeded_now,
+            "scenes_via_fallback": scenes_via_fallback,
+            "scenes_failed": scenes_total - scenes_succeeded_now,
+            "reports": [
+                {
+                    "scene_index": r.scene_index,
+                    "selected_index": r.selected_index,
+                    "selected_score": r.scores[r.selected_index],
+                    "selected_via_fallback": r.selected_via_fallback,
+                }
+                for r in reports
+            ],
+        }
