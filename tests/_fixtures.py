@@ -9,9 +9,14 @@ Path scheme: tests/fixtures/anthropic/<stage>/<test_name>__<attempt>.json
 from __future__ import annotations
 
 import json
+import math
+import wave
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal
+
+import cv2
+import numpy as np
 
 LiveCall = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
@@ -58,3 +63,89 @@ class FixtureRecorder:
             encoding="utf-8",
         )
         return response
+
+
+def make_test_video(
+    path: Path,
+    *,
+    n_frames: int = 30,
+    fps: int = 24,
+    color: tuple[int, int, int] = (0, 0, 0),
+    size: tuple[int, int] = (64, 64),
+) -> None:
+    """Write a single-color MP4 (BGR) of `n_frames` at `fps`."""
+    w, h = size
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(path), fourcc, float(fps), (w, h))
+    if not writer.isOpened():
+        raise RuntimeError(f"VideoWriter failed to open for {path}")
+    frame = np.full((h, w, 3), color, dtype=np.uint8)
+    try:
+        for _ in range(n_frames):
+            writer.write(frame)
+    finally:
+        writer.release()
+
+
+def make_test_video_with_motion(
+    path: Path,
+    *,
+    n_frames: int = 30,
+    fps: int = 24,
+    size: tuple[int, int] = (64, 64),
+) -> None:
+    """Write an MP4 with frame-to-frame motion (translating checkerboard)."""
+    w, h = size
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(path), fourcc, float(fps), (w, h))
+    if not writer.isOpened():
+        raise RuntimeError(f"VideoWriter failed to open for {path}")
+    base = np.zeros((h, w, 3), dtype=np.uint8)
+    block = 8
+    for y in range(0, h, block):
+        for x in range(0, w, block):
+            if ((x // block) + (y // block)) % 2 == 0:
+                base[y : y + block, x : x + block] = 255
+    try:
+        for i in range(n_frames):
+            shift = (i * 2) % w
+            frame = np.roll(base, shift, axis=1)
+            writer.write(frame)
+    finally:
+        writer.release()
+
+
+def make_test_audio(
+    path: Path,
+    *,
+    seconds: float = 2.0,
+    freq_hz: float = 440.0,
+    sample_rate: int = 48000,
+    amplitude: float = 0.25,
+) -> None:
+    """Write a mono 16-bit WAV containing a sine tone."""
+    n = int(seconds * sample_rate)
+    t = np.arange(n, dtype=np.float64) / sample_rate
+    samples = np.sin(2.0 * math.pi * freq_hz * t) * amplitude
+    pcm = np.clip(samples * 32767.0, -32768, 32767).astype(np.int16)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm.tobytes())
+
+
+def make_silent_audio(
+    path: Path,
+    *,
+    seconds: float = 2.0,
+    sample_rate: int = 48000,
+) -> None:
+    """Write a mono 16-bit WAV of pure silence."""
+    n = int(seconds * sample_rate)
+    pcm = np.zeros(n, dtype=np.int16)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(pcm.tobytes())
