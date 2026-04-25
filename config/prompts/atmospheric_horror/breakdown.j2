@@ -1,0 +1,25 @@
+Break the following narration script into a sequence of cinematic scenes, each suitable for a single 5-8 second video clip.
+
+NARRATION SCRIPT
+---
+{{ narration_script }}
+---
+
+TARGET TOTAL DURATION: {{ target_seconds }} seconds (plus or minus {{ tolerance_seconds }} seconds).
+NARRATION PACE: {{ pace_wpm }} words per minute.
+
+For each scene, provide:
+- A 1-based index.
+- The narration_text spoken during that scene (the segment of the script for this scene only).
+- A mood tag from this set: {{ music_moods | join(", ") }}.
+- A list of sfx_cues (zero or more from the track's library: clock_ticking_distant, wind_through_window, footstep_wood, door_creak, candle_crackle, heartbeat_slow, etc.).
+
+REQUIREMENTS
+- Aim for 8 to 16 scenes. A scene is roughly 30-90 seconds of narration.
+- Concatenated narration_text across all scenes must equal (or very nearly equal) the full input narration_script -- no editorial cuts.
+- Total estimated duration (sum of words / {{ pace_wpm }} * 60) must land within {{ target_seconds - tolerance_seconds }}-{{ target_seconds + tolerance_seconds }} seconds.
+- Mood tags should follow the emotional arc: do not start with the most intense mood.
+{% if deviation_feedback %}
+PREVIOUS ATTEMPT FEEDBACK: {{ deviation_feedback }}
+{% endif %}
+Submit your breakdown via the submit_scene_breakdown tool.

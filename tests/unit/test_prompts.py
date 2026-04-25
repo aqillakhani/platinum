@@ -75,3 +75,41 @@ def test_adapt_template_renders_with_source_and_target() -> None:
     assert "600" in out
     assert "130" in out
     assert "thousand injuries" in out
+
+
+def test_breakdown_template_includes_target_and_optional_feedback() -> None:
+    from platinum.utils.prompts import render_template
+
+    repo_root = Path(__file__).resolve().parents[2]
+
+    out = render_template(
+        prompts_dir=repo_root / "config" / "prompts",
+        track="atmospheric_horror",
+        name="breakdown.j2",
+        context={
+            "narration_script": "It was a dark and stormy night.",
+            "target_seconds": 600,
+            "pace_wpm": 130,
+            "tolerance_seconds": 30,
+            "deviation_feedback": "",
+            "music_moods": ["ambient_drone", "slow_strings_dread"],
+        },
+    )
+    assert "600" in out
+    assert "ambient_drone" in out
+    assert "deviation_feedback" not in out  # only the rendered string
+
+    out2 = render_template(
+        prompts_dir=repo_root / "config" / "prompts",
+        track="atmospheric_horror",
+        name="breakdown.j2",
+        context={
+            "narration_script": "S",
+            "target_seconds": 600,
+            "pace_wpm": 130,
+            "tolerance_seconds": 30,
+            "deviation_feedback": "Previous breakdown totalled 540s; lengthen.",
+            "music_moods": ["ambient_drone"],
+        },
+    )
+    assert "Previous breakdown totalled 540s" in out2
