@@ -17,6 +17,11 @@ from platinum.config import Config
 from platinum.models.db import StageRunRow, StoryRow, create_all, sync_session
 from platinum.models.story import StageStatus
 from platinum.pipeline.orchestrator import CANONICAL_STAGE_NAMES
+from platinum.pipeline.story_curator import (
+    curate as _curate_run,
+    make_interactive_decide,
+    persist_decision,
+)
 from platinum.sources.runner import fetch_track_sources, persist_source_as_story
 
 app = typer.Typer(
@@ -143,9 +148,41 @@ def fetch(
 
 
 @app.command()
-def curate() -> None:
-    """Interactive curator — walk fetched candidates, approve/reject/skip."""
-    _stub("curate", "Session 3 (story curator CLI)")
+def curate(
+    track: Optional[str] = typer.Option(
+        None, "--track", "-t", help="Restrict to one track id."
+    ),
+) -> None:
+    """Interactive curator -- walk fetched candidates, approve/reject/skip.
+
+    Approve appends a COMPLETE ``story_curator`` StageRun (which
+    unblocks Stage 3, ``adapt``); reject appends a SKIPPED StageRun
+    (rejection is editorial, not failure); skip leaves the story
+    untouched so the next ``platinum curate`` run will re-surface it.
+    Pressing ``o`` opens the source text in ``$EDITOR`` (notepad on
+    Windows / nano elsewhere by default) and re-prompts.
+    """
+    cfg = Config()
+    decide = make_interactive_decide(cfg, console)
+
+    def _save(story) -> None:
+        persist_decision(cfg, story)
+
+    summary = _curate_run(cfg, decide=decide, save=_save, track=track)
+
+    if (summary.approved + summary.rejected + summary.skipped) == 0:
+        console.print(
+            "[yellow]No pending candidates. Run "
+            "'platinum fetch --track <id>' first.[/yellow]"
+        )
+        return
+
+    console.print(
+        f"[green]Curation complete.[/green] "
+        f"approved={summary.approved} "
+        f"rejected={summary.rejected} "
+        f"skipped={summary.skipped}"
+    )
 
 
 @app.command()

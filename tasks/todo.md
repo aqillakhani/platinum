@@ -1,80 +1,132 @@
-# Session 2 — Source fetchers
+# Session 3 — Story curator CLI
 
-**Spec:** plan §8 Session 2. **Deliverable:** `python -m platinum fetch --track atmospheric_horror --limit 10` produces 10 candidate Story JSONs on disk.
+**Spec:** plan §8 Session 3. **Deliverable:** `python -m platinum curate` walks the candidates produced by Session 2's `fetch`, accepting `a` (approve) / `r` (reject) / `s` (skip) / `o` (open in $EDITOR) per story, and persists each decision to `story.json` + SQLite. Approved stories satisfy stage 2 (`story_curator`) so Session 4's `adapt` can pick them up.
 
 ## Files
 
 New:
-- `src/platinum/sources/base.py` — `SourceFetcher` ABC with `fetch(filters, limit) -> list[Source]`
-- `src/platinum/sources/gutenberg.py` — Gutendex REST + `pg{id}.txt` body fetch + boilerplate strip
-- `src/platinum/sources/wikisource.py` — MediaWiki API category enum + page text fetch
-- `src/platinum/sources/reddit.py` — port from `gold/utils/reddit.py` + adapter to `Source`
-- `src/platinum/sources/registry.py` — type-string → fetcher mapping
-
-Tests:
-- `tests/unit/test_source_base.py`
-- `tests/unit/test_source_gutenberg.py`
-- `tests/unit/test_source_wikisource.py`
-- `tests/unit/test_source_reddit.py`
-- `tests/integration/test_fetch_command.py`
+- `src/platinum/pipeline/story_curator.py` — pure orchestration: discover pending candidates, render story card, apply decision (StageRun + review_gate), persist, drive the loop. No Typer dependency.
+- `tests/unit/test_story_curator.py` — pending-discovery, decision application, editor open, persistence projection, loop.
+- `tests/integration/test_curate_command.py` — end-to-end CLI (Typer `CliRunner` with scripted stdin) over real SQLite + tmp project.
 
 Modified:
-- `src/platinum/cli.py` — replace `fetch` stub with real implementation
+- `src/platinum/cli.py` — replace the `curate` stub with a real implementation that wires `story_curator.curate()` to a `typer.prompt`-based interactive `decide` callable. Add `--track` filter.
+
+(Optional, only if needed by tests:)
+- `tests/conftest.py` — possibly add a `curated_story` / `pending_story` fixture if the integration test would otherwise duplicate setup.
+
+## Architecture
+
+A pure-Python core, an interactive shell, and a thin CLI. The core has no Typer/rich/stdin dependency so it is fully unit-testable.
+
+```
+cli.py (curate command)
+    │  builds the interactive `decide` callable (typer.prompt + render_story_card)
+    │  builds the `save` callable (Story.save + sync_from_story)
+    ▼
+story_curator.curate(cfg, *, track, decide, save)
+    │  loads pending candidates from data/stories/
+    │  for each story:
+    │       decision = decide(story)        ← may loop on 'o' internally
+    │       apply_decision(story, decision) ← pure function (StageRun + review_gate)
+    │       if decision != SKIP: save(story)
+    ▼
+returns CurateSummary(approved, rejected, skipped)
+```
 
 ## Decisions
 
-- **HTTP mocking:** `httpx.MockTransport` (built-in; no new dep)
-- **Async fetchers:** all fetchers are `async def fetch(...)`; CLI wraps with `asyncio.run()`
-- **Story IDs:** `story_YYYY_MM_DD_NNN` — count existing same-prefix dirs in `data/stories/`
-- **Source allocation:** iterate `track.sources` in YAML order; take what each can supply until `--limit` reached
-- **Boilerplate stripping (Gutenberg):** regex on `*** START OF ... ***` / `*** END OF ... ***`; fall back to whole text if no markers
-- **Wikisource:** minimal regex cleanup of templates/refs; `story_adapter` (Session 4) does heavy polishing
-- **Reddit `adaptation_required` flag:** stored on Source via `license` field stays "Reddit-CC-BY-NC" — adapter stage is responsible for paraphrasing
-- **Skip `pipeline/source_fetcher.py` Stage wrapper:** not in deliverable; can be added in a later session if `python -m platinum render` ever needs to re-fetch
+- **Decision model:** `class Decision(str, Enum): APPROVE = "approve" / REJECT = "reject" / SKIP = "skip"`.
+- **StageRun semantics** for stage `story_curator`:
+  - approve → append `StageRun(stage="story_curator", status=COMPLETE, started_at=now, completed_at=now, artifacts={"decision": "approved"})`. This is what unblocks Stage 3 (`story_adapter`).
+  - reject → append `StageRun(stage="story_curator", status=SKIPPED, started_at=now, completed_at=now, artifacts={"decision": "rejected"})`. Stage 3 can short-circuit on SKIPPED rather than COMPLETE.
+  - skip → no StageRun appended; story stays curate-eligible the next time `platinum curate` runs.
+- **Review gate:** also write `story.review_gates["curator"] = {"decision": "approved"|"rejected", "decided_at": ISO, "reviewer": "user"}` for human-readable visibility in `story.json`. Skip writes nothing here either.
+- **Pending-candidate discovery:** scan `cfg.stories_dir/*/story.json`; load each via `Story.load`; include if `story.latest_stage_run("story_curator") is None`. Optional `track == story.track` filter. Skip dirs whose `story.json` is missing or unparseable (log warning, continue).
+- **Display:** `rich.panel.Panel` per candidate. Fields: id, track, source.type, title, author (or "—"), license, word_count = `len(source.raw_text.split())`, url, preview = first ~500 chars of `source.raw_text` with whitespace collapsed.
+- **Interactive prompt:** `typer.prompt("Decision [a/r/s/o]")` with manual choice validation (Typer's `type=Choice` works but lowercase coercion is cleaner manual). Loop on invalid input; loop on `o` after editor returns; return `Decision` on `a`/`r`/`s`.
+- **EDITOR open:** `subprocess.run([editor, str(story_dir / "source.txt")])`. `editor = shlex.split(os.environ["EDITOR"])` if set else `["notepad"]` on Windows / `["nano"]` elsewhere. After it returns (any exit code), reload the Story from disk in case the user edited it (safer than holding stale state) and re-prompt.
+- **Persistence:** after a non-skip decision, `Story.save(story_dir / "story.json")` (atomic write already implemented) + `sync_from_story(session, story)` inside a `sync_session(db_path)` context. The `save` callable in `curate()` handles both.
+- **`--track` filter:** when provided, only candidates with matching `story.track` are surfaced; useful when multiple tracks have been fetched.
+- **Exit codes:** 0 on normal completion (including "no candidates"). Non-zero only on configuration errors (e.g., bad `--track` argument that excludes everything is still 0; only programming errors / unhandled exceptions are non-zero).
+- **No Stage wrapper:** like Session 2, the Stage subclass for `story_curator` is not needed yet — the orchestrator doesn't drive interactive curation. The decision lives in `story.json` for any later automated re-runs.
 
 ## TDD checklist
 
-- [ ] test_source_base — ABC rejects non-implementing subclasses
-- [ ] test_source_gutenberg — author filter, length filter, language filter, year filter, boilerplate strip, HTTP error path
-- [ ] test_source_wikisource — category enum, page fetch, word count filter, wikitext cleanup
-- [ ] test_source_reddit — score filter, word count filter, video posts skipped, Source adapter populates url/title/raw_text/license
-- [ ] test_fetch_command — mocked HTTP across all 3 sources → 10 story.json files written, sqlite rows created
-- [ ] `pytest -q` passes (Session 1 + Session 2 = ~30+ tests)
-- [ ] live smoke test: `python -m platinum fetch --track atmospheric_horror --limit 10` writes 10 files
+Unit (`tests/unit/test_story_curator.py`):
+- [ ] `test_load_pending_candidates_finds_uncurated` — Story without `story_curator` run is included.
+- [ ] `test_load_pending_candidates_excludes_approved` — Story with COMPLETE `story_curator` run is excluded.
+- [ ] `test_load_pending_candidates_excludes_rejected` — Story with SKIPPED `story_curator` run is excluded.
+- [ ] `test_load_pending_candidates_filters_by_track` — `track=` arg drops other tracks.
+- [ ] `test_load_pending_candidates_skips_unreadable_dirs` — missing/corrupt `story.json` logs and continues.
+- [ ] `test_apply_decision_approve_appends_complete_stagerun` — and writes `review_gates["curator"]={"decision":"approved",...}`.
+- [ ] `test_apply_decision_reject_appends_skipped_stagerun` — and writes `review_gates["curator"]={"decision":"rejected",...}`.
+- [ ] `test_apply_decision_skip_no_stagerun_appended` — `story.stages` length unchanged; no review_gate.
+- [ ] `test_open_in_editor_uses_env_editor` — monkeypatch `subprocess.run`, set `EDITOR=code -w`, assert argv = `["code","-w",str(path)]`.
+- [ ] `test_open_in_editor_falls_back_when_env_unset` — monkeypatch `os.name`/env, assert notepad on win, nano on posix.
+- [ ] `test_persist_decision_writes_json_and_projects_to_db` — story.json + SQLite row updated; `latest stage_run` for that story has stage=story_curator.
+- [ ] `test_curate_runs_decide_for_each_pending_story` — scripted decisions list, assert summary counts and per-story state.
+- [ ] `test_curate_returns_zero_summary_when_empty` — no candidates → `CurateSummary(0,0,0)`, decide never invoked.
+- [ ] `test_curate_skip_leaves_story_eligible_next_time` — after skip, `load_pending_candidates` still returns the same story.
+- [ ] `test_render_story_card_includes_key_fields` — capture rich Console output, assert title/author/word_count/preview present.
+
+Integration (`tests/integration/test_curate_command.py`):
+- [ ] `test_cli_curate_walks_candidates_with_scripted_input` — pre-populate 3 stories via `persist_source_as_story`, invoke `platinum curate` with `input="a\nr\ns\n"`, assert exit 0, JSON + DB reflect approved/rejected/(no run for skipped).
+- [ ] `test_cli_curate_no_candidates_exits_zero_with_message` — empty `data/stories/`, exit 0, output contains a "no candidates" line.
+- [ ] `test_cli_curate_open_editor_then_approve` — `input="o\na\n"`, monkeypatch `subprocess.run`, assert editor invoked once and decision is approve.
+- [ ] `test_cli_curate_track_filter` — fetch into two tracks, `platinum curate --track atmospheric_horror`, only horror candidates surfaced.
+- [ ] `test_cli_curate_status_reflects_approval` — after approve, `platinum status --story <id>` shows `story_curator` COMPLETE.
+
+Quality gates:
+- [ ] `pytest -q` passes (Session 1 + 2 + 3 ≈ 95–100 tests; 0 failures).
+- [ ] `ruff check src tests` clean (or only style-only changes are needed).
+- [ ] Live smoke: re-run `python -m platinum fetch --track atmospheric_horror --limit 5`, then `python -m platinum curate` and walk a/r/s/o; confirm `story.json` and SQLite mirror the decisions.
 
 ## Notes
-- Live HTTP only at smoke-test time; CI/CD never hits real APIs.
-- Reddit JSON API has no auth but rate-limits aggressively — set `User-Agent: "Platinum/1.0"` and use retry decorator.
-- Gutendex is generous; no rate-limit concerns at limit=10.
-- Wikisource MediaWiki API also generous; respect `User-Agent` rule.
+
+- `data/stories/` is currently empty (the prior session's smoke fetch wasn't committed; only `.gitkeep` is tracked). Live demo needs a fresh `fetch` first.
+- `typer.prompt` reads from `sys.stdin`, so `CliRunner(...).invoke(app, [...], input="a\nr\ns\n")` drives it deterministically. Do not introduce `rich.prompt.Prompt.ask` for the main decision — it can bypass stdin patching depending on rich's TTY detection.
+- The integration test must monkey-patch `subprocess.run` (used only by `open_in_editor`) so CI never spawns a real editor.
+- Per Windows lessons from Session 2: keep CLI strings ASCII-only (no `→`, no smart quotes) so `--help` and Rich rendering don't trip cp1252 console.
+- `apply_decision` is a pure transformation on the Story dataclass — easy to unit test without touching disk or DB. The DB+disk write lives in a separate `persist_decision(cfg, story)` helper.
+- "Open in editor" reloading the story after the editor exits matters because Stage 4 may want any narrator notes the user jotted into `source.txt`. Reloading also makes the post-edit prompt show the (possibly truncated) preview accurately.
+- For the rejected path, status SKIPPED (rather than FAILED) is the right semantic: rejection is an editorial choice, not an error.
+- Walking "20 candidates in under 10 minutes" (plan's deliverable wording) is purely a UX target — no automated assertion. The card layout is designed so a human can decide in ~30s per story.
 
 ---
 
-## Review (Session 2 complete — 2026-04-24)
+## Review (Session 3 complete — 2026-04-24)
 
-**Tests:** 77 pass (Session 1: 22, Session 2: 55 new). 0 failures, 0 skips.
+**Tests:** 104 pass total (Session 1: 22, Session 2: 55, Session 3: 27 — 22 unit + 5 integration). 0 failures, 0 skips. Run time ~3.6s.
 
 **Files added:**
-- `src/platinum/sources/base.py` (SourceFetcher ABC)
-- `src/platinum/sources/gutenberg.py` (Gutendex + boilerplate strip)
-- `src/platinum/sources/wikisource.py` (MediaWiki API + wikitext cleanup)
-- `src/platinum/sources/reddit.py` (port from gold + Source adapter)
-- `src/platinum/sources/registry.py` (type-string -> class)
-- `src/platinum/sources/runner.py` (orchestration + persist_source_as_story)
-- 5 test files (~1300 lines covering filters, error paths, persistence, CLI)
+- `src/platinum/pipeline/story_curator.py` (~220 lines) — `Decision`/`CurateSummary` types, pure `apply_decision`, disk-scanning `load_pending_candidates`, `open_in_editor`, `render_story_card`, `persist_decision`, `make_interactive_decide`, `curate` driver.
+- `tests/unit/test_story_curator.py` (22 tests, ~480 lines).
+- `tests/integration/test_curate_command.py` (5 tests, ~190 lines).
 
 **Files modified:**
-- `src/platinum/cli.py` — replaced `fetch` stub with real impl; ASCII-only docstrings (`->` not `→`) so Windows cp1252 console renders `--help` without UnicodeEncodeError
+- `src/platinum/cli.py` — replaced the `curate` stub with the real implementation; added `--track` option; wired `make_interactive_decide` + `persist_decision` into the `curate` driver.
 
-**Live deliverable verified:** `python -m platinum fetch --track atmospheric_horror --limit 10` returns 10 real PD horror stories — Cask of Amontillado (Poe), Call of Cthulhu / Shunned House / Horror at Red Hook / Festival / Thing on the Doorstep / Haunter of the Dark / Lurking Fear / Cool Air / Silver Key (Lovecraft). Each persisted as `data/stories/<id>/story.json` + `source.txt`; SQLite has 10 stories + 10 stage_runs rows.
+**Live deliverable verified:**
+1. `python -m platinum fetch --track atmospheric_horror --limit 3` produced 3 candidates (Cask of Amontillado, Call of Cthulhu, Shunned House).
+2. `printf "a\nr\ns\n" | python -m platinum curate` walked them in order. Output: `approved=1 rejected=1 skipped=1`.
+3. On disk:
+   - story_001 → `latest_stage_run("story_curator")` is COMPLETE; `review_gates["curator"]={"decision":"approved",...}`.
+   - story_002 → `latest_stage_run("story_curator")` is SKIPPED; `review_gates["curator"]={"decision":"rejected",...}`.
+   - story_003 → no `story_curator` run; `review_gates` untouched.
+4. SQLite `stage_runs` table has rows for stories 001 (status=complete) and 002 (status=skipped); none for 003.
+5. `python -m platinum status --story story_2026_04_24_001` reports stage 2 (`story_curator`) as COMPLETE.
+6. Re-running `platinum curate` only re-surfaces story_003 — confirms the skip-leaves-eligible behavior + the approve/reject filters at the disk-scan level.
 
 **Surprises / lessons:**
-1. Gutendex `/books` 301-redirects to `/books/`. Fix: `follow_redirects=True` on the httpx client (now in `runner._default_client_factory`).
-2. Wikisource enforces Wikipedia's User-Agent policy and returns 403 for generic UAs. Fix: include a contact URL in the UA. Both fixes apply to all future HTTP-using stages.
-3. Pre-existing `→` (U+2192) in Session 1 cli.py docstrings crashes Windows cp1252 `--help` rendering. Replaced with ASCII `->`.
-4. With limit=10, Gutendex satisfies the limit on its own — Wikisource and Reddit aren't called in that smoke test (correct behavior; integration test verifies multi-source fanout).
+1. **Default-arg captured at definition time.** `open_in_editor(path, *, runner=subprocess.run)` captured the original `subprocess.run` at function-definition time, so monkey-patching `platinum.pipeline.story_curator.subprocess.run` in the integration test didn't take effect. Fix: default `runner=None`, resolve to `subprocess.run` at call time. Worth remembering for any future testable injection points: late binding wins over early binding for testability.
+2. **Rejection is editorial, not failure.** Settled on `StageStatus.SKIPPED` for the rejected `story_curator` run rather than FAILED. Stage 4 (story_adapter) can short-circuit on SKIPPED without treating it as a pipeline error, which keeps the orchestrator's "halt on failure" semantics intact.
+3. **Pure core / impure shell.** Splitting into a pure `apply_decision` (no I/O) plus injectable `decide`/`save` callables made the `curate` driver trivial to unit-test (one test, scripted decisions, no monkeypatching). The CLI just supplies real implementations.
+4. **rich.Panel + Table.grid** renders cleanly under both a real terminal and `CliRunner`'s captured-output mode. The `Console.export_text()` test for `render_story_card` doubles as a UI snapshot test without committing fixture files.
+5. The piped smoke test (`printf "a\nr\ns\n" | python -m platinum curate`) works on Windows bash because `input()` reads sys.stdin which receives the piped bytes — no TTY required.
 
 **Not done in this session (deferred to later):**
-- `pipeline/source_fetcher.py` Stage wrapper. The CLI drives sources directly. A Stage wrapper can be added if the orchestrator ever needs to re-fetch as a pipeline step (no current need).
-- Per-fetcher fallback `httpx.AsyncClient` (when no client is injected) doesn't have `follow_redirects=True` or the contact-URL UA. Production path goes through the runner factory which has both. Fixing the fallbacks is a defensive cleanup, not a current bug.
-- Wikisource boilerplate stripping leaves trailing "End of Project Gutenberg's …" lines that fall outside the `*** END ***` marker. story_adapter (Session 4) will polish via Claude, so this is not a blocker.
+- A `Stage` subclass for `story_curator` that the orchestrator could drive automatically. Not needed: the orchestrator never auto-curates, the human is always in the loop. The decision lives in `story.json` so a future automated re-run can read it without re-prompting.
+- Reloading `story.json` after `o` returns from the editor. The user is editing `source.txt` (display copy), not `story.json`. Stage 4 reads `story.source.raw_text` from `story.json`, so post-editor edits to `source.txt` don't currently propagate. Left as a known gap; will revisit if Session 4 needs it.
+- Bulk-mode flags like `--auto-approve-above N words` or `--reject-keywords "<list>"`. Plan doesn't ask for them; YAGNI for v1.
+- Cleaning up the live-smoke-test stories under `data/stories/`. They stay on disk locally (handy for the next session) but aren't committed — matches Session 2 convention (`.gitkeep` only). — no automated assertion. The card layout is designed so a human can decide in ~30s per story.
