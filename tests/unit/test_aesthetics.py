@@ -103,6 +103,14 @@ async def test_remote_scorer_non_200_raises(tmp_path: Path) -> None:
         await scorer.aclose()
 
 
+async def test_remote_scorer_aclose_idempotent() -> None:
+    from platinum.utils.aesthetics import RemoteAestheticScorer
+
+    scorer = RemoteAestheticScorer(host="http://test:8189")
+    await scorer.aclose()
+    await scorer.aclose()  # second call must not raise
+
+
 async def test_remote_scorer_nan_raises(tmp_path: Path) -> None:
     from platinum.utils.aesthetics import RemoteAestheticScorer
 
