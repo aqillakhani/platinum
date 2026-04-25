@@ -1,0 +1,52 @@
+# Secrets
+secrets/.env
+secrets/*.json
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime data (large, regeneratable)
+data/platinum.db
+data/platinum.db-journal
+data/logs/*.log
+data/stories/*/keyframes/
+data/stories/*/clips/
+data/stories/*/audio/
+data/stories/*/output/
+data/stories/*/subtitles/
+!data/stories/.gitkeep
+!data/logs/.gitkeep
+
+# Library media — gitignored to keep repo lean; track tags.json + attribution metadata
+library/voices/*/reference.wav
+library/music/**/*.mp3
+library/music/**/*.wav
+library/music/**/*.flac
+library/sfx/**/*.mp3
+library/sfx/**/*.wav
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Stray
+*.bak
+*.tmp

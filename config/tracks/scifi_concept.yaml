@@ -1,0 +1,76 @@
+# Track 5: Sci-Fi Concept Pieces — STUB (v1.1+)
+# Cinematic sci-fi, Denis Villeneuve / Blade Runner 2049 / Arrival.
+
+track:
+  id: scifi_concept
+  name: "Sci-Fi Concept Pieces"
+  description: "Dramatic lighting, scale, atmospheric haze. Far-future technology, abstract megastructures."
+  length:
+    target_seconds: 540
+    min_seconds: 360
+    max_seconds: 720
+  visual:
+    aesthetic: "cinematic sci-fi, dramatic lighting, atmospheric haze, vast scale, alien environments, abstract megastructures, Blade Runner 2049 / Arrival influence"
+    palette: "deep blue and amber, sodium-vapor orange, cool concrete grey"
+    lighting: "volumetric haze, single dominant key, hard shadows, lens flare restraint"
+    influences: ["Denis Villeneuve", "Blade Runner 2049", "Arrival", "Dune"]
+    negative_prompt: "cartoon, anime, fantasy, medieval, photorealistic-modern-day"
+  image_model:
+    backend: flux_dev
+    candidates_per_scene: 3
+    use_ip_adapter_faceid: true
+    use_controlnet_depth: true     # composition discipline matters more in scale shots
+  video_model:
+    backend: wan22_i2v
+    base_resolution: [1280, 720]
+    fps: 24
+    chain_last_frame: true
+  voice:
+    backend: chatterbox_turbo
+    reference_audio: library/voices/scifi_concept/reference.wav
+    direction: "Clear, measured, slightly cold. Documentary-like authority."
+    pace_wpm: 130
+    emotion_tags_supported: ["[pause]"]
+  music:
+    moods: [synth_drone, ambient_dark_motif, ben_frost, johannsson_strings]
+    direction: "Synth-driven, ambient, drones with melodic motifs. Ben Frost / Jóhann Jóhannsson influence."
+    library_subset: scifi
+  sfx:
+    library_subset: scifi
+    common_cues: [reactor_hum, atmospheric_drone, footstep_metal, comm_chatter, wind_alien]
+  color_grade:
+    lut: config/luts/scifi_concept.cube
+    pre_normalize: true
+    target_contrast: high
+    target_saturation: low
+  sources:
+    - type: gutenberg
+      filters:
+        authors: ["H. G. Wells", "Edgar Rice Burroughs"]   # Asimov pre-1929 sources are limited; expand list as Gutendex coverage grows
+        min_words: 1500
+        max_words: 10000
+        languages: [en]
+        license: PD-US
+    - type: reddit
+      filters:
+        subreddits: [HFY]
+        time_filter: all
+        min_score: 5000
+        min_words: 1500
+        max_words: 8000
+        adaptation_required: true
+  subtitles:
+    style: srt
+    font: Inter
+    size_pt: 36
+    color: white
+    outline_color: black
+    outline_width: 2
+    position: bottom_center
+  publish:
+    title_template: "{title} | A Concept Piece"
+    description_template: |
+      {synopsis}
+
+      Public domain sci-fi adapted and visualized with AI assistance.
+    tags: [sci-fi, science fiction, concept, narrated, cinematic]

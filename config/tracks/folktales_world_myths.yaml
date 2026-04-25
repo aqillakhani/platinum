@@ -1,0 +1,73 @@
+# Track 2: Folktales & World Myths — STUB (v1.1+)
+# Stylized painterly. Cartoon Saloon / Japanese ink-wash / woodcut by region.
+
+track:
+  id: folktales_world_myths
+  name: "Folktales & World Myths"
+  description: "Stylized painterly. Region-specific palette per origin (Cartoon Saloon, Japanese ink-wash, woodcut illustration)."
+  length:
+    target_seconds: 480
+    min_seconds: 360
+    max_seconds: 600
+  visual:
+    aesthetic: "stylized painterly, hand-illustrated, region-appropriate palette, soft natural lighting, watercolor and ink-wash textures"
+    palette: "regional — earth tones for Celtic, indigo and persimmon for Japanese, ochre for African"
+    lighting: "natural daylight, golden-hour warmth"
+    influences: ["Cartoon Saloon", "Studio Ghibli landscapes", "traditional Japanese ukiyo-e"]
+    negative_prompt: "photorealistic, modern, gritty, dark horror, neon"
+  image_model:
+    backend: flux_dev
+    candidates_per_scene: 3
+    use_ip_adapter_faceid: true
+    use_controlnet_depth: false
+  video_model:
+    backend: wan22_i2v
+    base_resolution: [1280, 720]
+    fps: 24
+    chain_last_frame: true
+  voice:
+    backend: chatterbox_turbo
+    reference_audio: library/voices/folktales_world_myths/reference.wav
+    direction: "Warm, storyteller cadence. Older narrator voice. Gentle authority."
+    pace_wpm: 140
+    emotion_tags_supported: ["[pause]", "[breath]"]
+  music:
+    moods: [traditional_celtic, japanese_shakuhachi, west_african_kora, fiddle_warm]
+    direction: "Region-appropriate traditional instrumentation. Light, supportive."
+    library_subset: folktales
+  sfx:
+    library_subset: folktales
+    common_cues: [wind_meadow, stream_flow, fire_crackle, bird_song, hoofbeats]
+  color_grade:
+    lut: config/luts/folktales_world_myths.cube
+    pre_normalize: true
+    target_contrast: medium
+    target_saturation: medium
+  sources:
+    - type: gutenberg
+      filters:
+        authors: ["Yei Theodora Ozaki", "Andrew Lang", "Joseph Jacobs"]
+        min_words: 1000
+        max_words: 8000
+        languages: [en]
+        license: PD-US
+    - type: wikisource
+      filters:
+        categories: ["Folklore", "Mythology", "Fairy_tales"]
+        min_words: 1000
+        max_words: 8000
+  subtitles:
+    style: srt
+    font: Inter
+    size_pt: 36
+    color: white
+    outline_color: black
+    outline_width: 2
+    position: bottom_center
+  publish:
+    title_template: "{title} | A Folk Tale from {region}"
+    description_template: |
+      {synopsis}
+
+      A retelling of "{title}" — public domain folklore visualized with AI assistance.
+    tags: [folktale, mythology, world stories, narrated]

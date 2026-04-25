@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# Provision a vast.ai RTX 4090 instance with everything the platinum pipeline
+# needs at runtime. Run this once on a fresh instance; weights persist on the
+# attached volume. Re-running is safe (idempotent).
+#
+# Prerequisites on the local machine:
+#   - vast.ai instance rented with RTX 4090 24GB and a persistent volume mounted at /workspace
+#   - SSH access configured (ssh root@HOST -p PORT)
+#   - This file rsynced or scp'd onto the instance, then run as: bash vast_setup.sh
+#
+# What gets installed:
+#   ComfyUI + Manager
+#   Flux.1 Dev weights
+#   Wan 2.2 I2V weights
+#   IP-Adapter FaceID
+#   ControlNet Depth (Flux variant)
+#   RealESRGAN (ncnn-vulkan binary)
+#   Chatterbox-Turbo (Resemble AI)
+#   Whisper large-v3
+#
+# Disk: ~60GB of weights cached to /workspace/models (the persistent volume).
+# Run time on a clean instance: ~30-45 min depending on download bandwidth.
+
+set -euo pipefail
+
+WORKDIR="${WORKDIR:-/workspace/platinum}"
+MODELS_DIR="${MODELS_DIR:-/workspace/models}"
+COMFYUI_DIR="${COMFYUI_DIR:-/workspace/ComfyUI}"
+
+log() { printf '\033[1;36m[setup]\033[0m %s\n' "$*"; }
+
+log "Installing system packages"
+apt-get update -y
+apt-get install -y --no-install-recommends \
+    git curl wget unzip \
+    ffmpeg \
+    python3 python3-venv python3-pip \
+    libsndfile1 \
+    build-essential
+
+mkdir -p "$WORKDIR" "$MODELS_DIR" "$COMFYUI_DIR/models"
+
+# ---- ComfyUI ---------------------------------------------------------------
+
+if [ ! -d "$COMFYUI_DIR/.git" ]; then
+    log "Cloning ComfyUI"
+    git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR"
+else
+    log "ComfyUI already present, pulling latest"
+    git -C "$COMFYUI_DIR" pull --ff-only || true
+fi
+
+python3 -m venv "$COMFYUI_DIR/venv"
+# shellcheck source=/dev/null
+source "$COMFYUI_DIR/venv/bin/activate"
+pip install --upgrade pip
+pip install -r "$COMFYUI_DIR/requirements.txt"
+pip install xformers triton            # speed wins on Flux + Wan 2.2
+
+# Manager (custom node manager — useful for IP-Adapter & ControlNet nodes)
+mkdir -p "$COMFYUI_DIR/custom_nodes"
+if [ ! -d "$COMFYUI_DIR/custom_nodes/ComfyUI-Manager" ]; then
+    git clone https://github.com/ltdrdata/ComfyUI-Manager.git "$COMFYUI_DIR/custom_nodes/ComfyUI-Manager"
+fi
+
+# ---- Symlink models dir to the persistent volume --------------------------
+
+# Move ComfyUI's stock models dir aside, symlink to /workspace/models so weights
+# survive instance restarts.
+if [ -d "$COMFYUI_DIR/models" ] && [ ! -L "$COMFYUI_DIR/models" ]; then
+    log "Linking ComfyUI/models -> $MODELS_DIR"
+    rm -rf "$COMFYUI_DIR/models"
+    ln -s "$MODELS_DIR" "$COMFYUI_DIR/models"
+fi
+
+# ---- Model weights --------------------------------------------------------
+
+# Flux.1 Dev (~24GB): T5 + CLIP + UNet + VAE
+mkdir -p "$MODELS_DIR/checkpoints" "$MODELS_DIR/vae" "$MODELS_DIR/clip" "$MODELS_DIR/unet" \
+         "$MODELS_DIR/controlnet" "$MODELS_DIR/ipadapter" "$MODELS_DIR/upscale_models"
+
+dl() { local url="$1"; local dest="$2"; if [ ! -s "$dest" ]; then log "Downloading $(basename "$dest")"; wget -q --show-progress -O "$dest" "$url"; fi }
+
+# Flux Dev — main UNet (FP8 build to fit comfortably alongside Wan 2.2)
+dl "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors" \
+   "$MODELS_DIR/unet/flux1-dev.safetensors"
+dl "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors" \
+   "$MODELS_DIR/vae/ae.safetensors"
+dl "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors" \
+   "$MODELS_DIR/clip/clip_l.safetensors"
+dl "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors" \
+   "$MODELS_DIR/clip/t5xxl_fp16.safetensors"
+
+# IP-Adapter FaceID (for cross-scene character lock)
+dl "https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid_flux.bin" \
+   "$MODELS_DIR/ipadapter/ip-adapter-faceid_flux.bin" || \
+    log "IP-Adapter FaceID Flux variant not yet hosted at expected path — fetch manually if needed"
+
+# ControlNet Depth (Flux variant)
+dl "https://huggingface.co/Shakker-Labs/FLUX.1-dev-ControlNet-Depth/resolve/main/diffusion_pytorch_model.safetensors" \
+   "$MODELS_DIR/controlnet/flux-depth.safetensors"
+
+# Wan 2.2 I2V weights — exact HF path may vary; check the official repo at runtime
+dl "https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B/resolve/main/diffusion_pytorch_model.safetensors" \
+   "$MODELS_DIR/checkpoints/wan22_i2v.safetensors" || \
+    log "Wan 2.2 weights — adjust URL if HuggingFace path changed"
+
+# RealESRGAN upscaler (ncnn-vulkan binary build for speed)
+if [ ! -d "$MODELS_DIR/realesrgan-ncnn-vulkan" ]; then
+    log "Installing realesrgan-ncnn-vulkan"
+    cd "$MODELS_DIR"
+    wget -q https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip
+    unzip -q realesrgan-ncnn-vulkan-20220424-ubuntu.zip -d realesrgan-ncnn-vulkan
+    rm realesrgan-ncnn-vulkan-20220424-ubuntu.zip
+fi
+
+# ---- Chatterbox-Turbo -----------------------------------------------------
+
+CHATTERBOX_DIR="/workspace/chatterbox"
+if [ ! -d "$CHATTERBOX_DIR" ]; then
+    log "Installing Chatterbox-Turbo"
+    git clone https://github.com/resemble-ai/chatterbox.git "$CHATTERBOX_DIR"
+fi
+python3 -m venv "$CHATTERBOX_DIR/venv"
+# shellcheck source=/dev/null
+source "$CHATTERBOX_DIR/venv/bin/activate"
+pip install --upgrade pip
+pip install -r "$CHATTERBOX_DIR/requirements.txt" || pip install chatterbox-tts
+deactivate
+
+# ---- Whisper large-v3 -----------------------------------------------------
+
+WHISPER_DIR="/workspace/whisper"
+mkdir -p "$WHISPER_DIR"
+python3 -m venv "$WHISPER_DIR/venv"
+# shellcheck source=/dev/null
+source "$WHISPER_DIR/venv/bin/activate"
+pip install --upgrade pip
+pip install openai-whisper
+# Pre-download the large-v3 weights (~3GB)
+python3 - <<'PY'
+import whisper
+whisper.load_model("large-v3", download_root="/workspace/models/whisper")
+print("Whisper large-v3 cached.")
+PY
+deactivate
+
+# ---- ComfyUI launch helper ------------------------------------------------
+
+cat > /workspace/launch_comfyui.sh <<'EOF'
+#!/usr/bin/env bash
+# Launch ComfyUI listening on all interfaces so the orchestrator can hit it.
+set -euo pipefail
+cd /workspace/ComfyUI
+source venv/bin/activate
+exec python main.py --listen 0.0.0.0 --port 8188 --disable-auto-launch
+EOF
+chmod +x /workspace/launch_comfyui.sh
+
+log "Setup complete."
+log "Start ComfyUI:  bash /workspace/launch_comfyui.sh"
+log "Verify HTTP API:  curl http://localhost:8188/system_stats"
+log "Set COMFYUI_HOST in your local secrets/.env to <public-ip>:8188"

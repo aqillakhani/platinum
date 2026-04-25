@@ -1,0 +1,128 @@
+# Track 1: Atmospheric Horror & Dark Tales — SHIPS FIRST (v1.0)
+#
+# Visual style is the most forgiving of current AI weaknesses. Shadows, fog, candlelight,
+# and dim interiors hide artifacts that plague brightly-lit AI footage. Strong narrator-driven
+# format with proven YouTube audience. Public domain corpus is enormous.
+
+track:
+  id: atmospheric_horror
+  name: "Atmospheric Horror & Dark Tales"
+  description: "Cinematic dark, low-key lighting, restrained narration. Inspired by Guillermo del Toro, Mike Flanagan, classic Hammer horror."
+
+  # Length target (seconds). scene_breakdown enforces total within ±5%.
+  length:
+    target_seconds: 600            # 10 minutes
+    min_seconds: 480               # 8 minutes
+    max_seconds: 720               # 12 minutes
+
+  # Visual aesthetic — injected into Claude prompts and Flux prompt prefixes.
+  visual:
+    aesthetic: "cinematic dark, low-key chiaroscuro lighting, heavy atmosphere, muted desaturated palette with occasional crimson or amber accent, heavy film grain, oil painting quality"
+    palette: "deep shadow, candlelight amber, ash grey, blood crimson"
+    lighting: "single-source low-key, volumetric fog, candle and oil-lamp ambience"
+    influences: ["Guillermo del Toro", "Mike Flanagan", "Hammer Horror"]
+    negative_prompt: "bright daylight, saturated, cartoon, anime, plastic, smooth, sterile, flat lighting, modern technology, neon"
+
+  # Image generation — Flux.1 Dev locally is default. Flip to "pro_api" if Dev's atmosphere is insufficient.
+  image_model:
+    backend: flux_dev              # "flux_dev" | "flux_pro_api" | "sd35"
+    candidates_per_scene: 3
+    use_ip_adapter_faceid: true    # lock recurring character identity across scenes
+    use_controlnet_depth: false    # opt-in per scene via the visual_prompts stage
+
+  # Video generation
+  video_model:
+    backend: wan22_i2v             # "wan22_i2v" | "hunyuan_video_15"
+    base_resolution: [1280, 720]   # native; upscaled to 1920×1080 by Stage 8.5
+    fps: 24
+    chain_last_frame: true         # scene N+1 conditions on scene N's last frame
+
+  # Voice direction
+  voice:
+    backend: chatterbox_turbo
+    reference_audio: library/voices/atmospheric_horror/reference.wav
+    direction: "Slow, measured, low-pitched male narrator. Deliberate pauses. No theatrics — restraint sells the dread."
+    pace_wpm: 130                  # words per minute target
+    emotion_tags_supported:
+      - "[whisper]"
+      - "[breath]"
+      - "[pause]"
+
+  # Music selection — query against library/music/tags.json
+  music:
+    moods:
+      - ambient_drone
+      - slow_strings_dread
+      - single_piano_unease
+      - dark_choir
+    direction: "Sparse drones, slow strings, single piano notes, ambient unease. No melodic motifs that compete with narration."
+    library_subset: horror
+
+  # SFX selection — query against library/sfx/tags.json
+  sfx:
+    library_subset: horror
+    common_cues:
+      - clock_ticking_distant
+      - wind_through_window
+      - footstep_wood
+      - door_creak
+      - candle_crackle
+      - heartbeat_slow
+
+  # Color grade
+  color_grade:
+    lut: config/luts/atmospheric_horror.cube
+    pre_normalize: true            # per-clip exposure match before LUT
+    target_contrast: high
+    target_saturation: low
+
+  # Sources — order = priority
+  sources:
+    - type: gutenberg
+      filters:
+        authors: ["Edgar Allan Poe", "H. P. Lovecraft", "Ambrose Bierce", "M. R. James", "Algernon Blackwood", "William Hope Hodgson", "J. Sheridan Le Fanu"]
+        min_words: 1500
+        max_words: 12000
+        languages: ["en"]
+        license: "PD-US"
+        year_published_max: 1929   # safe US public domain pre-1930
+    - type: wikisource
+      filters:
+        categories: ["Horror_short_stories", "Weird_fiction"]
+        min_words: 1500
+        max_words: 12000
+    - type: reddit
+      filters:
+        subreddits: ["nosleep", "shortscarystories"]
+        time_filter: all
+        min_score: 5000
+        min_words: 1000
+        max_words: 8000
+        # Reddit content is paraphrased and adapted, never used verbatim.
+        adaptation_required: true
+
+  # Subtitle styling — minimal cinematic
+  subtitles:
+    style: srt                      # "srt" (white + drop shadow) or "ass" (karaoke; not used here)
+    font: "Inter"
+    size_pt: 36
+    color: "white"
+    outline_color: "black"
+    outline_width: 2
+    position: bottom_center
+
+  # Publish metadata defaults
+  publish:
+    title_template: "{title} | A Tale of Dread by {author}"
+    description_template: |
+      {synopsis}
+
+      A cinematic adaptation of "{title}" by {author} ({source_url}).
+
+      Public domain literature, narrated and visualized with AI assistance.
+    tags:
+      - horror
+      - classic literature
+      - narrated story
+      - dark tales
+      - gothic

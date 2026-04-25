@@ -1,0 +1,69 @@
+# Track 3: Children's Fables — STUB (v1.1+)
+# Warm, soft animation. Studio Ghibli daytime + Pixar lighting.
+
+track:
+  id: childrens_fables
+  name: "Children's Fables"
+  description: "Warm, soft animation. Bright but never saturated."
+  length:
+    target_seconds: 360
+    min_seconds: 240
+    max_seconds: 480
+  visual:
+    aesthetic: "warm soft animation, Studio Ghibli daytime palette, Pixar lighting principles, gentle character shapes, hand-drawn quality"
+    palette: "soft pastels, warm yellows, gentle greens"
+    lighting: "natural daytime, golden warm afternoon"
+    influences: ["Studio Ghibli", "Pixar", "Beatrix Potter illustrations"]
+    negative_prompt: "horror, dark, saturated neon, photorealistic, scary"
+  image_model:
+    backend: flux_dev
+    candidates_per_scene: 3
+    use_ip_adapter_faceid: true
+    use_controlnet_depth: false
+  video_model:
+    backend: wan22_i2v
+    base_resolution: [1280, 720]
+    fps: 24
+    chain_last_frame: true
+  voice:
+    backend: chatterbox_turbo
+    reference_audio: library/voices/childrens_fables/reference.wav
+    direction: "Female narrator, warm, slightly playful. Clear enunciation. Gentle pacing."
+    pace_wpm: 135
+    emotion_tags_supported: ["[pause]", "[laugh]"]
+  music:
+    moods: [acoustic_piano_warm, ukulele_light, gentle_strings]
+    direction: "Acoustic instrumentation. Light, hopeful melodies."
+    library_subset: childrens
+  sfx:
+    library_subset: childrens
+    common_cues: [bird_song, stream_flow, gentle_wind, footstep_grass]
+  color_grade:
+    lut: config/luts/childrens_fables.cube
+    pre_normalize: true
+    target_contrast: low
+    target_saturation: medium
+  sources:
+    - type: gutenberg
+      filters:
+        authors: ["Aesop", "Hans Christian Andersen", "Brothers Grimm", "Beatrix Potter"]
+        min_words: 500
+        max_words: 4000
+        languages: [en]
+        license: PD-US
+        content_filter: child_safe
+  subtitles:
+    style: srt
+    font: Inter
+    size_pt: 36
+    color: white
+    outline_color: black
+    outline_width: 2
+    position: bottom_center
+  publish:
+    title_template: "{title} | A Fable for Bedtime"
+    description_template: |
+      {synopsis}
+
+      A gentle retelling of "{title}" by {author}. Public domain fable, visualized with AI.
+    tags: [fable, bedtime story, children, narrated, gentle]

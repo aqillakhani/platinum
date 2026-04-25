@@ -1,0 +1,72 @@
+# Track 4: Slice-of-Life Meditative Shorts — STUB (v1.1+)
+# Ghibli-inspired, soft-focus, painterly. Heavy environment over character.
+
+track:
+  id: slice_of_life
+  name: "Slice-of-Life Meditative Shorts"
+  description: "Ghibli soft-focus painterly. Long slow shots. Built for sleep / study audience."
+  length:
+    target_seconds: 600
+    min_seconds: 300
+    max_seconds: 900
+  visual:
+    aesthetic: "Ghibli soft-focus painterly, environmental detail, contemplative wide shots, weather and light as subject"
+    palette: "muted natural, rain-grey, tea-warm, forest-green"
+    lighting: "soft diffused, rain-window, steam, dappled forest"
+    influences: ["Studio Ghibli (Whisper of the Heart, Only Yesterday)", "Joe Hisaishi visual sensibility"]
+    negative_prompt: "action, fast cuts, harsh lighting, neon, horror"
+  image_model:
+    backend: flux_dev
+    candidates_per_scene: 3
+    use_ip_adapter_faceid: false
+    use_controlnet_depth: false
+  video_model:
+    backend: wan22_i2v
+    base_resolution: [1280, 720]
+    fps: 24
+    chain_last_frame: true
+  voice:
+    backend: chatterbox_turbo
+    reference_audio: library/voices/slice_of_life/reference.wav
+    direction: "Soft female or gentle male narrator. Contemplative pacing. Room for silence."
+    pace_wpm: 110
+    emotion_tags_supported: ["[pause]", "[breath]"]
+  music:
+    moods: [lofi_ambient, ambient_piano, hisaishi_meditative, asmr_adjacent]
+    direction: "Lo-fi, ambient piano, ASMR-adjacent. Joe Hisaishi-influenced."
+    library_subset: slice_of_life
+  sfx:
+    library_subset: slice_of_life
+    common_cues: [rain_window, kettle_steam, leaves_rustle, footstep_wood, distant_train]
+  color_grade:
+    lut: config/luts/slice_of_life.cube
+    pre_normalize: true
+    target_contrast: low
+    target_saturation: low
+  sources:
+    - type: gutenberg
+      filters:
+        min_words: 1500
+        max_words: 8000
+        languages: [en]
+        license: PD-US
+    - type: wikisource
+      filters:
+        categories: ["Japanese_literature", "Slice_of_life"]
+        min_words: 1500
+        max_words: 8000
+  subtitles:
+    style: srt
+    font: Inter
+    size_pt: 36
+    color: white
+    outline_color: black
+    outline_width: 2
+    position: bottom_center
+  publish:
+    title_template: "{title} | A Quiet Moment"
+    description_template: |
+      {synopsis}
+
+      A meditative adaptation. Public domain literature visualized with AI assistance.
+    tags: [slice of life, meditative, sleep, study, ambient, narrated]

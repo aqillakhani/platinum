@@ -1,0 +1,94 @@
+app:
+  name: platinum
+  version: 0.1.0
+  data_dir: data
+  library_dir: library
+  log_level: INFO
+  log_file: data/logs/platinum.log
+  active_tracks:
+    - atmospheric_horror
+
+# Pipeline behaviour
+pipeline:
+  max_retries: 3
+  retry_base_delay: 5
+  retry_max_delay: 300
+  # Per-stage timeouts (seconds). Cloud-GPU stages get more headroom.
+  stage_timeout:
+    keyframe_generator: 1800       # 30 min for ~60 scenes × 3 candidates
+    video_generator: 3600          # 60 min for Wan 2.2 across all scenes
+    upscaler: 1800
+    voice_generator: 600
+    subtitle_generator: 600
+
+# Video output target — cinematic landscape
+video:
+  resolution:
+    width: 1920
+    height: 1080
+  fps: 24
+  codec: libx264
+  crf: 18                          # near-visually-lossless
+  preset: medium
+  audio_codec: aac
+  audio_bitrate: 192k
+
+# Audio mixing targets (LUFS integrated). Sidechain ducks music when narration is present.
+audio:
+  narration_lufs: -16
+  music_lufs_under_speech: -28
+  music_lufs_solo: -20
+  sfx_lufs: -20
+  master_lufs: -14                 # YouTube broadcast target
+
+# External APIs
+api:
+  anthropic:
+    model: claude-sonnet-4-5
+    max_tokens: 8192
+    prompt_caching: true           # gold lacks this; platinum opts in for cost savings
+  comfyui:
+    # Set COMFYUI_HOST in secrets/.env for runtime; this is the timeout fallback only.
+    timeout: 1800
+  bfl:                             # Flux.1 Pro API (only used when track.image_model == "pro_api")
+    base_url: https://api.bfl.ml
+    timeout: 120
+
+# Cloud GPU (vast.ai)
+cloud:
+  provider: vast_ai
+  instance_role: long_lived         # one persistent instance vs per-stage ephemeral
+  remote_workdir: /workspace/platinum
+  weights_volume: /workspace/models
+  comfyui_port: 8188
+
+# Source fetching defaults (per-track filters override these)
+sources:
+  gutenberg:
+    base_url: https://gutendex.com
+    text_url: https://www.gutenberg.org/cache/epub/{id}/pg{id}.txt
+  wikisource:
+    base_url: https://en.wikisource.org/w/api.php
+
+# Quality gates — automated thresholds before human review
+quality_gates:
+  keyframe:
+    min_aesthetic_score: 5.0       # LAION-Aesthetics v2 (0-10 scale)
+    require_no_anatomy_anomaly: true
+  video:
+    min_motion_magnitude: 0.5      # mean optical flow
+    max_black_frame_ratio: 0.0     # zero tolerance
+  final:
+    duration_tolerance_seconds: 2.0
+    require_lufs_in_range: true
+
+# Publish defaults
+publish:
+  youtube:
+    category_id: "1"               # Film & Animation (vs gold's 22 People & Blogs)
+    privacy_status: public
+    notify_subscribers: true
+    ai_disclosure: |
+      ---
+      AI-generated content: visuals, voice, and music selection assisted by AI tools.
+      Source: public-domain literature.
