@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from platinum.models.story import Adapted, Story
+from platinum.pipeline.context import PipelineContext
+from platinum.pipeline.stage import Stage
 from platinum.utils.claude import (
     ClaudeProtocolError,
     ClaudeResult,
@@ -146,3 +148,30 @@ async def adapt(
         db_path=db_path, recorder=recorder,
     )
     return _adapted_from_tool_input(result.tool_input, pace_wpm=pace_wpm), result
+
+
+class StoryAdapterStage(Stage):
+    """Orchestrator wrapper for the adapter Claude call."""
+
+    name: ClassVar[str] = "story_adapter"
+
+    async def run(self, story: Story, ctx: PipelineContext) -> dict[str, Any]:
+        track_cfg = ctx.config.track(story.track)
+        # Tests inject a recorder via ctx.config.settings["test"]["claude_recorder"];
+        # production leaves it None.
+        recorder = ctx.config.settings.get("test", {}).get("claude_recorder")
+        adapted, claude_result = await adapt(
+            story=story,
+            track_cfg=track_cfg,
+            prompts_dir=ctx.config.config_dir / "prompts",
+            db_path=ctx.db_path,
+            recorder=recorder,
+        )
+        story.adapted = adapted
+        return {
+            "model": claude_result.usage.model,
+            "input_tokens": claude_result.usage.input_tokens,
+            "output_tokens": claude_result.usage.output_tokens,
+            "cache_read_input_tokens": claude_result.usage.cache_read_input_tokens,
+            "cost_usd": claude_result.usage.cost_usd,
+        }
