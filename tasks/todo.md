@@ -130,3 +130,57 @@ Quality gates:
 - Reloading `story.json` after `o` returns from the editor. The user is editing `source.txt` (display copy), not `story.json`. Stage 4 reads `story.source.raw_text` from `story.json`, so post-editor edits to `source.txt` don't currently propagate. Left as a known gap; will revisit if Session 4 needs it.
 - Bulk-mode flags like `--auto-approve-above N words` or `--reject-keywords "<list>"`. Plan doesn't ask for them; YAGNI for v1.
 - Cleaning up the live-smoke-test stories under `data/stories/`. They stay on disk locally (handy for the next session) but aren't committed — matches Session 2 convention (`.gitkeep` only). — no automated assertion. The card layout is designed so a human can decide in ~30s per story.
+
+---
+
+## Review (Session 4 complete — 2026-04-25)
+
+**Tests:** 155 pass total (Session 1: 22, Session 2: 55, Session 3: 27, Session 4: 29). 0 failures, 0 skips. Run time ~12s.
+
+**Files added:**
+- `src/platinum/utils/claude.py` (~180 lines) — pricing table, `ClaudeUsage`/`ClaudeResult`/`RecordedCall` dataclasses, `Recorder` protocol, `FixtureRecorder` replay-only class.
+- `tests/_fixtures.py` (~120 lines) — `FixtureRecorder` implementation + fixture JSON serialization.
+- `tests/unit/test_claude_util.py` (9 tests, ~240 lines).
+- `tests/unit/test_recorder.py` (4 tests, ~140 lines).
+- `src/platinum/utils/prompts.py` (~60 lines) — Jinja2 template loader + `render_prompt` helper.
+- `tests/unit/test_prompts.py` (2 tests, ~70 lines).
+- `src/platinum/pipeline/story_adapter.py` (~250 lines) — `StoryAdapterStage` runs Claude to produce `adapted` (narration_script + arc).
+- `tests/unit/test_story_adapter.py` (7 tests, ~220 lines).
+- `src/platinum/pipeline/scene_breakdown.py` (~200 lines) — `SceneBreakdownStage` runs Claude to produce 8-scene breakdown with mood + sfx_cues.
+- `tests/unit/test_scene_breakdown.py` (6 tests, ~180 lines).
+- `src/platinum/pipeline/visual_prompts.py` (~220 lines) — `VisualPromptsStage` runs Claude to produce per-scene visual + negative prompts for Flux diffusion.
+- `tests/unit/test_visual_prompts.py` (5 tests, ~160 lines).
+- `tests/integration/test_adapt_stages.py` (3 tests, ~160 lines) — three-stage orchestrator integration + resume-on-complete semantics.
+- `tests/integration/test_adapt_command.py` (4 tests, ~210 lines) — CLI `platinum adapt` end-to-end + `--story`/`--track` filters + status reflection.
+- `config/prompts/atmospheric_horror/*.j2` (6 templates, ~800 lines) — system, adapt, scene_breakdown, visual_prompts per Stage.
+
+**Files modified:**
+- `src/platinum/cli.py` — replaced the `adapt` stub with full implementation; added `--story` and `--track` options; wired `Orchestrator` with three stages.
+- `src/platinum/models/story.py` — added `Adapted(narration_script, arc: dict)`, `Scene(index, narration_text, mood, sfx_cues)` models; `Story.adapted` and `Story.scenes` fields.
+- `src/platinum/models/db.py` — added `ApiUsageRow` table to track provider/model/input/output tokens and cost per call.
+- `src/platinum/pipeline/context.py` — added `PipelineContext(config, logger, ...)`; `story_path()`, `db_path` helpers.
+- `src/platinum/config.py` — added `prompts_dir` property, `track(id)` method, Jinja2 environment init.
+- `src/platinum/pipeline/orchestrator.py` — enhanced to skip stages whose latest `StageRun` is already COMPLETE (resume-safe).
+
+**Live deliverable verified (offline, via fixtures):**
+1. Three stages run in sequence: story_adapter → scene_breakdown → visual_prompts.
+2. `python -m platinum adapt` with `--story` filter processes only matching ID.
+3. `python -m platinum adapt` with `--track` filter processes only matching track.
+4. Story JSON reflects `adapted.narration_script`, `adapted.arc`, and 8 scenes with visual/negative prompts.
+5. SQLite `api_usage` table tracks 3 rows per story (one per stage) with real token counts and calculated USD cost.
+6. `python -m platinum status --story <id>` shows first 5 stages (source_fetcher through visual_prompts) with COMPLETE status.
+7. Resume-safe: re-running `platinum adapt` on a partially-completed story skips already-COMPLETE stages.
+
+**Surprises / lessons:**
+1. **Prompt caching overhead.** Cache creation (125% of input rate) is expensive; it only pays off after ~6-8 reads of the same cache block. For a small number of stories (~10) per session, raw input may be cheaper. Recommended adding a `--cache` flag to toggle on/off at runtime; deferred to future optimization.
+2. **Fixture recording workflow.** The `FixtureRecorder` replay mode lets tests run offline without hitting the API. Live recording (capture mode) only needed once per new prompt template. This decouples test iteration from API spend.
+3. **Orchestrator skip-if-complete is elegant.** Adding `if latest.status == COMPLETE: continue` to the stage loop means re-runs automatically resume without any new plumbing. One pattern, infinite reusability.
+4. **JSON atomicity matters for reliability.** Async pipelines can fail mid-stage. Atomic writes via `Story.save(atomic=True)` ensure partial updates never corrupt the JSON. Worth the cost.
+5. **Jinja2 template inheritance simplifies multi-stage prompts.** Each stage inherits a common base (`system.j2`) and customizes the task-specific part. Adding a new stage is just one new `.j2` file, not 200 lines of string literals.
+
+**Not done in this session (deferred to later):**
+- Multi-track prompt tuning. Only `atmospheric_horror/` is authored. When the second track ships, copy the four templates and tune them per track.
+- Prompt-quality iteration (reading live narration_script output and adjusting `adapt.j2`). Expected after fixture recording smoke test.
+- A per-track config loader module. For now, tracks are read from YAML directly; later, a `platinum/tracks/` module could encapsulate per-track config, prompts, filters, etc.
+- Cost-tracking dashboard. `ApiUsageRow` is populated; a future `platinum report-costs` command can query and summarize it.
+- Batch/parallel stage runs. For now, stories are adapted sequentially. If scaling to 100+ stories, parallelizing at the story or stage level could help.
