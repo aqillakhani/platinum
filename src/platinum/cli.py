@@ -1,11 +1,12 @@
 """Typer CLI entry point.
 
-Most commands are stubs until later sessions implement them. ``status`` is
-real from Session 1 so the checkpoint contract is exercisable end-to-end.
+Most commands are stubs until later sessions implement them. ``status``
+is real from Session 1; ``fetch`` is real from Session 2.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 import typer
@@ -16,6 +17,7 @@ from platinum.config import Config
 from platinum.models.db import StageRunRow, StoryRow, create_all, sync_session
 from platinum.models.story import StageStatus
 from platinum.pipeline.orchestrator import CANONICAL_STAGE_NAMES
+from platinum.sources.runner import fetch_track_sources, persist_source_as_story
 
 app = typer.Typer(
     name="platinum",
@@ -74,7 +76,7 @@ def status(
         )
     latest: dict[str, StageRunRow] = {}
     for r in runs:
-        latest[r.stage] = r  # later rows overwrite earlier → latest wins
+        latest[r.stage] = r  # later rows overwrite earlier -> latest wins
 
     _print_story_status(story_row, latest)
 
@@ -89,8 +91,55 @@ def fetch(
     track: str = typer.Option(..., "--track", "-t", help="Track id (e.g. atmospheric_horror)."),
     limit: int = typer.Option(10, "--limit", "-n", help="How many candidates to fetch."),
 ) -> None:
-    """Fetch candidate source stories for a track."""
-    _stub("fetch", "Session 2 (source fetchers)")
+    """Fetch candidate source stories for a track.
+
+    Drives every source listed under the track YAML's ``sources`` block in
+    order until ``--limit`` candidates are gathered, then writes each as a
+    Story JSON under ``data/stories/<id>/``.
+    """
+    cfg = Config()
+    try:
+        track_cfg = cfg.track(track)
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1)
+
+    if not track_cfg.get("sources"):
+        console.print(
+            f"[red]Track '{track}' has no 'sources' block configured.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    sources = asyncio.run(fetch_track_sources(track_cfg, limit=limit))
+    if not sources:
+        console.print(
+            f"[yellow]No candidates returned for track '{track}'. "
+            f"Check filters and network access.[/yellow]"
+        )
+        raise typer.Exit(code=0)
+
+    table = Table(title=f"Fetched candidates — track={track}", show_lines=False)
+    table.add_column("Story id", style="cyan")
+    table.add_column("Source", style="magenta")
+    table.add_column("Title", style="white")
+    table.add_column("Author", style="white")
+    table.add_column("Words", style="green", justify="right")
+
+    for src in sources:
+        story = persist_source_as_story(cfg, src, track=track)
+        table.add_row(
+            story.id,
+            src.type,
+            (src.title or "")[:60],
+            (src.author or "—")[:30],
+            str(len(src.raw_text.split())),
+        )
+
+    console.print(table)
+    console.print(
+        f"[green]Wrote {len(sources)} story candidate(s) to "
+        f"{cfg.stories_dir}[/green]"
+    )
 
 
 @app.command()
@@ -103,7 +152,7 @@ def curate() -> None:
 def adapt(
     story: str = typer.Argument(..., help="Story id to adapt."),
 ) -> None:
-    """Adapt an approved story → polished narration script + scenes + visual prompts."""
+    """Adapt an approved story -> polished narration script + scenes + visual prompts."""
     _stub("adapt", "Session 4 (Claude integration)")
 
 
@@ -111,7 +160,7 @@ def adapt(
 def render(
     story: str = typer.Argument(..., help="Story id to render."),
 ) -> None:
-    """Run the render pipeline (keyframes → video → upscale → voice → mix → grade)."""
+    """Run the render pipeline (keyframes -> video -> upscale -> voice -> mix -> grade)."""
     _stub("render", "Sessions 6-14 (render pipeline)")
 
 
