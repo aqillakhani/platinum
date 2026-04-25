@@ -187,8 +187,18 @@ Quality gates:
 5. **Tolerance derived from track YAML, not a hardcoded percent.** atmospheric_horror's tolerance is `max(target-min, max-target) = 120s` from min=480/max=720/target=600. If a future track wants asymmetric ranges (e.g., min=300, target=400, max=600), the same code handles it.
 6. **The chore-commit subagent hallucinated scope.** During Task 22 dispatch, the implementer subagent went off-script and completed Tasks 22 / 23 / 24 / 26 in one run. Tasks 22, 23, 26 turned out correct; the chore commit (Task 24) over-modified -- it committed `data/stories/story_*/` workspace data that project memory says should never be tracked, and falsely claimed "ruff/mypy passes" when 8 pre-Session-4 ruff errors remained. Corrected in `1170920` by `git rm --cached` and a `.gitignore` hardening. Lesson: even with explicit scope, subagents can drift; verify diffs before merging, especially for "chore" / "sweep" tasks.
 
+**Live smoke verified (2026-04-25, story_2026_04_25_001 -- The Cask of Amontillado):**
+- `platinum fetch --track atmospheric_horror --limit 1` -> Cask, 2329 words from Gutendex.
+- `printf "s\na\n" | platinum curate` -> approved Cask, skipped carryover Shunned House.
+- `platinum adapt --story story_2026_04_25_001` -> all three stages COMPLETE.
+- Adapted: 1482-word narration, 684s estimated duration (in [480,720] tolerance, no regen needed), arc fully populated.
+- Breakdown: 16 scenes with mood + sfx_cues; first scene `single_piano_unease` + `[clock_ticking_distant, candle_crackle]`.
+- Visual prompts: every scene populated with Flux-style descriptors (e.g. "close portrait of a Venetian nobleman in dark velvet doublet, candlelit study...").
+- `platinum status --story story_2026_04_25_001` shows source_fetcher / story_curator / story_adapter / scene_breakdown / visual_prompts all COMPLETE.
+- **Real cost: $1.18** (vs. $0.48 plan estimate). Three Opus calls totalling 16,807 input + 12,334 output tokens. The estimate was light because the narration script came back at 1482 words (planned ~1300) and the breakdown produced 16 scenes (planned 8) with richer mood/sfx metadata than projected. Future per-story cost in this format: $1.00-1.50 typical, scaling with source word count.
+- No fixture recording was performed (the existing synthetic-recorder tests all pass; recorded fixtures would only be needed if we wanted to replay this exact response in tests).
+
 **Not done in this session (deferred to later):**
-- **Live smoke + fixture recording (plan Task 25).** Manual; needs `ANTHROPIC_API_KEY` in `secrets/.env` and one approved story in `data/stories/`. Run `python -m platinum fetch --track atmospheric_horror --limit 1`, `platinum curate` (approve), then `platinum adapt` to spend ~$0.50 verifying the live API path end-to-end. Optionally `PLATINUM_RECORD_FIXTURES=1` to re-record any stale fixtures.
 - **Pre-Session-4 ruff debts (8 errors).** All in pre-existing files: `cli.py:111` (B904 -- `raise typer.Exit` without `from exc` in fetch's KeyError handler); `models/story.py:25,32` (UP042 -- `class ReviewStatus/StageStatus(str, Enum)` would prefer `StrEnum`, but that's a behavior change because `str` instances compare differently from `StrEnum`); `pipeline/story_curator.py:50` (UP042 -- same `Decision(str, Enum)` pattern); `tests/integration/test_fetch_command.py:176-208` (E501 -- four lines >100 chars). All of these pre-date Session 4 and are not blockers; they want a small follow-up commit (probably Session 5 cleanup).
 - **Multi-track prompt authoring.** Only `config/prompts/atmospheric_horror/` is populated. When Session 5 onward exercises a second track, copy the four templates and tune.
 - **Prompt-quality iteration.** Real horror text + Opus output may need 1-2 rounds of prompt tuning post-smoke. Not architectural; a couple of `system.j2` / `adapt.j2` edits.
