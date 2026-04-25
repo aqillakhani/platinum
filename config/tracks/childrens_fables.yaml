@@ -60,6 +60,15 @@ track:
     outline_color: black
     outline_width: 2
     position: bottom_center
+  # Quality gates -- automated thresholds enforced before human review (Session 5).
+  quality_gates:
+    aesthetic_min_score: 6.5
+    black_frame_max_ratio: 0.005
+    luminance_threshold: 16.0
+    motion_min_flow_magnitude: 0.8
+    audio_target_lufs: -16.0
+    audio_lufs_tolerance_db: 1.5
+    duration_tolerance_seconds: 0.5
   publish:
     title_template: "{title} | A Fable for Bedtime"
     description_template: |

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from platinum.config import Config
 
 EXPECTED_KEYS = {
@@ -31,3 +33,22 @@ def test_atmospheric_horror_yaml_loads_quality_gates() -> None:
     assert 0.0 <= gates["aesthetic_min_score"] <= 10.0
     assert 0.0 <= gates["black_frame_max_ratio"] <= 1.0
     assert gates["audio_target_lufs"] < 0
+
+
+ALL_TRACKS = [
+    "atmospheric_horror",
+    "folktales_world_myths",
+    "childrens_fables",
+    "scifi_concept",
+    "slice_of_life",
+]
+
+
+@pytest.mark.parametrize("track_id", ALL_TRACKS)
+def test_all_tracks_have_quality_gates(track_id: str) -> None:
+    cfg = Config(root=REPO_ROOT)
+    track = cfg.track(track_id)
+    assert "quality_gates" in track, f"{track_id} missing quality_gates"
+    gates = track["quality_gates"]
+    missing = EXPECTED_KEYS - set(gates.keys())
+    assert not missing, f"{track_id}.quality_gates missing keys: {missing}"
