@@ -76,3 +76,10 @@ async def test_remote_scorer_happy_path(tmp_path: Path) -> None:
     assert captured["method"] == "POST"
     assert b"candidate_0.png" in captured["content"]  # multipart filename
     assert str(captured["content_type"]).startswith("multipart/form-data")
+
+
+def test_remote_scorer_missing_host_raises() -> None:
+    from platinum.utils.aesthetics import RemoteAestheticScorer
+
+    with pytest.raises(ValueError, match="PLATINUM_AESTHETICS_HOST"):
+        RemoteAestheticScorer(host="")
