@@ -251,3 +251,94 @@ async def test_generate_for_scene_missing_visual_prompt_raises(tmp_path: Path) -
             mp_hands_factory=make_fake_hands_factory(None),
         )
     assert "visual_prompt" in str(exc.value)
+
+
+async def test_generate_for_scene_isolates_per_candidate_exception(
+    tmp_path: Path,
+) -> None:
+    """One candidate throws; other two succeed; selection picks among survivors."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_fake_hands_factory
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    fixtures = _fixture_dir()
+    output_dir = tmp_path / "scene_000"
+
+    # Configure responses for seeds 0 and 2 only; seed 1 will raise KeyError.
+    responses: dict[str, list[Path]] = {}
+    for seed, fixture in [(0, fixtures / "candidate_0.png"), (2, fixtures / "candidate_2.png")]:
+        wf = inject(
+            wf_template,
+            prompt="cinematic dark, candlelight a candle",
+            negative_prompt="bright daylight",
+            seed=seed,
+            width=1024,
+            height=1024,
+            output_prefix=f"scene_000_candidate_{seed}",
+        )
+        responses[workflow_signature(wf)] = [fixture]
+    comfy = FakeComfyClient(responses=responses)
+
+    scene = _scene(idx=0)
+    score_map = {
+        output_dir / "candidate_0.png": 6.5,
+        output_dir / "candidate_2.png": 8.0,
+    }
+    scorer = MappedFakeScorer(scores_by_path=score_map, default=0.0)
+    report = await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates=_GATES,
+        comfy=comfy,
+        scorer=scorer,
+        output_dir=output_dir,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+    assert report.scores[1] == 0.0  # the failed candidate
+    assert report.anatomy_passed[1] is False
+    assert report.selected_index == 2  # candidate_2 has highest passing score
+
+
+async def test_generate_for_scene_all_fail_raises_keyframe_generation_error(
+    tmp_path: Path,
+) -> None:
+    from platinum.pipeline.keyframe_generator import (
+        KeyframeGenerationError,
+        generate_for_scene,
+    )
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(idx=0)
+    wf_template = _get_workflow_template()
+    comfy = FakeComfyClient(responses={})  # no responses -> KeyError on every call
+    with pytest.raises(KeyframeGenerationError) as exc:
+        await generate_for_scene(
+            scene,
+            track_visual=_TRACK_VISUAL,
+            quality_gates=_GATES,
+            comfy=comfy,
+            scorer=FakeAestheticScorer(fixed_score=8.0),
+            output_dir=tmp_path / "scene_000",
+            workflow_template=wf_template,
+            seeds=(0, 1, 2),
+            mp_hands_factory=make_fake_hands_factory(None),
+        )
+    assert exc.value.scene_index == 0
+    assert len(exc.value.exceptions) == 3
+
+
+def test_generate_for_scene_seeds_default_to_index_offset() -> None:
+    """When seeds=None, _seeds_for_scene(scene.index, n) is used."""
+    from platinum.pipeline.keyframe_generator import _seeds_for_scene
+
+    assert _seeds_for_scene(0, 3) == (0, 1, 2)
+    assert _seeds_for_scene(7, 3) == (7000, 7001, 7002)
+    assert _seeds_for_scene(12, 4) == (12000, 12001, 12002, 12003)
