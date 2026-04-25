@@ -135,3 +135,35 @@ def test_check_black_frames_missing_file(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError):
         check_black_frames(tmp_path / "nope.mp4", max_black_ratio=0.05, luminance_threshold=8.0)
+
+
+def test_check_motion_static_video_fails(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_motion
+    video = tmp_path / "static.mp4"
+    make_test_video(video, n_frames=30, fps=24, color=(80, 80, 80), size=(64, 64))
+    r = check_motion(video, min_flow_magnitude=0.5)
+    assert not r.passed
+
+
+def test_check_motion_moving_video_passes(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_motion
+    video = tmp_path / "moving.mp4"
+    make_test_video_with_motion(video, n_frames=30, fps=24, size=(64, 64))
+    r = check_motion(video, min_flow_magnitude=0.5)
+    assert r.passed
+    assert r.metric > 0.5
+
+
+def test_check_motion_corrupt_video_fails(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_motion
+    video = tmp_path / "corrupt.mp4"
+    video.write_bytes(b"not a real mp4")
+    r = check_motion(video, min_flow_magnitude=0.5)
+    assert not r.passed
+    assert "cannot read" in r.reason.lower() or "frames" in r.reason.lower()
+
+
+def test_check_motion_missing_file(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_motion
+    with pytest.raises(FileNotFoundError):
+        check_motion(tmp_path / "nope.mp4", min_flow_magnitude=0.5)

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,3 +197,65 @@ def check_black_frames(
             f"({black}/{total} frames below luminance {luminance_threshold:.1f})"
         )
     return CheckResult(passed=passed, metric=ratio, threshold=max_black_ratio, reason=reason)
+
+
+def check_motion(
+    video_path: Path,
+    *,
+    min_flow_magnitude: float,
+    sample_every_n_frames: int = 6,
+) -> CheckResult:
+    """Pass if mean Farneback dense optical-flow magnitude is at least min_flow_magnitude."""
+    p = Path(video_path)
+    if not p.exists():
+        raise FileNotFoundError(f"Video file not found: {p}")
+    cap = cv2.VideoCapture(str(p))
+    if not cap.isOpened():
+        return CheckResult(
+            passed=False,
+            metric=0.0,
+            threshold=min_flow_magnitude,
+            reason="failed: cannot read video",
+        )
+    magnitudes: list[float] = []
+    prev_gray = None
+    frame_idx = 0
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                break
+            if frame_idx % sample_every_n_frames == 0:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                if prev_gray is not None:
+                    flow = cv2.calcOpticalFlowFarneback(
+                        prev_gray, gray, None,
+                        pyr_scale=0.5, levels=3, winsize=15, iterations=3,
+                        poly_n=5, poly_sigma=1.2, flags=0,
+                    )
+                    mag = float(np.linalg.norm(flow, axis=2).mean())
+                    magnitudes.append(mag)
+                prev_gray = gray
+            frame_idx += 1
+    finally:
+        cap.release()
+    if not magnitudes:
+        return CheckResult(
+            passed=False,
+            metric=0.0,
+            threshold=min_flow_magnitude,
+            reason="failed: not enough frames to measure motion",
+        )
+    mean_mag = float(np.mean(magnitudes))
+    passed = mean_mag >= min_flow_magnitude
+    if passed:
+        reason = (
+            f"passed: mean flow magnitude {mean_mag:.2f} >= min {min_flow_magnitude:.2f}"
+        )
+    else:
+        reason = (
+            f"failed: mean flow magnitude {mean_mag:.2f} below min {min_flow_magnitude:.2f}"
+        )
+    return CheckResult(
+        passed=passed, metric=mean_mag, threshold=min_flow_magnitude, reason=reason
+    )
