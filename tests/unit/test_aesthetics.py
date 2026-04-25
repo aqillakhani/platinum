@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
+import httpx
 import pytest
 
 from platinum.utils.aesthetics import AestheticScorer, FakeAestheticScorer
@@ -49,8 +50,29 @@ async def test_mapped_fake_scorer_returns_default_for_unmapped(tmp_path: Path) -
     assert await scorer.score(unknown) == 4.2
 
 
-def test_remote_aesthetic_scorer_init_raises_with_session_pointer() -> None:
+async def test_remote_scorer_happy_path(tmp_path: Path) -> None:
     from platinum.utils.aesthetics import RemoteAestheticScorer
-    with pytest.raises(NotImplementedError) as exc:
-        RemoteAestheticScorer(host="example.com", ssh_user="root", ssh_key_path=None)
-    assert "Session 6.1" in str(exc.value)
+
+    captured: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["method"] = request.method
+        captured["content"] = request.content
+        captured["content_type"] = request.headers.get("content-type", "")
+        return httpx.Response(200, json={"score": 6.42})
+
+    transport = httpx.MockTransport(handler)
+    scorer = RemoteAestheticScorer(host="http://test:8189", transport=transport)
+    image = tmp_path / "candidate_0.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 64)
+    try:
+        score = await scorer.score(image)
+    finally:
+        await scorer.aclose()
+
+    assert score == 6.42
+    assert captured["url"] == "http://test:8189/score"
+    assert captured["method"] == "POST"
+    assert b"candidate_0.png" in captured["content"]  # multipart filename
+    assert str(captured["content_type"]).startswith("multipart/form-data")
