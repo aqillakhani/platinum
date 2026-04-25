@@ -7,7 +7,6 @@ is real from Session 1; ``fetch`` is real from Session 2.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -19,6 +18,8 @@ from platinum.models.story import StageStatus
 from platinum.pipeline.orchestrator import CANONICAL_STAGE_NAMES
 from platinum.pipeline.story_curator import (
     curate as _curate_run,
+)
+from platinum.pipeline.story_curator import (
     make_interactive_decide,
     persist_decision,
 )
@@ -50,7 +51,7 @@ def _stub(name: str, session: str) -> None:
 
 @app.command()
 def status(
-    story: Optional[str] = typer.Option(
+    story: str | None = typer.Option(
         None, "--story", "-s", help="Show actual state for this story id (resolved from SQLite)."
     ),
 ) -> None:
@@ -149,7 +150,7 @@ def fetch(
 
 @app.command()
 def curate(
-    track: Optional[str] = typer.Option(
+    track: str | None = typer.Option(
         None, "--track", "-t", help="Restrict to one track id."
     ),
 ) -> None:
@@ -187,10 +188,74 @@ def curate(
 
 @app.command()
 def adapt(
-    story: str = typer.Argument(..., help="Story id to adapt."),
+    story: str | None = typer.Option(
+        None, "--story", "-s", help="Adapt only this story id."
+    ),
+    track: str | None = typer.Option(
+        None, "--track", "-t", help="Restrict to one track id."
+    ),
 ) -> None:
-    """Adapt an approved story -> polished narration script + scenes + visual prompts."""
-    _stub("adapt", "Session 4 (Claude integration)")
+    """Adapt curator-approved stories: narration -> scenes -> visual prompts.
+
+    Walks `data/stories/*/story.json` and runs the three Session-4 Stages
+    (story_adapter, scene_breakdown, visual_prompts) on every story whose
+    curator decision was approve and whose visual_prompts stage is not
+    yet COMPLETE. Resume-safe: stages already COMPLETE are skipped.
+    """
+    import logging
+
+    from platinum.models.story import StageStatus, Story
+    from platinum.pipeline.context import PipelineContext
+    from platinum.pipeline.orchestrator import Orchestrator
+    from platinum.pipeline.scene_breakdown import SceneBreakdownStage
+    from platinum.pipeline.story_adapter import StoryAdapterStage
+    from platinum.pipeline.visual_prompts import VisualPromptsStage
+
+    cfg = Config()
+    eligible: list[Story] = []
+    for story_dir in sorted(p for p in cfg.stories_dir.iterdir() if p.is_dir()):
+        story_json = story_dir / "story.json"
+        if not story_json.exists():
+            continue
+        try:
+            s = Story.load(story_json)
+        except Exception as exc:
+            console.print(f"[yellow]Skipping unreadable story at {story_dir.name}: {exc}[/yellow]")
+            continue
+
+        if story is not None and s.id != story:
+            continue
+        if track is not None and s.track != track:
+            continue
+
+        curator = s.latest_stage_run("story_curator")
+        if curator is None or curator.status != StageStatus.COMPLETE:
+            continue
+
+        vp = s.latest_stage_run("visual_prompts")
+        if vp is not None and vp.status == StageStatus.COMPLETE:
+            continue
+
+        eligible.append(s)
+
+    if not eligible:
+        console.print("[yellow]No eligible stories to adapt.[/yellow]")
+        return
+
+    ctx = PipelineContext(config=cfg, logger=logging.getLogger("platinum.adapt"))
+    orchestrator = Orchestrator(stages=[
+        StoryAdapterStage(), SceneBreakdownStage(), VisualPromptsStage(),
+    ])
+
+    for s in eligible:
+        console.print(f"[cyan]Adapting {s.id} (track={s.track})...[/cyan]")
+        try:
+            asyncio.run(orchestrator.run(s, ctx))
+        except Exception as exc:
+            console.print(f"[red]{s.id} failed: {exc}[/red]")
+            raise
+
+    console.print(f"[green]Adapted {len(eligible)} story candidate(s).[/green]")
 
 
 @app.command()
@@ -223,7 +288,7 @@ def publish(
 
 @app.command("report-costs")
 def report_costs(
-    story: Optional[str] = typer.Option(None, "--story", "-s", help="Filter to one story."),
+    story: str | None = typer.Option(None, "--story", "-s", help="Filter to one story."),
 ) -> None:
     """Sum Anthropic + cloud GPU costs across stories or for one story."""
     _stub("report-costs", "Session 4 (cost tracking) / Session 17 (report)")
@@ -248,7 +313,7 @@ def _print_canonical() -> None:
 
 
 def _print_story_status(
-    story_row: StoryRow, latest: dict[str, "StageRunRow"]
+    story_row: StoryRow, latest: dict[str, StageRunRow]
 ) -> None:
     table = Table(
         title=f"Story {story_row.id} — {story_row.track} ({story_row.status})",
