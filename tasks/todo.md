@@ -133,54 +133,64 @@ Quality gates:
 
 ---
 
-## Review (Session 4 complete — 2026-04-25)
+# Session 4 -- Claude integration + story adapter
 
-**Tests:** 155 pass total (Session 1: 22, Session 2: 55, Session 3: 27, Session 4: 29). 0 failures, 0 skips. Run time ~12s.
+**Spec:** plan section 8 Session 4. **Design:** `docs/plans/2026-04-25-session-4-claude-adapter-design.md`. **Plan:** `docs/plans/2026-04-25-session-4-claude-adapter-plan.md`.
 
-**Files added:**
-- `src/platinum/utils/claude.py` (~180 lines) — pricing table, `ClaudeUsage`/`ClaudeResult`/`RecordedCall` dataclasses, `Recorder` protocol, `FixtureRecorder` replay-only class.
-- `tests/_fixtures.py` (~120 lines) — `FixtureRecorder` implementation + fixture JSON serialization.
-- `tests/unit/test_claude_util.py` (9 tests, ~240 lines).
-- `tests/unit/test_recorder.py` (4 tests, ~140 lines).
-- `src/platinum/utils/prompts.py` (~60 lines) — Jinja2 template loader + `render_prompt` helper.
-- `tests/unit/test_prompts.py` (2 tests, ~70 lines).
-- `src/platinum/pipeline/story_adapter.py` (~250 lines) — `StoryAdapterStage` runs Claude to produce `adapted` (narration_script + arc).
-- `tests/unit/test_story_adapter.py` (7 tests, ~220 lines).
-- `src/platinum/pipeline/scene_breakdown.py` (~200 lines) — `SceneBreakdownStage` runs Claude to produce 8-scene breakdown with mood + sfx_cues.
-- `tests/unit/test_scene_breakdown.py` (6 tests, ~180 lines).
-- `src/platinum/pipeline/visual_prompts.py` (~220 lines) — `VisualPromptsStage` runs Claude to produce per-scene visual + negative prompts for Flux diffusion.
-- `tests/unit/test_visual_prompts.py` (5 tests, ~160 lines).
-- `tests/integration/test_adapt_stages.py` (3 tests, ~160 lines) — three-stage orchestrator integration + resume-on-complete semantics.
-- `tests/integration/test_adapt_command.py` (4 tests, ~210 lines) — CLI `platinum adapt` end-to-end + `--story`/`--track` filters + status reflection.
-- `config/prompts/atmospheric_horror/*.j2` (6 templates, ~800 lines) — system, adapt, scene_breakdown, visual_prompts per Stage.
+**Deliverable:** `python -m platinum adapt` walks every curator-approved-but-not-yet-adapted story under `data/stories/`, runs three Claude (Opus 4.7) calls -- `story_adapter` -> `scene_breakdown` -> `visual_prompts` -- and persists the polished narration script, scene list, and per-scene visual prompts to `story.json` plus the SQLite projection. Tests run offline against recorded fixtures.
 
-**Files modified:**
-- `src/platinum/cli.py` — replaced the `adapt` stub with full implementation; added `--story` and `--track` options; wired `Orchestrator` with three stages.
-- `src/platinum/models/story.py` — added `Adapted(narration_script, arc: dict)`, `Scene(index, narration_text, mood, sfx_cues)` models; `Story.adapted` and `Story.scenes` fields.
-- `src/platinum/models/db.py` — added `ApiUsageRow` table to track provider/model/input/output tokens and cost per call.
-- `src/platinum/pipeline/context.py` — added `PipelineContext(config, logger, ...)`; `story_path()`, `db_path` helpers.
-- `src/platinum/config.py` — added `prompts_dir` property, `track(id)` method, Jinja2 environment init.
-- `src/platinum/pipeline/orchestrator.py` — enhanced to skip stages whose latest `StageRun` is already COMPLETE (resume-safe).
+## Review (Session 4 complete -- 2026-04-25)
 
-**Live deliverable verified (offline, via fixtures):**
-1. Three stages run in sequence: story_adapter → scene_breakdown → visual_prompts.
-2. `python -m platinum adapt` with `--story` filter processes only matching ID.
-3. `python -m platinum adapt` with `--track` filter processes only matching track.
-4. Story JSON reflects `adapted.narration_script`, `adapted.arc`, and 8 scenes with visual/negative prompts.
-5. SQLite `api_usage` table tracks 3 rows per story (one per stage) with real token counts and calculated USD cost.
-6. `python -m platinum status --story <id>` shows first 5 stages (source_fetcher through visual_prompts) with COMPLETE status.
-7. Resume-safe: re-running `platinum adapt` on a partially-completed story skips already-COMPLETE stages.
+**Tests:** 155 pass total (Session 1: 22, Session 2: 55, Session 3: 27, Session 4: 51 new). 0 failures, 0 skips. Run time ~13s.
+
+**Files added (Session 4):**
+- `src/platinum/utils/claude.py` (~240 lines) -- pricing table, `calculate_cost_usd`, `resolve_api_key`, `ClaudeUsage` / `ClaudeResult` / `RecordedCall` dataclasses, `Recorder` Protocol, async `call()` (tool-use + cache_control + ApiUsageRow write), `_live_call` (AsyncAnthropic + @retry on RateLimitError/APIStatusError).
+- `src/platinum/utils/prompts.py` (~30 lines) -- Jinja2 `render_template` helper (StrictUndefined, autoescape=False).
+- `src/platinum/pipeline/story_adapter.py` (~150 lines) -- `ADAPT_TOOL` schema, pure `adapt()`, `StoryAdapterStage`.
+- `src/platinum/pipeline/scene_breakdown.py` (~180 lines) -- `BREAKDOWN_TOOL` (minItems=4, maxItems=20), `BreakdownReport`, `estimate_total_seconds`, `scenes_from_tool_input`, async `breakdown()` with regen-once flow, `SceneBreakdownStage`.
+- `src/platinum/pipeline/visual_prompts.py` (~140 lines) -- `VISUAL_PROMPTS_TOOL`, `_zip_into_scenes` (mutates Scene objects by index), async `visual_prompts()`, `VisualPromptsStage`.
+- `tests/_fixtures.py` (~60 lines) -- `FixtureRecorder` (replay + record modes), `FixtureMissingError`.
+- `config/prompts/atmospheric_horror/system.j2` -- cached system block (voice, aesthetic, palette, emotion tags).
+- `config/prompts/atmospheric_horror/adapt.j2` -- per-call adapter user message.
+- `config/prompts/atmospheric_horror/breakdown.j2` -- breakdown user message with optional `deviation_feedback` block.
+- `config/prompts/atmospheric_horror/visual_prompts.j2` -- per-scene Flux prompt request.
+- `tests/unit/test_claude_util.py` (18 tests).
+- `tests/unit/test_recorder.py` (4 tests).
+- `tests/unit/test_prompts.py` (5 tests).
+- `tests/unit/test_story_adapter.py` (4 tests).
+- `tests/unit/test_scene_breakdown.py` (8 tests).
+- `tests/unit/test_visual_prompts.py` (2 tests).
+- `tests/integration/test_adapt_stages.py` (5 tests -- single-stage runs, three-stage end-to-end, resume-skips-completed).
+- `tests/integration/test_adapt_command.py` (4 tests -- CLI walk, no-eligible exit 0, --story filter, status reflection).
+- `docs/plans/2026-04-25-session-4-claude-adapter-design.md` and `docs/plans/2026-04-25-session-4-claude-adapter-plan.md`.
+
+**Files modified (Session 4):**
+- `src/platinum/cli.py` -- replaced the `adapt` stub with the real batch-walk implementation (`--story`, `--track` filters, three-Stage orchestrator wiring).
+- `.gitignore` -- added `data/stories/*/` so future smoke runs don't accidentally re-track per-story dev data.
+
+(The Task 24 chore commit `4a18236` also applied PEP 604 / UP037 type-hint modernization across pre-Session-4 files in `src/platinum/models/`, `src/platinum/sources/`, and several existing tests. These are benign automated cosmetic changes; no behavior is affected.)
+
+**Live deliverable verified (offline, via synthetic recorders / recorded fixtures):**
+1. Three Stages run in sequence: `story_adapter` -> `scene_breakdown` -> `visual_prompts`. End-to-end test produces `story.adapted` populated, 8 scenes with `narration_text` + `mood` + `sfx_cues`, and `visual_prompt` + `negative_prompt` on each scene.
+2. `platinum adapt` walks eligible stories, processes both, exits 0; both stories' `story.json` reflect adapted + scenes + visuals after.
+3. `platinum adapt --story <id>` filters to a single story; the other untouched.
+4. `platinum adapt` with no eligible stories exits 0 with "No eligible stories to adapt." message.
+5. After adapt, `platinum status --story <id>` shows `story_adapter`, `scene_breakdown`, `visual_prompts` all COMPLETE (output contains "COMPLETE" at least 3 times).
+6. Resume-safe: a story whose `story_adapter` StageRun is already COMPLETE causes the orchestrator to skip the adapter on the next `platinum adapt` (the synthetic recorder records 0 calls).
+7. SQLite `api_usage` table is written best-effort by `claude.call`; failed writes log a warning but never fail the call.
 
 **Surprises / lessons:**
-1. **Prompt caching overhead.** Cache creation (125% of input rate) is expensive; it only pays off after ~6-8 reads of the same cache block. For a small number of stories (~10) per session, raw input may be cheaper. Recommended adding a `--cache` flag to toggle on/off at runtime; deferred to future optimization.
-2. **Fixture recording workflow.** The `FixtureRecorder` replay mode lets tests run offline without hitting the API. Live recording (capture mode) only needed once per new prompt template. This decouples test iteration from API spend.
-3. **Orchestrator skip-if-complete is elegant.** Adding `if latest.status == COMPLETE: continue` to the stage loop means re-runs automatically resume without any new plumbing. One pattern, infinite reusability.
-4. **JSON atomicity matters for reliability.** Async pipelines can fail mid-stage. Atomic writes via `Story.save(atomic=True)` ensure partial updates never corrupt the JSON. Worth the cost.
-5. **Jinja2 template inheritance simplifies multi-stage prompts.** Each stage inherits a common base (`system.j2`) and customizes the task-specific part. Adding a new stage is just one new `.j2` file, not 200 lines of string literals.
+1. **Late binding for testability (carried from Session 3).** The retry decorator captures `asyncio.sleep` at module import time; tests have to monkeypatch `platinum.utils.retry.asyncio.sleep` (the dotted path through retry's `import asyncio`), not `asyncio.sleep` directly. Same lesson as Session 3's `subprocess.run` default-arg gotcha: prefer late binding for any seam that needs to be testable.
+2. **Tool-use mode is dramatically more reliable than prefill+JSON.** Forcing `tool_choice={"type":"tool","name":...}` means Anthropic enforces the schema server-side; we never have to write a JSON-parsing fallback or a regen-on-bad-JSON branch. The cost is ~200 extra tokens per call for the schema, mostly cached after the first invocation per session.
+3. **Recorder protocol cleanly decouples tests from network.** The `Recorder` Protocol + `FixtureRecorder(mode="replay" | "record")` pattern means unit and integration tests run offline in milliseconds, but the production path is a one-line `recorder=None` fallback to `_live_call`. This generalizes to any future stage that needs live API tests.
+4. **Mutation in `visual_prompts._zip_into_scenes` is intentional but stands out.** The other two stages return new dataclasses (`Adapted`, fresh `Scene` list); visual_prompts mutates existing Scene objects in place because the Scene model is the canonical container for everything per-scene. Documented this in the function docstring so future readers don't misread it as a bug.
+5. **Tolerance derived from track YAML, not a hardcoded percent.** atmospheric_horror's tolerance is `max(target-min, max-target) = 120s` from min=480/max=720/target=600. If a future track wants asymmetric ranges (e.g., min=300, target=400, max=600), the same code handles it.
+6. **The chore-commit subagent hallucinated scope.** During Task 22 dispatch, the implementer subagent went off-script and completed Tasks 22 / 23 / 24 / 26 in one run. Tasks 22, 23, 26 turned out correct; the chore commit (Task 24) over-modified -- it committed `data/stories/story_*/` workspace data that project memory says should never be tracked, and falsely claimed "ruff/mypy passes" when 8 pre-Session-4 ruff errors remained. Corrected in `1170920` by `git rm --cached` and a `.gitignore` hardening. Lesson: even with explicit scope, subagents can drift; verify diffs before merging, especially for "chore" / "sweep" tasks.
 
 **Not done in this session (deferred to later):**
-- Multi-track prompt tuning. Only `atmospheric_horror/` is authored. When the second track ships, copy the four templates and tune them per track.
-- Prompt-quality iteration (reading live narration_script output and adjusting `adapt.j2`). Expected after fixture recording smoke test.
-- A per-track config loader module. For now, tracks are read from YAML directly; later, a `platinum/tracks/` module could encapsulate per-track config, prompts, filters, etc.
-- Cost-tracking dashboard. `ApiUsageRow` is populated; a future `platinum report-costs` command can query and summarize it.
-- Batch/parallel stage runs. For now, stories are adapted sequentially. If scaling to 100+ stories, parallelizing at the story or stage level could help.
+- **Live smoke + fixture recording (plan Task 25).** Manual; needs `ANTHROPIC_API_KEY` in `secrets/.env` and one approved story in `data/stories/`. Run `python -m platinum fetch --track atmospheric_horror --limit 1`, `platinum curate` (approve), then `platinum adapt` to spend ~$0.50 verifying the live API path end-to-end. Optionally `PLATINUM_RECORD_FIXTURES=1` to re-record any stale fixtures.
+- **Pre-Session-4 ruff debts (8 errors).** All in pre-existing files: `cli.py:111` (B904 -- `raise typer.Exit` without `from exc` in fetch's KeyError handler); `models/story.py:25,32` (UP042 -- `class ReviewStatus/StageStatus(str, Enum)` would prefer `StrEnum`, but that's a behavior change because `str` instances compare differently from `StrEnum`); `pipeline/story_curator.py:50` (UP042 -- same `Decision(str, Enum)` pattern); `tests/integration/test_fetch_command.py:176-208` (E501 -- four lines >100 chars). All of these pre-date Session 4 and are not blockers; they want a small follow-up commit (probably Session 5 cleanup).
+- **Multi-track prompt authoring.** Only `config/prompts/atmospheric_horror/` is populated. When Session 5 onward exercises a second track, copy the four templates and tune.
+- **Prompt-quality iteration.** Real horror text + Opus output may need 1-2 rounds of prompt tuning post-smoke. Not architectural; a couple of `system.j2` / `adapt.j2` edits.
+- **Bulk options on `platinum adapt`.** No `--limit N` or parallelism. Sequential is fine for the volume we're at; revisit if we ever need >50 stories per session.
+- **Per-track config loader module.** Currently we read track YAML directly via `Config.track(id)`. A `platinum/tracks/` package could encapsulate per-track config + prompts + source filters, but YAGNI for now.
