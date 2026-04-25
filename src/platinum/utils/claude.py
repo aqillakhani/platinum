@@ -5,7 +5,6 @@ Only file in platinum that imports `anthropic`. Single integration point.
 
 from __future__ import annotations
 
-
 # Pricing per million tokens, in USD: (input, output).
 # Cache reads bill at 10% of input rate; cache creation at 125%.
 _PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
