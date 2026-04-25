@@ -16,6 +16,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
+
 
 @dataclass(frozen=True, slots=True)
 class CheckResult:
@@ -144,3 +146,53 @@ def check_audio_levels(
             f"{target_lufs:.1f} (tolerance {tolerance_db:.1f} dB)"
         )
     return CheckResult(passed=passed, metric=measured, threshold=target_lufs, reason=reason)
+
+
+def check_black_frames(
+    video_path: Path,
+    *,
+    max_black_ratio: float,
+    luminance_threshold: float = 8.0,
+) -> CheckResult:
+    """Pass if share of near-black frames is at most max_black_ratio."""
+    p = Path(video_path)
+    if not p.exists():
+        raise FileNotFoundError(f"Video file not found: {p}")
+    cap = cv2.VideoCapture(str(p))
+    if not cap.isOpened():
+        return CheckResult(
+            passed=False,
+            metric=1.0,
+            threshold=max_black_ratio,
+            reason="failed: cannot read video",
+        )
+    total = 0
+    black = 0
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                break
+            total += 1
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if float(gray.mean()) < luminance_threshold:
+                black += 1
+    finally:
+        cap.release()
+    if total == 0:
+        return CheckResult(
+            passed=False,
+            metric=1.0,
+            threshold=max_black_ratio,
+            reason="failed: no frames decoded",
+        )
+    ratio = black / total
+    passed = ratio <= max_black_ratio
+    if passed:
+        reason = f"passed: {ratio:.3f} black-frame ratio (max {max_black_ratio:.3f})"
+    else:
+        reason = (
+            f"failed: {ratio:.3f} black-frame ratio exceeds max {max_black_ratio:.3f} "
+            f"({black}/{total} frames below luminance {luminance_threshold:.1f})"
+        )
+    return CheckResult(passed=passed, metric=ratio, threshold=max_black_ratio, reason=reason)

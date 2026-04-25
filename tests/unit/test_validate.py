@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from platinum.utils.validate import CheckResult
-from tests._fixtures import make_silent_audio, make_test_audio
+from tests._fixtures import (
+    make_silent_audio,
+    make_test_audio,
+    make_test_video,
+    make_test_video_with_motion,
+)
 
 
 def test_check_result_is_frozen_and_carries_fields() -> None:
@@ -93,3 +98,40 @@ def test_check_audio_levels_missing_file(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError):
         check_audio_levels(tmp_path / "nope.wav", target_lufs=-16.0, tolerance_db=1.0)
+
+
+def test_check_black_frames_clean_motion_video_passes(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_black_frames
+
+    video = tmp_path / "moving.mp4"
+    make_test_video_with_motion(video, n_frames=20, fps=24, size=(64, 64))
+    r = check_black_frames(video, max_black_ratio=0.05, luminance_threshold=8.0)
+    assert r.passed
+    assert r.metric < 0.05
+
+
+def test_check_black_frames_all_black_video_fails(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_black_frames
+
+    video = tmp_path / "black.mp4"
+    make_test_video(video, n_frames=20, fps=24, color=(0, 0, 0), size=(64, 64))
+    r = check_black_frames(video, max_black_ratio=0.05, luminance_threshold=8.0)
+    assert not r.passed
+    assert r.metric > 0.9
+
+
+def test_check_black_frames_corrupt_video_fails_gracefully(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_black_frames
+
+    video = tmp_path / "corrupt.mp4"
+    video.write_bytes(b"not a real mp4")
+    r = check_black_frames(video, max_black_ratio=0.05, luminance_threshold=8.0)
+    assert not r.passed
+    assert "cannot read" in r.reason.lower() or "no frames" in r.reason.lower()
+
+
+def test_check_black_frames_missing_file(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_black_frames
+
+    with pytest.raises(FileNotFoundError):
+        check_black_frames(tmp_path / "nope.mp4", max_black_ratio=0.05, luminance_threshold=8.0)
