@@ -13,8 +13,10 @@ import math
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -258,4 +260,72 @@ def check_motion(
         )
     return CheckResult(
         passed=passed, metric=mean_mag, threshold=min_flow_magnitude, reason=reason
+    )
+
+
+EXPECTED_LANDMARKS_PER_HAND = 21
+
+
+def _default_mp_hands_factory() -> Any:
+    """Late-bound mediapipe Hands factory; resolved at call time, not import time."""
+    import mediapipe as mp  # noqa: PLC0415  -- intentional lazy import
+
+    return mp.solutions.hands.Hands(
+        static_image_mode=True,
+        max_num_hands=4,
+        min_detection_confidence=0.5,
+    )
+
+
+def check_hand_anomalies(
+    image_path: Path,
+    *,
+    mp_hands_factory: Callable[[], Any] | None = None,
+) -> CheckResult:
+    """Pass if mediapipe sees no hands OR every detected hand has 21 landmarks."""
+    p = Path(image_path)
+    if not p.exists():
+        raise FileNotFoundError(f"Image file not found: {p}")
+    factory = mp_hands_factory or _default_mp_hands_factory
+    hands = factory()
+    bgr = cv2.imread(str(p))
+    if bgr is None:
+        return CheckResult(
+            passed=False,
+            metric=0.0,
+            threshold=float(EXPECTED_LANDMARKS_PER_HAND),
+            reason="failed: cannot read image",
+        )
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    try:
+        result = hands.process(rgb)
+    finally:
+        close = getattr(hands, "close", None)
+        if callable(close):
+            close()
+    landmarks = getattr(result, "multi_hand_landmarks", None)
+    if not landmarks:
+        return CheckResult(
+            passed=True,
+            metric=0.0,
+            threshold=float(EXPECTED_LANDMARKS_PER_HAND),
+            reason="passed: no hands detected",
+        )
+    counts = [len(h.landmark) for h in landmarks]
+    bad = [c for c in counts if c != EXPECTED_LANDMARKS_PER_HAND]
+    if bad:
+        return CheckResult(
+            passed=False,
+            metric=float(max(counts)),
+            threshold=float(EXPECTED_LANDMARKS_PER_HAND),
+            reason=(
+                f"failed: hand anomaly (landmark counts {counts}, "
+                f"expected {EXPECTED_LANDMARKS_PER_HAND})"
+            ),
+        )
+    return CheckResult(
+        passed=True,
+        metric=float(EXPECTED_LANDMARKS_PER_HAND),
+        threshold=float(EXPECTED_LANDMARKS_PER_HAND),
+        reason=f"passed: {len(counts)} hand(s) with valid landmark counts",
     )
