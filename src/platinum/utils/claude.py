@@ -6,7 +6,7 @@ Only file in platinum that imports `anthropic`. Single integration point.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,32 @@ class ClaudeResult:
     text: str
     usage: ClaudeUsage
     raw: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RecordedCall:
+    """Captured (request, response) pair for fixture replay."""
+
+    request: dict[str, Any]
+    response: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"request": dict(self.request), "response": dict(self.response)}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> RecordedCall:
+        return cls(request=dict(d["request"]), response=dict(d["response"]))
+
+
+@runtime_checkable
+class Recorder(Protocol):
+    """Protocol for fixture record/replay or any synthetic stand-in.
+
+    Tests inject a Recorder; production calls leave it None and `claude.call`
+    talks to the real SDK.
+    """
+
+    async def __call__(self, request: dict[str, Any]) -> dict[str, Any]: ...
 
 
 # Pricing per million tokens, in USD: (input, output).

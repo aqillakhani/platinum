@@ -95,3 +95,27 @@ def test_claude_result_holds_tool_input_and_usage() -> None:
     )
     assert r.tool_input == {"hello": "world"}
     assert r.usage.cost_usd == 0.001
+
+
+def test_recorded_call_round_trips_through_dict() -> None:
+    from platinum.utils.claude import RecordedCall
+    rc = RecordedCall(
+        request={"model": "claude-opus-4-7", "messages": [{"role": "user", "content": "hi"}]},
+        response={"id": "msg_1", "content": [{"type": "tool_use", "input": {"x": 1}}]},
+    )
+    d = rc.to_dict()
+    assert d["request"]["model"] == "claude-opus-4-7"
+    rc2 = RecordedCall.from_dict(d)
+    assert rc2 == rc
+
+
+def test_recorder_protocol_accepts_synthetic_recorder() -> None:
+    """Anything with an awaitable __call__ that takes (request) -> response satisfies Recorder."""
+    from platinum.utils.claude import Recorder
+
+    class FakeRec:
+        async def __call__(self, request: dict) -> dict:
+            return {"id": "fake", "content": []}
+
+    rec: Recorder = FakeRec()  # would fail static-typing if not satisfying the protocol
+    assert callable(rec)
