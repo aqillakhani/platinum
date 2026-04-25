@@ -65,3 +65,33 @@ def test_make_silent_audio_writes_wav_with_zero_amplitude(tmp_path: Path) -> Non
         raw = wf.readframes(wf.getnframes())
         samples = np.frombuffer(raw, dtype=np.int16)
         assert int(np.abs(samples).max()) == 0
+
+
+def test_make_synthetic_png_writes_solid_grey(tmp_path: Path) -> None:
+    from PIL import Image
+
+    from tests._fixtures import make_synthetic_png
+
+    out = tmp_path / "grey.png"
+    make_synthetic_png(out, kind="grey", value=128, size=(64, 64))
+    assert out.exists()
+    img = Image.open(out)
+    assert img.size == (64, 64)
+    assert img.mode == "RGB"
+    px = img.getpixel((10, 10))
+    assert px == (128, 128, 128)
+
+
+def test_make_synthetic_png_writes_checkerboard(tmp_path: Path) -> None:
+    from PIL import Image
+
+    from tests._fixtures import make_synthetic_png
+
+    out = tmp_path / "checker.png"
+    make_synthetic_png(out, kind="checkerboard", size=(64, 64))
+    assert out.exists()
+    img = Image.open(out)
+    assert img.size == (64, 64)
+    # Distinct pixel values present (not single-colour)
+    pixels = {img.getpixel((x, y)) for x in (0, 8) for y in (0, 8)}
+    assert len(pixels) >= 2

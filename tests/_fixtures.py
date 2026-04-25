@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 import cv2
 import numpy as np
+from PIL import Image
 
 LiveCall = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
@@ -149,3 +150,31 @@ def make_silent_audio(
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
         wf.writeframes(pcm.tobytes())
+
+
+def make_synthetic_png(
+    path: Path,
+    *,
+    kind: Literal["grey", "checkerboard"] = "grey",
+    value: int = 128,
+    size: tuple[int, int] = (64, 64),
+    block: int = 8,
+) -> None:
+    """Write a small synthetic PNG to `path`.
+
+    kind="grey": solid RGB at (value, value, value).
+    kind="checkerboard": black/white blocks of `block` pixels.
+    """
+    w, h = size
+    if kind == "grey":
+        Image.new("RGB", size, color=(value, value, value)).save(path)
+        return
+    if kind == "checkerboard":
+        arr = np.zeros((h, w, 3), dtype=np.uint8)
+        for y in range(0, h, block):
+            for x in range(0, w, block):
+                if ((x // block) + (y // block)) % 2 == 0:
+                    arr[y : y + block, x : x + block] = 255
+        Image.fromarray(arr, "RGB").save(path)
+        return
+    raise ValueError(f"unknown kind: {kind!r}")
