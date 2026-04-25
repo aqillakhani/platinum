@@ -230,7 +230,7 @@ def check_motion(
             if frame_idx % sample_every_n_frames == 0:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 if prev_gray is not None:
-                    flow = cv2.calcOpticalFlowFarneback(
+                    flow = cv2.calcOpticalFlowFarneback(  # type: ignore[call-overload]
                         prev_gray, gray, None,
                         pyr_scale=0.5, levels=3, winsize=15, iterations=3,
                         poly_n=5, poly_sigma=1.2, flags=0,
@@ -268,7 +268,7 @@ EXPECTED_LANDMARKS_PER_HAND = 21
 
 def _default_mp_hands_factory() -> Any:
     """Late-bound mediapipe Hands factory; resolved at call time, not import time."""
-    import mediapipe as mp  # noqa: PLC0415  -- intentional lazy import
+    import mediapipe as mp  # type: ignore[import-untyped]  # noqa: PLC0415  -- intentional lazy import
 
     return mp.solutions.hands.Hands(
         static_image_mode=True,
