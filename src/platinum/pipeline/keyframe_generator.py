@@ -171,15 +171,24 @@ async def generate_for_scene(
 
     threshold = float(quality_gates.get("aesthetic_min_score", 0.0))
     eligible = [
-        i for i, (s, a) in enumerate(zip(scores, anatomy_passed, strict=True))
-        if s >= threshold and a
+        i for i, (s, a, ok) in enumerate(
+            zip(scores, anatomy_passed, scoring_succeeded, strict=True)
+        )
+        if ok and s >= threshold and a
     ]
     if eligible:
         max_score = max(scores[i] for i in eligible)
         selected_index = next(i for i in eligible if scores[i] == max_score)
         selected_via_fallback = False
     else:
-        selected_index = 0
+        # Content failure: fall back to highest-scored among candidates that DID score.
+        # If no candidate scored, the halt above (Task 9) raised KeyframeGenerationError;
+        # reaching here guarantees at least one scoring_succeeded.
+        scored_indices = [i for i, ok in enumerate(scoring_succeeded) if ok]
+        max_score_in_scored = max(scores[i] for i in scored_indices)
+        selected_index = next(
+            i for i in scored_indices if scores[i] == max_score_in_scored
+        )
         selected_via_fallback = True
 
     return KeyframeReport(

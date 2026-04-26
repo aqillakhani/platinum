@@ -215,8 +215,9 @@ async def test_generate_for_scene_below_threshold_falls_back(tmp_path: Path) -> 
         seeds=(0, 1, 2),
         mp_hands_factory=make_fake_hands_factory(None),
     )
-    assert report.selected_index == 0
+    assert report.selected_index == 2  # highest-scored from scored subset (5.5 > 5.0 > 4.0)
     assert report.selected_via_fallback is True
+    assert report.scoring_succeeded == [True, True, True]
 
 
 async def test_generate_for_scene_anatomy_rejects_high_score_candidate(tmp_path: Path) -> None:
@@ -475,6 +476,48 @@ async def test_generate_iterates_all_scenes(tmp_path: Path) -> None:
         assert len(scene.keyframe_scores) == 3
         assert scene.validation.get("keyframe_anatomy") == [True, True, True]
         assert scene.validation.get("keyframe_selected_via_fallback") is False
+
+
+async def test_partial_scoring_falls_back_to_highest_in_scored_subset(
+    tmp_path: Path,
+) -> None:
+    """Candidates 0 and 1 fail to score; candidate 2 scores 3.0 (below 4.0 gate).
+    Should fall back to candidate 2 (the only scored one), not candidate 0.
+
+    Distinguishes infrastructure partial failure from "always pick 0" silent fallback.
+    """
+    import httpx
+
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(0)
+    fake_comfy, workflow_template = _build_fake_comfy_with_three_candidates()
+    output_dir = tmp_path / "scene_000"
+
+    class _PartialScorer:
+        async def score(self, image_path: Path) -> float:
+            if image_path.name in {"candidate_0.png", "candidate_1.png"}:
+                raise httpx.ConnectError("intermittent failure")
+            return 3.0  # below the 4.0 threshold (default _GATES has 6.0; override)
+
+    # Use a lower threshold so 3.0 is still below the gate (content failure path).
+    gates = {"aesthetic_min_score": 4.0}
+
+    report = await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates=gates,
+        comfy=fake_comfy,
+        scorer=_PartialScorer(),
+        output_dir=output_dir,
+        workflow_template=workflow_template,
+        n_candidates=3,
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+    assert report.scoring_succeeded == [False, False, True]
+    assert report.selected_via_fallback is True
+    assert report.selected_index == 2
 
 
 async def test_all_scoring_fails_raises_keyframe_generation_error(
