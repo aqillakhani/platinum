@@ -328,3 +328,56 @@ def test_check_image_subject_gradient_fails(tmp_path: Path) -> None:
     result = check_image_subject(path, min_edge_density=0.020)
     assert result.passed is False
     assert result.metric < 0.020
+
+
+def test_check_image_subject_threshold_boundary_passes(tmp_path: Path) -> None:
+    """At exact threshold, passes (>= comparison)."""
+    from platinum.utils.validate import check_image_subject
+    from tests._fixtures import make_synthetic_png
+
+    # Use checkerboard, then pick a threshold that matches its measured density.
+    # First measure with a permissive floor, then re-test at the exact value.
+    path = tmp_path / "checker.png"
+    make_synthetic_png(path, kind="checkerboard", size=(256, 256), block=16)
+    measured = check_image_subject(path, min_edge_density=0.0).metric
+    boundary = check_image_subject(path, min_edge_density=measured)
+    assert boundary.passed is True
+
+
+def test_check_image_subject_unreadable_file_fails(tmp_path: Path) -> None:
+    """Non-existent file: returns passed=False with descriptive reason."""
+    from platinum.utils.validate import check_image_subject
+
+    result = check_image_subject(tmp_path / "does-not-exist.png",
+                                 min_edge_density=0.020)
+    assert result.passed is False
+    assert "failed to read image" in result.reason
+
+
+def test_check_image_subject_imports_unavailable_passes_with_skip_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ImportError on cv2/numpy/PIL: fail-open with hardcoded skip reason.
+
+    Mirrors the sibling test for check_image_brightness PIL unavailable path.
+    """
+    import builtins
+
+    from platinum.utils.validate import check_image_subject
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if name == "cv2":
+            raise ImportError("No module named 'cv2'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    # Path doesn't need to exist -- the import handler fires before file IO.
+    result = check_image_subject(tmp_path / "any.png", min_edge_density=0.020)
+    assert result.passed is True                          # fail-open
+    assert result.metric == 0.0
+    assert result.threshold == 0.020
+    assert "skipped" in result.reason
+    assert "cv2/numpy/PIL unavailable" in result.reason
