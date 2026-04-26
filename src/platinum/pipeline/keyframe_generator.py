@@ -137,15 +137,35 @@ async def generate_for_scene(
             exceptions=[e for e in candidate_exceptions if e is not None],
         )
 
+    # Read brightness floor from quality_gates (default 20.0 -- atmospheric_horror floor).
+    brightness_floor = float(quality_gates.get("brightness_floor_mean_rgb", 20.0))
+
     scores: list[float] = []
     anatomy_passed: list[bool] = []
     scoring_succeeded: list[bool] = []
+    brightness_passed: list[bool] = []
     for path, candidate_exc in zip(candidate_paths, candidate_exceptions, strict=True):
         if candidate_exc is not None or not path.exists():
             scores.append(0.0)
             anatomy_passed.append(False)
             scoring_succeeded.append(False)
+            brightness_passed.append(False)
             continue
+
+        # NEW: brightness gate runs BEFORE the LAION call (saves the round-trip).
+        from platinum.utils.validate import check_image_brightness
+        bright = check_image_brightness(path, min_mean_rgb=brightness_floor)
+        brightness_passed.append(bright.passed)
+        if not bright.passed:
+            logger.warning(
+                "scene %d candidate %s brightness floor failed: %s",
+                scene.index, path.name, bright.reason,
+            )
+            scores.append(0.0)
+            anatomy_passed.append(False)
+            scoring_succeeded.append(False)
+            continue
+
         try:
             score = await scorer.score(path)
             scoring_ok = True
@@ -198,6 +218,7 @@ async def generate_for_scene(
         scores=scores,
         anatomy_passed=anatomy_passed,
         scoring_succeeded=scoring_succeeded,
+        brightness_passed=brightness_passed,
         selected_index=selected_index,
         selected_via_fallback=selected_via_fallback,
     )

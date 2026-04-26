@@ -19,6 +19,7 @@ def test_keyframe_report_is_frozen_and_carries_fields() -> None:
         scores=[7.0, 5.0, 3.0],
         anatomy_passed=[True, True, False],
         scoring_succeeded=[True, True, True],
+        brightness_passed=[True, True, True],
         selected_index=0,
         selected_via_fallback=False,
     )
@@ -577,3 +578,79 @@ async def test_all_scoring_fails_raises_keyframe_generation_error(
             mp_hands_factory=make_fake_hands_factory(None),
         )
     assert excinfo.value.scene_index == 0
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_brightness_gate_skips_laion_on_dark_candidates(
+    tmp_path: Path,
+) -> None:
+    """A brightness-failing candidate gets score=0.0, scoring_succeeded=False,
+    AND the scorer must not even be invoked on it (saves the network round-trip).
+    """
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_fake_hands_factory, make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    # Three synthetic candidates in a fixture dir (for FakeComfyClient to copy from):
+    # cand 0 = black (fails brightness), cand 1 + 2 = bright.
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [
+        fixture_dir / "candidate_0.png",
+        fixture_dir / "candidate_1.png",
+        fixture_dir / "candidate_2.png",
+    ]
+    make_synthetic_png(fixture_paths[0], kind="grey", value=0)
+    make_synthetic_png(fixture_paths[1], kind="grey", value=200)
+    make_synthetic_png(fixture_paths[2], kind="grey", value=200)
+
+    # Build responses with correct prompts to match workflow signature.
+    responses = {}
+    for i, seed in enumerate((0, 1, 2)):
+        wf = inject(
+            wf_template,
+            prompt="cinematic dark, candlelight dark scene",
+            negative_prompt="bright daylight",
+            seed=seed,
+            width=1024, height=1024, output_prefix=f"scene_000_candidate_{i}",
+        )
+        responses[workflow_signature(wf)] = [fixture_paths[i]]
+
+    comfy = FakeComfyClient(responses=responses)
+
+    # Counter-wrapped scorer to verify it's NOT called on the dark candidate.
+    call_count = {"n": 0}
+    class CountingScorer(FakeAestheticScorer):
+        async def score(self, path):
+            call_count["n"] += 1
+            return await super().score(path)
+    scorer = CountingScorer(fixed_score=8.0)
+
+    scene = Scene(
+        id="scene_000", index=0, narration_text="x",
+        narration_duration_seconds=1.0, visual_prompt="dark scene",
+        negative_prompt="bright daylight",
+    )
+
+    output_dir = tmp_path / "scene_000"
+    report = await generate_for_scene(
+        scene,
+        track_visual={"aesthetic": "cinematic dark, candlelight"},
+        quality_gates={"aesthetic_min_score": 6.0, "brightness_floor_mean_rgb": 20.0},
+        comfy=comfy,
+        scorer=scorer,
+        output_dir=output_dir,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+
+    assert report.brightness_passed == [False, True, True]
+    assert report.scoring_succeeded == [False, True, True]
+    assert report.scores[0] == 0.0
+    assert call_count["n"] == 2                              # cand 0 skipped
