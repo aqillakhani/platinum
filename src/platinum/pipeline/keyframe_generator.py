@@ -140,6 +140,7 @@ async def generate_for_scene(
 
     # Read brightness floor from quality_gates (default 20.0 -- atmospheric_horror floor).
     brightness_floor = float(quality_gates.get("brightness_floor_mean_rgb", 20.0))
+    subject_floor = float(quality_gates.get("subject_min_edge_density", 0.020))
 
     scores: list[float] = []
     anatomy_passed: list[bool] = []
@@ -156,7 +157,7 @@ async def generate_for_scene(
             continue
 
         # NEW: brightness gate runs BEFORE the LAION call (saves the round-trip).
-        from platinum.utils.validate import check_image_brightness
+        from platinum.utils.validate import check_image_brightness, check_image_subject
         bright = check_image_brightness(path, min_mean_rgb=brightness_floor)
         brightness_passed.append(bright.passed)
         if not bright.passed:
@@ -168,6 +169,18 @@ async def generate_for_scene(
             anatomy_passed.append(False)
             scoring_succeeded.append(False)
             subject_passed.append(False)
+            continue
+
+        subject = check_image_subject(path, min_edge_density=subject_floor)
+        subject_passed.append(subject.passed)
+        if not subject.passed:
+            logger.warning(
+                "scene %d candidate %s subject gate failed: %s",
+                scene.index, path.name, subject.reason,
+            )
+            scores.append(0.0)
+            anatomy_passed.append(False)
+            scoring_succeeded.append(False)
             continue
 
         try:
@@ -184,7 +197,6 @@ async def generate_for_scene(
         scoring_succeeded.append(scoring_ok)
         result = check_hand_anomalies(path, mp_hands_factory=mp_hands_factory)
         anatomy_passed.append(result.passed)
-        subject_passed.append(True)  # placeholder: Task 5 wires the real gate
 
     if not any(brightness_passed):
         raise KeyframeGenerationError(

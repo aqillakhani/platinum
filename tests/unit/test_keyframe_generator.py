@@ -142,7 +142,7 @@ async def test_generate_for_scene_happy_path_picks_highest_scoring(tmp_path: Pat
     report = await generate_for_scene(
         scene,
         track_visual=_TRACK_VISUAL,
-        quality_gates=_GATES,
+        quality_gates={**_GATES, "subject_min_edge_density": 0.0},
         comfy=comfy,
         scorer=scorer,
         output_dir=output_dir,
@@ -175,7 +175,7 @@ async def test_scoring_succeeded_populated_on_happy_path(tmp_path: Path) -> None
     report = await generate_for_scene(
         scene,
         track_visual=_TRACK_VISUAL,
-        quality_gates=_GATES,
+        quality_gates={**_GATES, "subject_min_edge_density": 0.0},
         comfy=comfy,
         scorer=scorer,
         output_dir=output_dir,
@@ -203,7 +203,7 @@ async def test_generate_for_scene_ties_selected_lowest_index(tmp_path: Path) -> 
     report = await generate_for_scene(
         scene,
         track_visual=_TRACK_VISUAL,
-        quality_gates=_GATES,
+        quality_gates={**_GATES, "subject_min_edge_density": 0.0},
         comfy=comfy,
         scorer=scorer,
         output_dir=output_dir,
@@ -231,7 +231,7 @@ async def test_generate_for_scene_below_threshold_falls_back(tmp_path: Path) -> 
     report = await generate_for_scene(
         scene,
         track_visual=_TRACK_VISUAL,
-        quality_gates=_GATES,
+        quality_gates={**_GATES, "subject_min_edge_density": 0.0},
         comfy=comfy,
         scorer=scorer,
         output_dir=output_dir,
@@ -275,7 +275,7 @@ async def test_generate_for_scene_anatomy_rejects_high_score_candidate(tmp_path:
     report = await generate_for_scene(
         scene,
         track_visual=_TRACK_VISUAL,
-        quality_gates=_GATES,
+        quality_gates={**_GATES, "subject_min_edge_density": 0.0},
         comfy=comfy,
         scorer=scorer,
         output_dir=output_dir,
@@ -347,7 +347,7 @@ async def test_generate_for_scene_isolates_per_candidate_exception(
     report = await generate_for_scene(
         scene,
         track_visual=_TRACK_VISUAL,
-        quality_gates=_GATES,
+        quality_gates={**_GATES, "subject_min_edge_density": 0.0},
         comfy=comfy,
         scorer=scorer,
         output_dir=output_dir,
@@ -472,7 +472,7 @@ async def test_generate_iterates_all_scenes(tmp_path: Path) -> None:
 
     track_dict = {
         "visual": _TRACK_VISUAL,
-        "quality_gates": _GATES,
+        "quality_gates": {**_GATES, "subject_min_edge_density": 0.0},
     }
 
     class _Cfg:
@@ -526,7 +526,7 @@ async def test_partial_scoring_falls_back_to_highest_in_scored_subset(
             return 3.0  # below the 4.0 threshold (default _GATES has 6.0; override)
 
     # Use a lower threshold so 3.0 is still below the gate (content failure path).
-    gates = {"aesthetic_min_score": 4.0}
+    gates = {"aesthetic_min_score": 4.0, "subject_min_edge_density": 0.0}
 
     report = await generate_for_scene(
         scene,
@@ -640,10 +640,15 @@ async def test_generate_for_scene_brightness_gate_skips_laion_on_dark_candidates
     )
 
     output_dir = tmp_path / "scene_000"
+    gates = {
+        "aesthetic_min_score": 6.0,
+        "brightness_floor_mean_rgb": 20.0,
+        "subject_min_edge_density": 0.0,
+    }
     report = await generate_for_scene(
         scene,
         track_visual={"aesthetic": "cinematic dark, candlelight"},
-        quality_gates={"aesthetic_min_score": 6.0, "brightness_floor_mean_rgb": 20.0},
+        quality_gates=gates,
         comfy=comfy,
         scorer=scorer,
         output_dir=output_dir,
@@ -709,10 +714,15 @@ async def test_generate_for_scene_eligibility_excludes_brightness_failures(
     scene = Scene(id="s0", index=0, narration_text="x",
                   narration_duration_seconds=1.0, visual_prompt="x")
 
+    gates = {
+        "aesthetic_min_score": 6.0,
+        "brightness_floor_mean_rgb": 20.0,
+        "subject_min_edge_density": 0.0,
+    }
     report = await generate_for_scene(
         scene,
         track_visual={},
-        quality_gates={"aesthetic_min_score": 6.0, "brightness_floor_mean_rgb": 20.0},
+        quality_gates=gates,
         comfy=comfy, scorer=scorer,
         output_dir=out,
         workflow_template=wf_template,
@@ -776,10 +786,15 @@ async def test_generate_for_scene_fallback_skips_brightness_failures(
     scene = Scene(id="s0", index=0, narration_text="x",
                   narration_duration_seconds=1.0, visual_prompt="x")
 
+    gates = {
+        "aesthetic_min_score": 6.0,
+        "brightness_floor_mean_rgb": 20.0,
+        "subject_min_edge_density": 0.0,
+    }
     report = await generate_for_scene(
         scene,
         track_visual={},
-        quality_gates={"aesthetic_min_score": 6.0, "brightness_floor_mean_rgb": 20.0},
+        quality_gates=gates,
         comfy=comfy, scorer=scorer,
         output_dir=out,
         workflow_template=wf_template,
@@ -885,3 +900,119 @@ async def test_keyframe_report_carries_subject_passed_field(tmp_path):
     assert isinstance(report.subject_passed, list)
     assert len(report.subject_passed) == 3
     assert all(isinstance(p, bool) for p in report.subject_passed)
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_subject_gate_skips_laion_on_solid_color(tmp_path):
+    """Subject gate runs BEFORE LAIAN call -- a solid-color (subject-fail)
+    candidate must NOT trigger the scorer."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_fake_hands_factory, make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [
+        fixture_dir / "candidate_0.png",
+        fixture_dir / "candidate_1.png",
+        fixture_dir / "candidate_2.png",
+    ]
+    # Cand 0 = solid color (passes brightness, fails subject)
+    make_synthetic_png(fixture_paths[0], kind="grey", value=200, size=(256, 256))
+    # Cand 1, 2 = checkerboard (passes brightness, passes subject)
+    make_synthetic_png(fixture_paths[1], kind="checkerboard", size=(256, 256), block=16)
+    make_synthetic_png(fixture_paths[2], kind="checkerboard", size=(256, 256), block=16)
+
+    responses = {}
+    for i, seed in enumerate((0, 1, 2)):
+        wf = inject(wf_template, prompt="cinematic dark, candlelight a candle",
+                    negative_prompt="bright daylight",
+                    seed=seed, width=1024, height=1024,
+                    output_prefix=f"scene_000_candidate_{i}")
+        responses[workflow_signature(wf)] = [fixture_paths[i]]
+
+    call_count = {"n": 0}
+    class CountingScorer(FakeAestheticScorer):
+        async def score(self, path):
+            call_count["n"] += 1
+            return await super().score(path)
+    scorer = CountingScorer(fixed_score=8.0)
+    comfy = FakeComfyClient(responses=responses)
+
+    scene = _scene(idx=0)
+    out = tmp_path / "scene_000"
+    report = await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates={"aesthetic_min_score": 6.0,
+                       "brightness_floor_mean_rgb": 20.0,
+                       "subject_min_edge_density": 0.020},
+        comfy=comfy, scorer=scorer,
+        output_dir=out,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+
+    assert report.brightness_passed == [True, True, True]
+    assert report.subject_passed == [False, True, True]
+    assert call_count["n"] == 2                          # cand 0 skipped LAIAN
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_subject_gate_runs_after_brightness(tmp_path):
+    """Subject gate must NOT run on a brightness-failing candidate (saves cv2 work)."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_fake_hands_factory, make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [fixture_dir / f"c{i}.png" for i in range(3)]
+    # Cand 0 = black (fails brightness)
+    make_synthetic_png(fixture_paths[0], kind="grey", value=0, size=(256, 256))
+    # Cand 1, 2 = checkerboard
+    make_synthetic_png(fixture_paths[1], kind="checkerboard", size=(256, 256), block=16)
+    make_synthetic_png(fixture_paths[2], kind="checkerboard", size=(256, 256), block=16)
+
+    responses = {}
+    for i, seed in enumerate((0, 1, 2)):
+        wf = inject(wf_template, prompt="cinematic dark, candlelight a candle",
+                    negative_prompt="bright daylight",
+                    seed=seed, width=1024, height=1024,
+                    output_prefix=f"scene_000_candidate_{i}")
+        responses[workflow_signature(wf)] = [fixture_paths[i]]
+    scorer = FakeAestheticScorer(fixed_score=8.0)
+    comfy = FakeComfyClient(responses=responses)
+
+    scene = _scene(idx=0)
+    out = tmp_path / "scene_000"
+    report = await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates={"aesthetic_min_score": 6.0,
+                       "brightness_floor_mean_rgb": 20.0,
+                       "subject_min_edge_density": 0.020},
+        comfy=comfy, scorer=scorer,
+        output_dir=out,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+
+    assert report.brightness_passed == [False, True, True]
+    # Cand 0 failed brightness -- subject gate should NOT have run on it.
+    # We assert subject_passed[0] is False (the convention: skip = not-passed).
+    assert report.subject_passed[0] is False
+    assert report.subject_passed[1] is True
+    assert report.subject_passed[2] is True
