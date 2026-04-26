@@ -95,3 +95,35 @@ def test_make_synthetic_png_writes_checkerboard(tmp_path: Path) -> None:
     # Distinct pixel values present (not single-colour)
     pixels = {img.getpixel((x, y)) for x in (0, 8) for y in (0, 8)}
     assert len(pixels) >= 2
+
+
+def test_make_synthetic_png_gradient_low_edge_density(tmp_path: Path) -> None:
+    """Gradient fixture has edge density <0.005 (below all per-track thresholds)."""
+    from PIL import Image
+
+    from tests._fixtures import make_synthetic_png
+
+    path = tmp_path / "gradient.png"
+    make_synthetic_png(path, kind="gradient", size=(256, 256))
+
+    arr = np.asarray(Image.open(path).convert("RGB"))
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, 100, 200)
+    density = float(np.count_nonzero(edges)) / float(edges.size)
+    assert density < 0.005, f"gradient density={density:.4f} should be <0.005"
+
+
+def test_make_synthetic_png_checkerboard_high_edge_density(tmp_path: Path) -> None:
+    """Existing checkerboard fixture has edge density >0.10 (above all thresholds)."""
+    from PIL import Image
+
+    from tests._fixtures import make_synthetic_png
+
+    path = tmp_path / "checker.png"
+    make_synthetic_png(path, kind="checkerboard", size=(256, 256), block=16)
+
+    arr = np.asarray(Image.open(path).convert("RGB"))
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, 100, 200)
+    density = float(np.count_nonzero(edges)) / float(edges.size)
+    assert density > 0.10, f"checkerboard density={density:.4f} should be >0.10"

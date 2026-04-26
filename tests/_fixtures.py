@@ -155,7 +155,7 @@ def make_silent_audio(
 def make_synthetic_png(
     path: Path,
     *,
-    kind: Literal["grey", "checkerboard"] = "grey",
+    kind: Literal["grey", "checkerboard", "gradient"] = "grey",
     value: int = 128,
     size: tuple[int, int] = (64, 64),
     block: int = 8,
@@ -164,6 +164,7 @@ def make_synthetic_png(
 
     kind="grey": solid RGB at (value, value, value).
     kind="checkerboard": black/white blocks of `block` pixels.
+    kind="gradient": smooth horizontal gradient from black to white.
     """
     w, h = size
     if kind == "grey":
@@ -175,6 +176,13 @@ def make_synthetic_png(
             for x in range(0, w, block):
                 if ((x // block) + (y // block)) % 2 == 0:
                     arr[y : y + block, x : x + block] = 255
+        Image.fromarray(arr, "RGB").save(path)
+        return
+    if kind == "gradient":
+        arr = np.zeros((h, w, 3), dtype=np.uint8)
+        for x in range(w):
+            v = int(255 * x / max(w - 1, 1))
+            arr[:, x] = (v, v, v)
         Image.fromarray(arr, "RGB").save(path)
         return
     raise ValueError(f"unknown kind: {kind!r}")
