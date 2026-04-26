@@ -27,3 +27,26 @@ def test_health_returns_ok() -> None:
     body = resp.json()
     assert body["ok"] is True
     assert "model" in body
+
+
+def _make_png_bytes(color: tuple[int, int, int] = (128, 128, 128)) -> bytes:
+    import io as _io
+
+    from PIL import Image
+
+    img = Image.new("RGB", (32, 32), color=color)
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_score_happy_path_returns_float() -> None:
+    png = _make_png_bytes()
+    resp = client.post(
+        "/score",
+        files={"image": ("test.png", png, "image/png")},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["score"] == 6.42  # _fake_scorer's sentinel
+    assert isinstance(body["score"], float)

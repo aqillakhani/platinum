@@ -17,9 +17,12 @@ Endpoints:
 
 from __future__ import annotations
 
+import io
+import math
 from collections.abc import Callable
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from PIL import Image, UnidentifiedImageError
 
 app = FastAPI(title="platinum score_server", version="0.1.0")
 
@@ -43,3 +46,24 @@ def get_scorer() -> Scorer:
 def health() -> dict[str, object]:
     """Liveness/readiness probe for the score server."""
     return {"ok": True, "model": "ViT-L-14 + LAION MLP"}
+
+
+@app.post("/score")
+async def score(
+    image: UploadFile = File(...),  # noqa: B008 -- FastAPI requires File() in defaults
+    scorer: Scorer = Depends(get_scorer),  # noqa: B008 -- FastAPI requires Depends() in defaults
+) -> dict[str, float]:
+    """Score an uploaded image on the LAION-Aesthetics v2 0-10 scale."""
+    raw = await image.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty image upload")
+    try:
+        Image.open(io.BytesIO(raw)).convert("RGB")
+    except (UnidentifiedImageError, OSError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"could not decode image: {exc}"
+        ) from exc
+    score_value = float(scorer(raw))
+    if not math.isfinite(score_value):
+        raise HTTPException(status_code=500, detail="model returned non-finite score")
+    return {"score": score_value}
