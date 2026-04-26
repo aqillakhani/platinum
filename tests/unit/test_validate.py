@@ -251,3 +251,14 @@ def test_check_image_brightness_black_image_fails(tmp_path: Path) -> None:
     assert r.metric == 0.0
     assert r.threshold == 20.0
     assert "too dark" in r.reason
+
+
+def test_check_image_brightness_boundary_equality_passes(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_image_brightness
+    from tests._fixtures import make_synthetic_png
+
+    img = tmp_path / "boundary.png"
+    make_synthetic_png(img, kind="grey", value=20, size=(64, 64))
+    r = check_image_brightness(img, min_mean_rgb=20.0)
+    assert r.passed
+    assert r.metric == 20.0
