@@ -30,6 +30,27 @@ def test_keyframe_report_is_frozen_and_carries_fields() -> None:
         r.scene_index = 1  # type: ignore[misc]
 
 
+def test_keyframe_report_carries_brightness_passed_field() -> None:
+    """brightness_passed is an immutable list[bool] aligned to candidates."""
+    import dataclasses
+
+    from platinum.pipeline.keyframe_generator import KeyframeReport
+
+    r = KeyframeReport(
+        scene_index=0,
+        candidates=[Path("/tmp/c0.png"), Path("/tmp/c1.png"), Path("/tmp/c2.png")],
+        scores=[5.0, 6.0, 7.0],
+        anatomy_passed=[True, True, True],
+        scoring_succeeded=[True, True, True],
+        brightness_passed=[False, True, True],
+        selected_index=2,
+        selected_via_fallback=False,
+    )
+    assert r.brightness_passed == [False, True, True]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        r.brightness_passed = [True, True, True]  # type: ignore[misc]
+
+
 def test_keyframe_generation_error_carries_per_candidate_exceptions() -> None:
     from platinum.pipeline.keyframe_generator import KeyframeGenerationError
 

@@ -33,6 +33,7 @@ class KeyframeReport:
     scores: list[float]
     anatomy_passed: list[bool]
     scoring_succeeded: list[bool]
+    brightness_passed: list[bool]
     selected_index: int
     selected_via_fallback: bool
 
