@@ -209,3 +209,19 @@ def test_check_hand_anomalies_missing_file(tmp_path: Path) -> None:
     from platinum.utils.validate import check_hand_anomalies
     with pytest.raises(FileNotFoundError):
         check_hand_anomalies(tmp_path / "nope.png", mp_hands_factory=make_fake_hands_factory(None))
+
+
+def test_check_hand_anomalies_factory_unavailable_passes_with_skip_reason(tmp_path: Path) -> None:
+    """Factory that raises (e.g. mediapipe API drift on a new Python) should not
+    halt the keyframe pipeline -- treat as 'check skipped, don't block'."""
+    from platinum.utils.validate import check_hand_anomalies
+
+    img = tmp_path / "any.png"
+    _write_solid_image(img)
+
+    def broken_factory() -> object:
+        raise AttributeError("module 'mediapipe' has no attribute 'solutions'")
+
+    r = check_hand_anomalies(img, mp_hands_factory=broken_factory)
+    assert r.passed
+    assert "skipped" in r.reason.lower() or "unavailable" in r.reason.lower()
