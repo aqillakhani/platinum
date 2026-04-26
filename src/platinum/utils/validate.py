@@ -407,12 +407,12 @@ def check_image_subject(
         import cv2 as _cv2  # type: ignore[import-untyped]
         import numpy as _np
         from PIL import Image as _Image
-    except ImportError as exc:
+    except ImportError:
         return CheckResult(
             passed=True,                            # fail-open -- mirror check_hand_anomalies
             metric=0.0,
             threshold=min_edge_density,
-            reason=f"skipped: {exc.name} unavailable",
+            reason="skipped: cv2/numpy/PIL unavailable",
         )
 
     try:
