@@ -1,16 +1,19 @@
 # Runbook: vast.ai keyframe live smoke
 
-Drives the first live keyframe-generation pass against a curator-approved + adapted
-story (default: Cask of Amontillado, scenes 0/7/15) on a freshly rented vast.ai
-RTX 4090. Mirrors the data-flow diagram in
-`docs/plans/2026-04-25-session-6.1-keyframe-live-smoke-design.md` Section 5.
+Drives a live keyframe-generation pass against a curator-approved + adapted
+story (default: Cask of Amontillado, scenes 1/8/16) on a freshly rented vast.ai
+A6000 48GB box (or A6000 Ada / A100 / H100 — anything >=48GB VRAM AND >=64GB
+system RAM). Mirrors the data-flow diagram in
+`docs/plans/2026-04-25-session-6.1-keyframe-live-smoke-design.md` Section 5;
+S6.2 quality fix details in
+`docs/plans/2026-04-26-session-6.2-keyframe-quality-fix-design.md`.
 
 **Time budget:** ~50-75 min total
 - Provisioning: 30-45 min (mostly weight downloads)
 - Smoke run + verify: 10-15 min
-- Tear down: ~30s
+- Tear down: ~30s (or skip when chaining into Session 7)
 
-**Cost budget:** $1-2 (one rental window of an RTX 4090 at ~$0.30-0.50/hr)
+**Cost budget:** $1.50-2.50 (one rental window of an A6000 at ~$0.60-0.90/hr)
 
 ---
 
