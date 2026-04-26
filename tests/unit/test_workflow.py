@@ -148,3 +148,26 @@ def test_flux_dev_keyframe_workflow_loads_and_injects() -> None:
     assert out[latent_id]["inputs"]["height"] == 1024
     assert out[sampler_id]["inputs"]["seed"] == 12345
     assert out[save_id]["inputs"]["filename_prefix"] == "scene_001_candidate_0"
+
+
+def test_flux_dev_workflow_uses_dpmpp_2m_karras_30steps() -> None:
+    """The Flux Dev keyframe workflow uses the BFL-recommended sampler combo.
+
+    Why these values:
+      sampler_name=dpmpp_2m + scheduler=karras -- community-validated for
+        Flux Dev; produces sharper detail than ComfyUI's euler/simple default.
+      steps=30 -- upper-mid range for Flux; diminishing returns past ~30.
+      cfg=3.5 -- BFL's trained value; higher ranges induce rigid output.
+    """
+    from platinum.utils.workflow import load_workflow
+
+    wf = load_workflow(
+        "flux_dev_keyframe",
+        config_dir=Path(__file__).resolve().parents[2] / "config",
+    )
+    # KSampler node id is "6" per the existing _meta.role layout.
+    ksampler_inputs = wf["6"]["inputs"]
+    assert ksampler_inputs["sampler_name"] == "dpmpp_2m"
+    assert ksampler_inputs["scheduler"] == "karras"
+    assert ksampler_inputs["steps"] == 30
+    assert ksampler_inputs["cfg"] == 3.5
