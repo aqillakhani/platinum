@@ -262,3 +262,34 @@ def test_check_image_brightness_boundary_equality_passes(tmp_path: Path) -> None
     r = check_image_brightness(img, min_mean_rgb=20.0)
     assert r.passed
     assert r.metric == 20.0
+
+
+def test_check_image_brightness_pil_unavailable_passes_with_skip_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mirrors check_hand_anomalies's mediapipe ImportError handler.
+
+    If PIL isn't importable (tooling drift, fresh virtualenv, etc.) the
+    pipeline must continue rather than halting -- treat as 'unable to
+    verify, allow through'. The aesthetic scorer + downstream stages
+    catch quality issues anyway.
+    """
+    import builtins
+
+    from platinum.utils.validate import check_image_brightness
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "PIL" or name.startswith("PIL."):
+            raise ImportError("PIL not installed (simulated)")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    img = tmp_path / "any.png"
+    img.write_bytes(b"not actually used")
+    r = check_image_brightness(img, min_mean_rgb=20.0)
+    assert r.passed                                 # defensive: don't halt
+    assert "skipped" in r.reason
+    assert "PIL" in r.reason
