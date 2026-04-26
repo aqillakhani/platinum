@@ -227,10 +227,11 @@ async def generate_for_scene(
 
     threshold = float(quality_gates.get("aesthetic_min_score", 0.0))
     eligible = [
-        i for i, (s, a, ok, b) in enumerate(
-            zip(scores, anatomy_passed, scoring_succeeded, brightness_passed, strict=True)
+        i for i, (s, a, ok, b, sj) in enumerate(
+            zip(scores, anatomy_passed, scoring_succeeded, brightness_passed,
+                subject_passed, strict=True)
         )
-        if ok and b and s >= threshold and a
+        if ok and b and sj and s >= threshold and a
     ]
     if eligible:
         max_score = max(scores[i] for i in eligible)

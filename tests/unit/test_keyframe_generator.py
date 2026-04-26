@@ -1067,3 +1067,61 @@ async def test_generate_for_scene_halts_when_all_subject_fail(tmp_path):
         )
     assert exc_info.value.scene_index == 0
     assert any("subject" in str(e).lower() for e in exc_info.value.exceptions)
+
+
+@pytest.mark.asyncio
+async def test_eligibility_excludes_subject_failing_candidates(tmp_path):
+    """A high-LAION-score candidate that fails subject gate must NOT be eligible.
+
+    Setup: cand 0 = checkerboard + score 5.5 (below threshold), cand 1 = solid +
+    score 8.0 (high but no subject), cand 2 = checkerboard + score 6.5.
+    Threshold 6.0. Eligible: only cand 2. Cand 1 NEVER picked.
+    """
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [fixture_dir / f"c{i}.png" for i in range(3)]
+    make_synthetic_png(fixture_paths[0], kind="checkerboard", size=(256, 256), block=16)
+    make_synthetic_png(fixture_paths[1], kind="grey", value=200, size=(256, 256))   # no subject!
+    make_synthetic_png(fixture_paths[2], kind="checkerboard", size=(256, 256), block=16)
+
+    responses = {}
+    for i, seed in enumerate((0, 1, 2)):
+        wf = inject(wf_template, prompt="x", negative_prompt="", seed=seed,
+                    width=1024, height=1024, output_prefix=f"scene_000_candidate_{i}")
+        responses[workflow_signature(wf)] = [fixture_paths[i]]
+    out = tmp_path / "out"
+    out.mkdir()
+    score_map = {
+        out / "candidate_0.png": 5.5,
+        out / "candidate_1.png": 8.0,                    # high but no subject!
+        out / "candidate_2.png": 6.5,
+    }
+    scorer = MappedFakeScorer(scores_by_path=score_map, default=0.0)
+    comfy = FakeComfyClient(responses=responses)
+    scene = Scene(id="s0", index=0, narration_text="x",
+                  narration_duration_seconds=1.0, visual_prompt="x")
+
+    report = await generate_for_scene(
+        scene,
+        track_visual={},
+        quality_gates={"aesthetic_min_score": 6.0,
+                       "brightness_floor_mean_rgb": 20.0,
+                       "subject_min_edge_density": 0.020},
+        comfy=comfy, scorer=scorer,
+        output_dir=out,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+    )
+
+    assert report.subject_passed == [True, False, True]
+    assert report.selected_index == 2                    # only eligible
+    assert report.selected_via_fallback is False
