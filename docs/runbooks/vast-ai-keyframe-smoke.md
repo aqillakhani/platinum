@@ -39,8 +39,9 @@ One-time setup on your local machine and vast.ai account:
 ## 2. Pick + rent the box (~3 min)
 
 ```bash
-# Search for an RTX 4090 with at least 80GB disk on a verified host
-vastai search offers 'gpu_name=RTX_4090 disk_space>=80 verified=true' -o 'dph_total'
+# A6000 48GB VRAM + >=64GB system RAM (drops FP8 collapse risk; see S6.2 design).
+# Acceptable alternates if no A6000 offers: A6000 Ada -> A100 40GB -> A100 80GB -> H100.
+vastai search offers 'gpu_name=RTX_A6000 cpu_ram>=64 disk_space>=80 verified=true' -o 'dph_total'
 
 # Pick the cheapest verified offer (top of the sorted list)
 # Note the OFFER_ID, then create the instance:
@@ -163,26 +164,25 @@ Would generate keyframes for scenes [0, 7, 15] of story <CASK_STORY_ID>
 Exit code 0. If the host URLs are blank: re-check Step 6 (`.env` not loaded —
 ensure you're in the project root or the file is at `secrets/.env`).
 
-## 8. Run for real (~7-10 min)
+## 8. Run for real
+
+### 8a. Cask regression smoke (~4 min)
 
 ```bash
-time python -m platinum keyframes <CASK_STORY_ID> --scenes 0,7,15 \
+time python -m platinum keyframes <CASK_STORY_ID> --scenes 1,8,16 \
     2>&1 | tee /tmp/cask-smoke.log
 ```
 
-Expected:
-- 3 progress lines per scene (one per candidate generation, ~30-60s each on Flux)
-- 3 score lines per scene (~50-100ms each via score_server)
-- Final summary print
-- Exit code 0
-- Total wall-clock ~7-10 min
+Expected: 3 progress lines per scene, 3 score + brightness lines per scene,
+final summary print, exit 0. Wall-clock ~4 min on A6000 (3 scenes x 3
+candidates x ~25s/Flux + 9 x ~50ms LAION + 9 x brightness checks).
 
-Verify artifacts on disk:
+Verify artifacts:
 ```bash
-ls -lh data/stories/<CASK_STORY_ID>/keyframes/scene_{000,007,015}/
+ls -lh data/stories/<CASK_STORY_ID>/keyframes/scene_{001,008,016}/
 ```
-Expected: each `scene_NNN/` dir has `candidate_0.png`, `candidate_1.png`,
-`candidate_2.png` at ~150-300 KB each.
+Expected: 9 PNGs, ~150-300 KB each, mean_rgb >= 20 each (verify via
+`python -c "from PIL import Image; import numpy as np; ..."` if needed).
 
 Verify story.json was updated:
 ```bash
@@ -192,16 +192,33 @@ from pathlib import Path
 import os
 cask = os.environ.get('CASK_STORY_ID')
 s = Story.load(Path(f'data/stories/{cask}/story.json'))
-for i in (0, 7, 15):
+for i in (1, 8, 16):
     print(s.scenes[i].keyframe_path, s.scenes[i].keyframe_scores,
           s.scenes[i].validation.get('keyframe_selected_via_fallback'))
 "
 ```
 Expected: each line shows a real path + 3 floats + a bool.
 
+### 8b. Bright-probe smoke (~3 min)
+
+```bash
+python scripts/keyframe_quality_smoke.py \
+    --prompt "sunlit Tuscan vineyard at golden hour, rolling hills covered in vine rows, cypress trees standing dark against amber sky, dust motes in slanting warm light, ancient stone farmhouse in the distance, rich saturated greens and golds, oil painting quality, fine film grain, painterly brushwork" \
+    --label tuscan-vineyard \
+    --output-dir /tmp/smoke
+
+python scripts/keyframe_quality_smoke.py \
+    --prompt "snowy alpine peak at dawn, jagged crystalline ice formations catching first light, vast white slopes under pale blue-pink sky, distant clouds bathed in cold rose-gold, sharp shadow detail, cobalt blue ice caves glinting, oil painting quality, fine film grain, atmospheric clarity" \
+    --label alpine-peak \
+    --output-dir /tmp/smoke
+```
+
+Expected: per-prompt table with 3 candidates, all passing brightness,
+LAION scores 5.5-7+, mean_rgb ~120-180.
+
 ## 9. Eye-check (~1 min)
 
-Open the 9 PNGs and sanity-check:
+Open the 15 PNGs (9 Cask regression + 6 bright probe) and sanity-check:
 
 ```bash
 # Windows
@@ -224,15 +241,17 @@ Look for:
   If the selection seems random, the LAION model may not be discriminating
   well — record the example for future tuning.
 
-## 10. Tear down (~30s)
+## 10. Tear down -- SKIP for Session 6.2
 
-```bash
-vastai destroy <INSTANCE_ID>
-vastai show instances  # confirm gone
-```
+Session 7 ("full Cask 16-scene keyframe run") begins immediately after S6.2
+and reuses this box. Leave the instance running. ComfyUI + score_server in
+the tmux session continue to serve.
 
-The persistent volume is preserved; weights survive for next rental.
-Re-renting on the same volume skips the 30-45 min weights download.
+Reminder: tear down at the END of Session 7 with `vastai destroy <ID>`.
+S7's design captures this in its closeout checklist.
+
+If Session 7 is unexpectedly delayed >24h, tear down anyway -- idle cost
+($0.60-0.90/hr * 24h = $14-22) exceeds re-provisioning cost ($0.30 + 30 min).
 
 ## 11. Commit smoke artifacts
 
@@ -357,6 +376,7 @@ months later for Sessions 8/9/10/13.)
   `candidate_*.png` is essentially black (mean RGB ~0-3 out of 255 per
   channel; LAION still scores them ~3.9-4.6 because the MLP head
   doesn't penalise low-content imagery hard enough to halt selection).
+  [RESOLVED IN S6.2 -- A6000 fp16; preserved for historical context]
   → **Cause:** The FP8 + `--cpu-vae` flag stack we use to fit Flux on a
   32GB / 24GB RTX 4090 collapses output for very dark prompts (the Cask
   story is catacombs / wine cellar / candlelit walls + a strong
