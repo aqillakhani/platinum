@@ -50,3 +50,12 @@ def test_score_happy_path_returns_float() -> None:
     body = resp.json()
     assert body["score"] == 6.42  # _fake_scorer's sentinel
     assert isinstance(body["score"], float)
+
+
+def test_score_400_on_non_image_bytes() -> None:
+    resp = client.post(
+        "/score",
+        files={"image": ("garbage.png", b"this is not a PNG", "image/png")},
+    )
+    assert resp.status_code == 400
+    assert "could not decode" in resp.json()["detail"].lower()
