@@ -300,7 +300,9 @@ def keyframes(
         )
         raise typer.Exit(code=1)
 
-    # Parse --scenes "0,7,15" -> {0, 7, 15}
+    # Parse --scenes "1,8,16" -> {1, 8, 16}. Values are matched against
+    # `scene.index` (which the scene_breakdown stage emits as 1-indexed),
+    # not against the array offset.
     scene_filter: set[int] | None = None
     if scenes is not None:
         try:
@@ -310,11 +312,13 @@ def keyframes(
                 f"--scenes must be comma-separated integers (got: {scenes!r})",
                 param_hint="--scenes",
             ) from exc
-        max_idx = max(scene_filter, default=-1)
-        if max_idx >= len(s.scenes):
+        valid_indices = {scene.index for scene in s.scenes}
+        unknown = scene_filter - valid_indices
+        if unknown:
+            available = sorted(valid_indices)
             raise typer.BadParameter(
-                f"--scenes references index {max_idx} but story has only "
-                f"{len(s.scenes)} scenes",
+                f"--scenes references unknown scene index(es) "
+                f"{sorted(unknown)}; available: {available}",
                 param_hint="--scenes",
             )
 
