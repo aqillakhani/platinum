@@ -1125,3 +1125,62 @@ async def test_eligibility_excludes_subject_failing_candidates(tmp_path):
     assert report.subject_passed == [True, False, True]
     assert report.selected_index == 2                    # only eligible
     assert report.selected_via_fallback is False
+
+
+@pytest.mark.asyncio
+async def test_fallback_pool_excludes_subject_failing(tmp_path):
+    """No eligible candidate (all below threshold), fallback must NOT pick
+    the highest-scored solid-color candidate."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [fixture_dir / f"c{i}.png" for i in range(3)]
+    make_synthetic_png(fixture_paths[0], kind="checkerboard", size=(256, 256), block=16)
+    make_synthetic_png(fixture_paths[1], kind="grey", value=200, size=(256, 256))   # no subject!
+    make_synthetic_png(fixture_paths[2], kind="checkerboard", size=(256, 256), block=16)
+
+    responses = {}
+    for i, seed in enumerate((0, 1, 2)):
+        wf = inject(wf_template, prompt="x", negative_prompt="", seed=seed,
+                    width=1024, height=1024, output_prefix=f"scene_000_candidate_{i}")
+        responses[workflow_signature(wf)] = [fixture_paths[i]]
+    out = tmp_path / "out"
+    out.mkdir()
+    score_map = {
+        out / "candidate_0.png": 5.0,                    # below threshold 6.0
+        out / "candidate_1.png": 9.0,                    # high but no subject!
+        out / "candidate_2.png": 5.5,                    # below threshold 6.0
+    }
+    scorer = MappedFakeScorer(scores_by_path=score_map, default=0.0)
+    comfy = FakeComfyClient(responses=responses)
+    scene = Scene(id="s0", index=0, narration_text="x",
+                  narration_duration_seconds=1.0, visual_prompt="x")
+
+    report = await generate_for_scene(
+        scene,
+        track_visual={},
+        quality_gates={"aesthetic_min_score": 6.0,
+                       "brightness_floor_mean_rgb": 20.0,
+                       "subject_min_edge_density": 0.020},
+        comfy=comfy, scorer=scorer,
+        output_dir=out,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+    )
+
+    # No eligible (none above threshold) -> fallback. Must be cand 0 or cand 2,
+    # NOT cand 1 (which has highest score but failed subject gate).
+    assert report.selected_via_fallback is True
+    assert report.selected_index in (0, 2)
+    assert report.selected_index != 1
+    # Specifically, max-scored among (subject_passed AND brightness_passed AND
+    # scoring_succeeded) is cand 2 (score 5.5 > cand 0's 5.0).
+    assert report.selected_index == 2

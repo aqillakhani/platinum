@@ -239,16 +239,16 @@ async def generate_for_scene(
         selected_via_fallback = False
     else:
         # Content failure: fall back to highest-scored among candidates that
-        # BOTH scored AND passed the brightness floor. Brightness-failing
-        # candidates are NEVER selected, even in fallback (would persist a
-        # black image even though we know it's degenerate).
+        # passed scoring AND brightness AND subject gates. Failing candidates
+        # are NEVER selected, even in fallback (would persist a degenerate
+        # image even though we know it's bad).
         fallback_pool = [
-            i for i, (ok, b) in enumerate(
-                zip(scoring_succeeded, brightness_passed, strict=True)
+            i for i, (ok, b, sj) in enumerate(
+                zip(scoring_succeeded, brightness_passed, subject_passed, strict=True)
             )
-            if ok and b
+            if ok and b and sj
         ]
-        # If empty, the brightness or scoring halt above already raised
+        # If empty, the brightness/subject/scoring halt above already raised
         # KeyframeGenerationError; reaching here guarantees fallback_pool is non-empty.
         max_score_in_pool = max(scores[i] for i in fallback_pool)
         selected_index = next(
