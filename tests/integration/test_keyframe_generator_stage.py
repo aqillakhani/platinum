@@ -407,3 +407,105 @@ async def test_stage_brightness_gate_persists_correct_selection(  # noqa: ANN001
         # Selected candidate must NOT be candidate_0 (the dark one).
         assert scene.keyframe_path is not None
         assert "candidate_0.png" not in str(scene.keyframe_path)
+
+
+async def test_stage_subject_gate_end_to_end_picks_subject_passing_candidate(  # noqa: ANN001
+    tmp_project, repo_root,
+) -> None:
+    """End-to-end: Stage with FakeComfyClient producing three candidates:
+    - Cand 0: solid color (passes brightness, fails subject gate)
+    - Cand 1: checkerboard (passes both gates, high LAION score)
+    - Cand 2: checkerboard (passes both gates, lower LAION score)
+
+    Subject gate with min_edge_density=0.020 should filter out cand 0 and select
+    cand 1 (highest LAION among subject-passing candidates).
+    """
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_fake_hands_factory, make_synthetic_png
+
+    config = _setup_config(tmp_project, repo_root)
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=config.config_dir)
+
+    # 1-scene story with 3 candidates
+    story = _build_story(n=1)
+    scene = story.scenes[0]
+    fixtures_dir = tmp_project / "fixtures"
+    fixtures_dir.mkdir()
+    responses: dict[str, list[Path]] = {}
+    track_cfg = config.track(story.track)
+    track_visual = dict(track_cfg.get("visual", {}))
+
+    negative_text = scene.negative_prompt or track_visual.get("negative_prompt", "")
+
+    # Build fixtures and responses for 3 candidates
+    fixture_paths = []
+    for cand_idx in range(3):
+        p = fixtures_dir / f"scene_0_candidate_{cand_idx}.png"
+        if cand_idx == 0:
+            # Solid grey (fails subject gate due to edge_density=0)
+            make_synthetic_png(p, kind="grey", value=200, size=(256, 256))
+        else:
+            # Checkerboard (passes subject gate)
+            make_synthetic_png(p, kind="checkerboard", size=(256, 256), block=16)
+        fixture_paths.append(p)
+
+        seed = scene.index * 1000 + cand_idx
+        wf = inject(
+            wf_template,
+            prompt=scene.visual_prompt,
+            negative_prompt=negative_text,
+            seed=seed,
+            width=1024,
+            height=1024,
+            output_prefix=f"scene_{scene.index:03d}_candidate_{cand_idx}",
+        )
+        responses[workflow_signature(wf)] = [p]
+
+    story_dir = tmp_project / "data" / "stories" / story.id
+    story_dir.mkdir(parents=True, exist_ok=True)
+    story_path = story_dir / "story.json"
+    story.save(story_path)
+
+    # Build score_map using output paths (not fixture paths).
+    # The stage places candidates at: story_dir / "keyframes" / "scene_NNN" / "candidate_{i}.png"
+    output_dir = story_dir / "keyframes" / f"scene_{scene.index:03d}"
+    score_map = {
+        output_dir / "candidate_0.png": 9.0,  # Unused (fails subject gate first)
+        output_dir / "candidate_1.png": 8.0,  # Highest among subject-passing
+        output_dir / "candidate_2.png": 7.0,  # Lower score, but still eligible
+    }
+
+    # Enable subject gate (default 0.020)
+    track_cfg = config.track(story.track)
+    track_cfg.setdefault("quality_gates", {})["subject_min_edge_density"] = 0.020
+
+    config.settings["test"] = {
+        "comfy_client": FakeComfyClient(responses=responses),
+        "aesthetic_scorer": MappedFakeScorer(scores_by_path=score_map, default=0.0),
+        "mp_hands_factory": make_fake_hands_factory(None),
+    }
+    ctx = PipelineContext(config=config, logger=__import__("logging").getLogger("test"))
+
+    stage = KeyframeGeneratorStage()
+    artifacts = await stage.run(story, ctx)
+
+    assert artifacts["scenes_total"] == 1
+    assert artifacts["scenes_succeeded"] == 1
+    assert artifacts["scenes_via_fallback"] == 0
+
+    # Verify keyframe_path is candidate_1 (not candidate_0, which is subject-failing).
+    # This proves the subject gate filtered out the solid-color candidate and selected
+    # the highest-scoring checkerboard candidate.
+    assert scene.keyframe_path is not None
+    assert "candidate_1.png" in str(scene.keyframe_path)
+    assert "candidate_0.png" not in str(scene.keyframe_path)
+
+    # Verify no fallback (selection was among eligible candidates, not forced fallback)
+    assert scene.validation.get("keyframe_selected_via_fallback") is False
+
+    # Verify all 3 candidates were generated and persisted
+    assert len(scene.keyframe_candidates) == 3
+    assert len(scene.keyframe_scores) == 3
