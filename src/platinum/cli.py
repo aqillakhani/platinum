@@ -259,6 +259,91 @@ def adapt(
 
 
 @app.command()
+def keyframes(
+    story: str = typer.Argument(..., help="Story id (must have visual_prompts COMPLETE)."),
+    scenes: str | None = typer.Option(
+        None, "--scenes",
+        help="Comma-sep scene indices to run (smoke subset). Default: all.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Print the planned scene set + comfy/aesthetics hosts; do not call.",
+    ),
+) -> None:
+    """Generate keyframes for a curator-approved + adapted story.
+
+    Requires visual_prompts COMPLETE. Reads PLATINUM_COMFYUI_HOST and
+    PLATINUM_AESTHETICS_HOST from .env (or settings.yaml fallback).
+    Use --scenes for smoke runs.
+    """
+    import logging
+
+    from platinum.models.story import StageStatus, Story
+    from platinum.pipeline.context import PipelineContext
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.pipeline.orchestrator import Orchestrator
+
+    cfg = Config()
+    story_path = cfg.stories_dir / story / "story.json"
+    if not story_path.exists():
+        console.print(
+            f"[red]Story not found:[/red] {story} (looked in {story_path})"
+        )
+        raise typer.Exit(code=1)
+
+    s = Story.load(story_path)
+    vp = s.latest_stage_run("visual_prompts")
+    if vp is None or vp.status != StageStatus.COMPLETE:
+        console.print(
+            f"[red]Story {story} has no completed visual_prompts; "
+            f"run 'platinum adapt --story {story}' first.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    # Parse --scenes "0,7,15" -> {0, 7, 15}
+    scene_filter: set[int] | None = None
+    if scenes is not None:
+        try:
+            scene_filter = {int(x.strip()) for x in scenes.split(",") if x.strip()}
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"--scenes must be comma-separated integers (got: {scenes!r})",
+                param_hint="--scenes",
+            ) from exc
+        max_idx = max(scene_filter, default=-1)
+        if max_idx >= len(s.scenes):
+            raise typer.BadParameter(
+                f"--scenes references index {max_idx} but story has only "
+                f"{len(s.scenes)} scenes",
+                param_hint="--scenes",
+            )
+
+    comfy_host = cfg.settings.get("comfyui", {}).get("host", "")
+    aest_host = cfg.settings.get("aesthetics", {}).get("host", "")
+
+    if dry_run:
+        planned = sorted(scene_filter) if scene_filter else list(range(len(s.scenes)))
+        console.print(
+            f"[cyan]Would generate keyframes for scenes {planned} of story {story}[/cyan]"
+        )
+        console.print(f"  comfy   = {comfy_host}")
+        console.print(f"  scorer  = {aest_host}")
+        raise typer.Exit(code=0)
+
+    cfg.settings.setdefault("runtime", {})["scene_filter"] = scene_filter
+    ctx = PipelineContext(config=cfg, logger=logging.getLogger("platinum.keyframes"))
+    orchestrator = Orchestrator(stages=[KeyframeGeneratorStage()])
+
+    try:
+        asyncio.run(orchestrator.run(s, ctx))
+    except Exception as exc:
+        console.print(f"[red]keyframes failed for {story}: {exc}[/red]")
+        raise
+
+    console.print(f"[green]Keyframes complete for {story}.[/green]")
+
+
+@app.command()
 def render(
     story: str = typer.Argument(..., help="Story id to render."),
 ) -> None:
