@@ -31,11 +31,11 @@ its `color_grade.lut` setting:
 
 | Track | Expected path | Style direction |
 |---|---|---|
-| atmospheric_horror | config/luts/atmospheric_horror.cube | warm shadow, cool highlight, low saturation, raised black |
-| folktales_world_myths | config/luts/folktales_world_myths.cube | regional — keep neutral until per-tale grading exists |
-| childrens_fables | config/luts/childrens_fables.cube | soft pastel, warm shift, low contrast |
-| slice_of_life | config/luts/slice_of_life.cube | Ghibli natural, soft contrast, slight cool tint |
-| scifi_concept | config/luts/scifi_concept.cube | teal-orange, raised contrast, sodium-vapor amber |
+| atmospheric_horror | luts/atmospheric_horror.cube | warm shadow, cool hi, low sat, raised black |
+| folktales_world_myths | luts/folktales_world_myths.cube | regional -- neutral; per-tale TBD |
+| childrens_fables | luts/childrens_fables.cube | soft pastel, warm shift, low contrast |
+| slice_of_life | luts/slice_of_life.cube | Ghibli natural, soft contrast, slight cool tint |
+| scifi_concept | luts/scifi_concept.cube | teal-orange, raised contrast, sodium-vapor amber |
 
 ## Verifying a LUT works
 
@@ -57,7 +57,10 @@ to publish until their LUT is in place.
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument(
         "--root",
         default=str(Path(__file__).resolve().parents[1]),

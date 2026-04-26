@@ -37,11 +37,20 @@ log = logging.getLogger("acquire_librivox_voice")
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument("--track", required=True, help="Track id, e.g. atmospheric_horror")
-    p.add_argument("--url", required=True, help="Direct URL to the LibriVox source file (.mp3 or .wav)")
+    p.add_argument(
+        "--url", required=True,
+        help="Direct URL to the LibriVox source file (.mp3 or .wav)",
+    )
     p.add_argument("--start", default="00:00:30", help="Start timestamp HH:MM:SS (skip intro)")
-    p.add_argument("--duration", type=int, default=10, help="Seconds of reference to extract (default 10)")
+    p.add_argument(
+        "--duration", type=int, default=10,
+        help="Seconds of reference to extract (default 10)",
+    )
     p.add_argument("--narrator", required=True, help="Narrator name for attribution")
     p.add_argument("--title", required=True, help="Title of the recording for attribution")
     p.add_argument("--year", type=int, default=0, help="Year of the source text (PD-status check)")
@@ -79,7 +88,16 @@ def extract_clip(src: Path, dest: Path, start: str, duration: int) -> None:
         sys.exit(1)
 
 
-def write_attribution(dest: Path, *, url: str, narrator: str, title: str, year: int, start: str, duration: int) -> None:
+def write_attribution(
+    dest: Path,
+    *,
+    url: str,
+    narrator: str,
+    title: str,
+    year: int,
+    start: str,
+    duration: int,
+) -> None:
     body = f"""# Voice reference attribution
 
 - **Track:** {dest.parent.name}

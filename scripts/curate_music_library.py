@@ -28,7 +28,10 @@ AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument("--kind", required=True, choices=sorted(ALLOWED_KINDS), help="music or sfx")
     p.add_argument("--subset", required=True, help="library subset name (e.g. horror, folktales)")
     p.add_argument(
@@ -36,7 +39,10 @@ def parse_args() -> argparse.Namespace:
         default=str(Path(__file__).resolve().parents[1]),
         help="Project root (default: parent of scripts/)",
     )
-    p.add_argument("--non-interactive", action="store_true", help="Skip prompts; only re-scan durations")
+    p.add_argument(
+        "--non-interactive", action="store_true",
+        help="Skip prompts; only re-scan durations",
+    )
     return p.parse_args()
 
 
