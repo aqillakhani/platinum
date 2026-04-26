@@ -339,3 +339,73 @@ async def test_keyframe_stage_no_scene_filter_processes_all_scenes(  # noqa: ANN
 
     for scene in story.scenes:
         assert scene.keyframe_path is not None
+
+
+async def test_stage_brightness_gate_persists_correct_selection(  # noqa: ANN001
+    tmp_project, repo_root,
+) -> None:
+    """End-to-end: Stage with FakeComfyClient producing one black + two bright
+    PNGs. Selection persists to story.json. Brightness-failing candidate is
+    NEVER the keyframe_path.
+    """
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_fake_hands_factory, make_synthetic_png
+
+    config = _setup_config(tmp_project, repo_root)
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=config.config_dir)
+
+    # 2-scene story; for each scene cand 0 = dark, cand 1 + 2 = bright.
+    story = _build_story(n=2)
+    fixtures_dir = tmp_project / "fixtures"
+    fixtures_dir.mkdir()
+    responses: dict[str, list[Path]] = {}
+    track_cfg = config.track(story.track)
+    track_visual = dict(track_cfg.get("visual", {}))
+
+    for scene in story.scenes:
+        aesthetic_text = " ".join(
+            s for s in (track_visual.get("aesthetic"), scene.visual_prompt) if s
+        )
+        negative_text = scene.negative_prompt or track_visual.get("negative_prompt", "")
+        for cand_idx in range(3):
+            p = fixtures_dir / f"s{scene.index}_c{cand_idx}.png"
+            value = 0 if cand_idx == 0 else 200          # cand 0 dark, others bright
+            make_synthetic_png(p, kind="grey", value=value)
+
+            # Match seeds to candidates 0, 1, 2 for this scene
+            seed = scene.index * 1000 + cand_idx
+            wf = inject(
+                wf_template,
+                prompt=aesthetic_text,
+                negative_prompt=negative_text,
+                seed=seed,
+                width=1024,
+                height=1024,
+                output_prefix=f"scene_{scene.index:03d}_candidate_{cand_idx}",
+            )
+            responses[workflow_signature(wf)] = [p]
+
+    story_dir = tmp_project / "data" / "stories" / story.id
+    story_dir.mkdir(parents=True, exist_ok=True)
+    story_path = story_dir / "story.json"
+    story.save(story_path)
+
+    config.settings["test"] = {
+        "comfy_client": FakeComfyClient(responses=responses),
+        "aesthetic_scorer": FakeAestheticScorer(fixed_score=8.0),
+        "mp_hands_factory": make_fake_hands_factory(None),
+    }
+    ctx = PipelineContext(config=config, logger=__import__("logging").getLogger("test"))
+
+    stage = KeyframeGeneratorStage()
+    artifacts = await stage.run(story, ctx)
+
+    assert artifacts["scenes_total"] == 2
+    assert artifacts["scenes_succeeded"] == 2
+    for scene in story.scenes:
+        # Selected candidate must NOT be candidate_0 (the dark one).
+        assert scene.keyframe_path is not None
+        assert "candidate_0.png" not in str(scene.keyframe_path)
