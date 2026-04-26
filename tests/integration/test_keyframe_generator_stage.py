@@ -222,6 +222,62 @@ async def test_keyframe_stage_records_failure_in_artifacts(tmp_project, repo_roo
         await stage.run(story, ctx)
 
 
+async def test_keyframe_stage_closes_stage_constructed_remote_scorer(  # noqa: ANN001
+    tmp_project, repo_root, monkeypatch,
+) -> None:
+    """When Stage constructs RemoteAestheticScorer (no test override), it must
+    call aclose() in a finally block so httpx connections don't leak across
+    multi-scene runs on a live vast.ai box.
+    """
+    import httpx
+
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.utils.aesthetics import RemoteAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    config = _setup_config(tmp_project, repo_root)
+    config.settings.setdefault("aesthetics", {})["host"] = "http://test:8189"
+
+    story = _build_story(n=1)
+    story_dir = tmp_project / "data" / "stories" / story.id
+    story_dir.mkdir(parents=True, exist_ok=True)
+    responses = _build_responses_for_story(story, repo_root)
+
+    async def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"score": 7.5})
+
+    aclose_calls: list[int] = []
+    real_init = RemoteAestheticScorer.__init__
+    real_aclose = RemoteAestheticScorer.aclose
+
+    def _spy_init(self, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs.setdefault("transport", httpx.MockTransport(_handler))
+        real_init(self, **kwargs)
+
+    async def _spy_aclose(self):  # type: ignore[no-untyped-def]
+        aclose_calls.append(1)
+        await real_aclose(self)
+
+    monkeypatch.setattr(RemoteAestheticScorer, "__init__", _spy_init)
+    monkeypatch.setattr(RemoteAestheticScorer, "aclose", _spy_aclose)
+
+    # Inject only comfy + mp_hands; let Stage construct the scorer itself.
+    config.settings["test"] = {
+        "comfy_client": FakeComfyClient(responses=responses),
+        "mp_hands_factory": make_fake_hands_factory(None),
+    }
+    ctx = PipelineContext(config=config, logger=__import__("logging").getLogger("test"))
+
+    stage = KeyframeGeneratorStage()
+    await stage.run(story, ctx)
+
+    assert len(aclose_calls) == 1, (
+        f"expected exactly one aclose() call from Stage cleanup, got {len(aclose_calls)}"
+    )
+    assert story.scenes[0].keyframe_path is not None
+
+
 async def test_keyframe_stage_scene_filter_processes_only_selected_indices(  # noqa: ANN001
     tmp_project, repo_root,
 ) -> None:

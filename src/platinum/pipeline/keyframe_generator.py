@@ -278,12 +278,14 @@ class KeyframeGeneratorStage(Stage):
         from platinum.utils.comfyui import HttpComfyClient
 
         test_overrides = ctx.config.settings.get("test", {})
-        comfy = test_overrides.get("comfy_client") or HttpComfyClient(
+        injected_comfy = test_overrides.get("comfy_client")
+        injected_scorer = test_overrides.get("aesthetic_scorer")
+        comfy = injected_comfy or HttpComfyClient(
             host=ctx.config.settings.get("comfyui", {}).get(
                 "host", "http://localhost:8188"
             ),
         )
-        scorer = test_overrides.get("aesthetic_scorer") or RemoteAestheticScorer(
+        scorer = injected_scorer or RemoteAestheticScorer(
             host=ctx.config.settings.get("aesthetics", {}).get("host", "")
         )
         mp_hands_factory = test_overrides.get("mp_hands_factory")
@@ -308,30 +310,42 @@ class KeyframeGeneratorStage(Stage):
 
         scenes_total = len(story.scenes)
         try:
-            reports = await generate(
-                story,
-                config=ctx.config,
-                comfy=comfy,
-                scorer=scorer,
-                output_root=output_root,
-                mp_hands_factory=mp_hands_factory,
-                scene_filter=scene_filter,
-            )
-        except KeyframeGenerationError:
-            # Save what we have so far before re-raising.
+            try:
+                reports = await generate(
+                    story,
+                    config=ctx.config,
+                    comfy=comfy,
+                    scorer=scorer,
+                    output_root=output_root,
+                    mp_hands_factory=mp_hands_factory,
+                    scene_filter=scene_filter,
+                )
+            except KeyframeGenerationError:
+                # Save what we have so far before re-raising.
+                try:
+                    if hasattr(ctx, "story_path"):
+                        story.save(ctx.story_path(story))
+                except Exception:  # noqa: BLE001 -- save best-effort on failure path
+                    logger.exception(
+                        "failed to save story.json after KeyframeGenerationError"
+                    )
+                raise
+
+            # Atomic save at end of stage.
             try:
                 if hasattr(ctx, "story_path"):
                     story.save(ctx.story_path(story))
-            except Exception:  # noqa: BLE001 -- save best-effort on the failure path
-                logger.exception("failed to save story.json after KeyframeGenerationError")
-            raise
-
-        # Atomic save at end of stage.
-        try:
-            if hasattr(ctx, "story_path"):
-                story.save(ctx.story_path(story))
-        except Exception:  # noqa: BLE001 -- save best-effort
-            logger.exception("failed to save story.json after stage completion")
+            except Exception:  # noqa: BLE001 -- save best-effort
+                logger.exception("failed to save story.json after stage completion")
+        finally:
+            # Close any clients the Stage constructed (skip test-injected ones --
+            # tests own their lifecycle). Best-effort: never let cleanup errors
+            # mask the original exception.
+            if injected_scorer is None and hasattr(scorer, "aclose"):
+                try:
+                    await scorer.aclose()
+                except Exception:  # noqa: BLE001
+                    logger.exception("failed to aclose RemoteAestheticScorer")
 
         scenes_via_fallback = sum(1 for r in reports if r.selected_via_fallback)
         scenes_succeeded_now = sum(1 for s in story.scenes if s.keyframe_path is not None)
