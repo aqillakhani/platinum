@@ -160,7 +160,11 @@ class HttpComfyClient:
 
     async def _submit(self, workflow: dict[str, Any]) -> str:
         async with self._client(timeout=30.0) as client:
-            payload = {"prompt": workflow, "client_id": str(uuid.uuid4())}
+            # Strip the platinum-internal `_meta` block before posting; ComfyUI
+            # treats every top-level key as a node and rejects keys with no
+            # `class_type` ("invalid prompt: missing_node_type Node 'ID #_meta'").
+            prompt_workflow = {k: v for k, v in workflow.items() if k != "_meta"}
+            payload = {"prompt": prompt_workflow, "client_id": str(uuid.uuid4())}
             resp = await client.post("/prompt", json=payload)
             resp.raise_for_status()
             data = resp.json()

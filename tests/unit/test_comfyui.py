@@ -261,6 +261,51 @@ async def test_http_comfy_client_generate_image_raises_on_error_status(tmp_path:
     assert "error" in str(exc.value).lower()
 
 
+async def test_http_comfy_client_strips_meta_from_prompt_payload(tmp_path: Path) -> None:
+    """`_meta` is platinum's role-mapping block; ComfyUI rejects it as a malformed
+    node ("missing class_type"). Verify _submit strips it before posting."""
+    from platinum.utils.comfyui import HttpComfyClient
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/prompt":
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(200, json={"prompt_id": "p_meta"})
+        if request.method == "GET" and request.url.path == "/history/p_meta":
+            return httpx.Response(
+                200,
+                json={
+                    "p_meta": {
+                        "status": {"completed": True, "status_str": "success"},
+                        "outputs": {
+                            "8": {
+                                "images": [
+                                    {"filename": "x.png", "subfolder": "", "type": "output"}
+                                ]
+                            }
+                        },
+                    }
+                },
+            )
+        if request.method == "GET" and request.url.path == "/view":
+            return httpx.Response(200, content=b"\x89PNG\x00")
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    client = HttpComfyClient(host="http://stub:8188", transport=transport, poll_interval=0.0)
+    workflow = {
+        "_meta": {"role": {"positive_prompt": "6", "seed": "8"}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "a cat"}},
+        "8": {"class_type": "KSampler", "inputs": {"seed": 1}},
+    }
+    await client.generate_image(workflow=workflow, output_path=tmp_path / "out.png")
+
+    prompt = captured["body"]["prompt"]
+    assert "_meta" not in prompt, f"_meta leaked into ComfyUI /prompt body: {list(prompt)}"
+    assert "6" in prompt and "8" in prompt, "real nodes must still be present"
+
+
 async def test_http_comfy_client_upload_image_form_shape(tmp_path: Path) -> None:
     from platinum.utils.comfyui import HttpComfyClient
 
