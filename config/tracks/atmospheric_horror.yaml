@@ -113,6 +113,7 @@ track:
 
   # Quality gates -- automated thresholds enforced before human review (Session 5).
   quality_gates:
+    brightness_floor_mean_rgb: 20.0   # mean RGB hard floor; catches FP8/cpu-vae collapse
     aesthetic_min_score: 6.0          # LAION-Aesthetics v2 (0-10); horror runs ~0.5 lower than bright tracks
     black_frame_max_ratio: 0.02       # max share of near-black frames; horror has intentional fade-to-blacks
     luminance_threshold: 8.0          # 0-255 mean below = "black frame"

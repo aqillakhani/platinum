@@ -54,6 +54,31 @@ def test_all_tracks_have_quality_gates(track_id: str) -> None:
     assert not missing, f"{track_id}.quality_gates missing keys: {missing}"
 
 
+@pytest.mark.parametrize(
+    "track_name, expected_floor",
+    [
+        ("atmospheric_horror", 20.0),
+        ("folktales_world_myths", 60.0),
+        ("childrens_fables", 80.0),
+        ("scifi_concept", 40.0),
+        ("slice_of_life", 60.0),
+    ],
+)
+def test_track_yaml_carries_brightness_floor(track_name: str, expected_floor: float) -> None:
+    """Each track YAML must declare its brightness floor under quality_gates.
+
+    Floors are calibrated per-track:
+      atmospheric_horror -- chiaroscuro tolerated; 20 lets candle scenes pass.
+      folktales / slice_of_life -- daylight typical; 60 catches degenerate output.
+      scifi_concept -- mixed (cosmic darkness + bright tech); 40 splits the diff.
+      childrens_fables -- bright/saturated; 80 enforces the cheerful palette.
+    """
+    cfg = Config(root=REPO_ROOT)
+    track_cfg = cfg.track(track_name)
+    qg = track_cfg.get("quality_gates", {})
+    assert qg.get("brightness_floor_mean_rgb") == expected_floor
+
+
 def test_check_audio_levels_round_trips_with_real_ffmpeg(tmp_path: Path) -> None:
     """Generate a tone, measure with loudnorm, verify check_audio_levels matches."""
     from platinum.utils.validate import _measure_lufs, check_audio_levels

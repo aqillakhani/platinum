@@ -69,6 +69,7 @@ track:
     position: bottom_center
   # Quality gates -- automated thresholds enforced before human review (Session 5).
   quality_gates:
+    brightness_floor_mean_rgb: 40.0
     aesthetic_min_score: 6.5
     black_frame_max_ratio: 0.03
     luminance_threshold: 8.0
