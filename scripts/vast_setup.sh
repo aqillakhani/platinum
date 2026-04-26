@@ -223,29 +223,31 @@ dl "https://github.com/christophschuhmann/improved-aesthetic-predictor/raw/main/
 
 # ---- ComfyUI launch helper ------------------------------------------------
 
+# Launcher script writes a small wrapper so the runbook can do a single
+# `bash launch_comfyui.sh` to start the server.
+#
+# Box class: A6000 48GB VRAM + >=64GB system RAM (or A6000 Ada / A100 / H100).
+# fp16 Flux + GPU VAE fits with margin; no FP8/lowvram/cpu-vae flags needed.
+#   --mmap-torch-files     load weights via mmap (no full RAM spike at startup)
+#
+# Historical note: Session 6.1 ran on a 4090 32GB-RAM box with
+# `--fp8_e4m3fn-unet --fp8_e4m3fn-text-enc --cpu-vae --lowvram` to fit
+# Flux fp16 (24GB) + t5xxl_fp16 (9GB) under the 32GB system RAM cap. That
+# combination produced perceptually degenerate output (mean RGB 0-3) for
+# Cask of Amontillado scenes -- LAION-Aesthetics doesn't reject black
+# images, so the score-based fallback persisted them. Session 6.2 fixes
+# the root cause by dropping FP8 entirely on a properly-resourced box.
+# See docs/plans/2026-04-26-session-6.2-keyframe-quality-fix-design.md.
+
 cat > /workspace/launch_comfyui.sh <<'EOF'
 #!/usr/bin/env bash
-# Launch ComfyUI listening on all interfaces so the orchestrator can hit it.
-# vast.ai pytorch container = ~32GB system RAM, RTX 4090 = 24GB VRAM.
-# Flux1-dev fp16 (24GB safetensors) + t5xxl_fp16 (9GB) + clip_l (~250MB)
-# overflow system RAM at load time -> host OOM-killer reaps the process
-# silently mid-load. --lowvram alone is not enough because ComfyUI still
-# loads the t5xxl encoder fully (~9GB) before the unet load even starts.
-# Stack these flags to stay safely under both RAM and VRAM caps:
-#   --mmap-torch-files     load weights via mmap (no full 24GB RAM spike)
-#   --fp8_e4m3fn-unet      Flux UNet stored in fp8 -> ~12GB instead of 24GB
-#   --fp8_e4m3fn-text-enc  t5xxl in fp8 -> ~4.5GB instead of 9GB
-#   --cpu-vae              VAE on CPU, frees ~1GB VRAM during decode
-#   --lowvram              stream unet chunks to GPU rather than full load
 set -euo pipefail
 cd /workspace/ComfyUI
 source venv/bin/activate
-exec python main.py --listen 0.0.0.0 --port 8188 --disable-auto-launch \
-    --mmap-torch-files \
-    --fp8_e4m3fn-unet \
-    --fp8_e4m3fn-text-enc \
-    --cpu-vae \
-    --lowvram
+exec python main.py \
+    --listen 0.0.0.0 \
+    --port 8188 \
+    --mmap-torch-files
 EOF
 chmod +x /workspace/launch_comfyui.sh
 
