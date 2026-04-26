@@ -269,10 +269,25 @@ months later for Sessions 8/9/10/13.)
   `fatal: destination path '/workspace/ComfyUI' already exists and is not an empty directory.`
   → **Fix:** vast.ai's `pytorch/pytorch:latest` base image pre-creates an
   empty `/workspace/ComfyUI/models` scaffold that confuses git clone.
-  Resolved permanently in `scripts/vast_setup.sh` (commit follow-up):
+  Resolved permanently in `scripts/vast_setup.sh` (commit `3475c5a`):
   the script now `rm -rf "$COMFYUI_DIR"` before cloning when no `.git`
   subdir is present. If you hit this on an old script revision, manually
   `rm -rf /workspace/ComfyUI && bash /workspace/platinum/scripts/vast_setup.sh`.
+
+- **Symptom:** `vast_setup.sh` exits silently after "Downloading
+  flux1-dev.safetensors" with a 0-byte file at
+  `/workspace/models/unet/flux1-dev.safetensors` and no error message.
+  → **Cause:** Flux.1 Dev is a **gated** HuggingFace repo. Without an
+  `HF_TOKEN` Authorization header, HF returns a 401 redirect that wget
+  doesn't surface as an error -- it writes a 0-byte file and exits 0.
+  → **Fix:** Resolved in `scripts/vast_setup.sh`: the `dl()` function
+  now (a) auto-attaches `HF_TOKEN` as a Bearer header for `huggingface.co`
+  URLs, (b) treats 0-byte downloads as failure with `rm -f` cleanup,
+  (c) uses `--timeout=120 --tries=2` so future hangs fail in 2 min, not
+  forever. **Before running `vast_setup.sh`, export `HF_TOKEN=hf_...`** --
+  the script logs a WARN if it's missing. Also: visit
+  https://huggingface.co/black-forest-labs/FLUX.1-dev once on the web to
+  accept the license terms (one-time per HF account).
 
 ---
 

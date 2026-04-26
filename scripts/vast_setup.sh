@@ -83,31 +83,66 @@ fi
 mkdir -p "$MODELS_DIR/checkpoints" "$MODELS_DIR/vae" "$MODELS_DIR/clip" "$MODELS_DIR/unet" \
          "$MODELS_DIR/controlnet" "$MODELS_DIR/ipadapter" "$MODELS_DIR/upscale_models"
 
-dl() { local url="$1"; local dest="$2"; if [ ! -s "$dest" ]; then log "Downloading $(basename "$dest")"; wget -q --show-progress -O "$dest" "$url"; fi }
+# Download with timeouts + retries; pass HF_TOKEN bearer header on huggingface URLs.
+# Treats 0-byte target as a failed download (gated repo without auth returns 0 bytes
+# while wget exits 0). Caller is responsible for cleaning the partial file before retry.
+dl() {
+    local url="$1"
+    local dest="$2"
+    if [ -s "$dest" ]; then return 0; fi
+    log "Downloading $(basename "$dest")"
+    local extra_headers=()
+    if [[ "$url" == *"huggingface.co"* ]] && [ -n "${HF_TOKEN:-}" ]; then
+        extra_headers+=(--header="Authorization: Bearer $HF_TOKEN")
+    fi
+    rm -f "$dest"  # avoid 0-byte stub from a previous failed run blocking retry
+    wget -q --show-progress \
+        --timeout=120 --tries=2 --waitretry=15 --continue \
+        "${extra_headers[@]}" -O "$dest" "$url" || {
+        log "WARN: wget failed for $(basename "$dest") (exit $?)"
+        rm -f "$dest"
+        return 1
+    }
+    if [ ! -s "$dest" ]; then
+        log "WARN: $(basename "$dest") downloaded as 0 bytes (gated repo? bad URL?)"
+        rm -f "$dest"
+        return 1
+    fi
+    return 0
+}
 
-# Flux Dev — main UNet (FP8 build to fit comfortably alongside Wan 2.2)
+# Validate HF_TOKEN -- gated downloads (Flux.1 Dev) fail silently without it.
+if [ -z "${HF_TOKEN:-}" ]; then
+    log "WARN: HF_TOKEN not set; gated HuggingFace downloads (Flux.1 Dev, etc.) will fail."
+    log "      Export it before running: HF_TOKEN=hf_... bash vast_setup.sh"
+fi
+
+# Flux Dev — main UNet (FP8 build to fit comfortably alongside Wan 2.2). GATED — needs HF_TOKEN.
 dl "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors" \
-   "$MODELS_DIR/unet/flux1-dev.safetensors"
+   "$MODELS_DIR/unet/flux1-dev.safetensors" || \
+    log "WARN: Flux UNet download failed (HF_TOKEN missing or no license acceptance?)"
 dl "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors" \
-   "$MODELS_DIR/vae/ae.safetensors"
+   "$MODELS_DIR/vae/ae.safetensors" || \
+    log "WARN: Flux VAE download failed"
 dl "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors" \
-   "$MODELS_DIR/clip/clip_l.safetensors"
+   "$MODELS_DIR/clip/clip_l.safetensors" || log "WARN: clip_l download failed"
 dl "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors" \
-   "$MODELS_DIR/clip/t5xxl_fp16.safetensors"
+   "$MODELS_DIR/clip/t5xxl_fp16.safetensors" || log "WARN: t5xxl_fp16 download failed"
 
-# IP-Adapter FaceID (for cross-scene character lock)
+# IP-Adapter FaceID (for cross-scene character lock) -- not used by S6.1, deferred OK.
 dl "https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid_flux.bin" \
    "$MODELS_DIR/ipadapter/ip-adapter-faceid_flux.bin" || \
-    log "IP-Adapter FaceID Flux variant not yet hosted at expected path — fetch manually if needed"
+    log "IP-Adapter FaceID Flux variant not yet hosted at expected path -- fetch manually if needed"
 
-# ControlNet Depth (Flux variant)
+# ControlNet Depth (Flux variant) -- not used by S6.1, deferred OK.
 dl "https://huggingface.co/Shakker-Labs/FLUX.1-dev-ControlNet-Depth/resolve/main/diffusion_pytorch_model.safetensors" \
-   "$MODELS_DIR/controlnet/flux-depth.safetensors"
+   "$MODELS_DIR/controlnet/flux-depth.safetensors" || \
+    log "WARN: ControlNet Depth download failed -- deferred for S6.2"
 
-# Wan 2.2 I2V weights — exact HF path may vary; check the official repo at runtime
+# Wan 2.2 I2V weights -- not used by S6.1, deferred OK.
 dl "https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B/resolve/main/diffusion_pytorch_model.safetensors" \
    "$MODELS_DIR/checkpoints/wan22_i2v.safetensors" || \
-    log "Wan 2.2 weights — adjust URL if HuggingFace path changed"
+    log "Wan 2.2 weights -- adjust URL if HuggingFace path changed (deferred to S8)"
 
 # RealESRGAN upscaler (ncnn-vulkan binary build for speed)
 if [ ! -d "$MODELS_DIR/realesrgan-ncnn-vulkan" ]; then
