@@ -654,3 +654,69 @@ async def test_generate_for_scene_brightness_gate_skips_laion_on_dark_candidates
     assert report.scoring_succeeded == [False, True, True]
     assert report.scores[0] == 0.0
     assert call_count["n"] == 2                              # cand 0 skipped
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_eligibility_excludes_brightness_failures(
+    tmp_path: Path,
+) -> None:
+    """A high-LAION-score candidate that fails brightness must NOT be eligible.
+
+    Setup: cand 0 = bright + score 5.5 (below threshold), cand 1 = dark +
+    score 8.0 (high but dark), cand 2 = bright + score 6.5. Threshold 6.0.
+    Eligible: only cand 2 (bright + above threshold). Cand 1 NEVER picked
+    despite having highest raw score.
+    """
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    # Create fixture PNGs that FakeComfyClient will copy from.
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [
+        fixture_dir / "candidate_0.png",
+        fixture_dir / "candidate_1.png",
+        fixture_dir / "candidate_2.png",
+    ]
+    make_synthetic_png(fixture_paths[0], kind="grey", value=200)        # bright
+    make_synthetic_png(fixture_paths[1], kind="grey", value=0)          # dark!
+    make_synthetic_png(fixture_paths[2], kind="grey", value=200)        # bright
+
+    responses = {}
+    for i, seed in enumerate((0, 1, 2)):
+        wf = inject(wf_template, prompt="x", negative_prompt="", seed=seed,
+                    width=1024, height=1024, output_prefix=f"scene_000_candidate_{i}")
+        responses[workflow_signature(wf)] = [fixture_paths[i]]
+
+    out = tmp_path / "out"
+    out.mkdir()
+    score_map = {
+        out / "candidate_0.png": 5.5,
+        out / "candidate_1.png": 8.0,                            # high but dark!
+        out / "candidate_2.png": 6.5,
+    }
+    scorer = MappedFakeScorer(scores_by_path=score_map, default=0.0)
+    comfy = FakeComfyClient(responses=responses)
+
+    scene = Scene(id="s0", index=0, narration_text="x",
+                  narration_duration_seconds=1.0, visual_prompt="x")
+
+    report = await generate_for_scene(
+        scene,
+        track_visual={},
+        quality_gates={"aesthetic_min_score": 6.0, "brightness_floor_mean_rgb": 20.0},
+        comfy=comfy, scorer=scorer,
+        output_dir=out,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+    )
+
+    assert report.brightness_passed == [True, False, True]
+    assert report.selected_index == 2                           # NOT 1
+    assert not report.selected_via_fallback                      # cand 2 is eligible
