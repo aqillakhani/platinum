@@ -59,3 +59,18 @@ def test_score_400_on_non_image_bytes() -> None:
     )
     assert resp.status_code == 400
     assert "could not decode" in resp.json()["detail"].lower()
+
+
+def test_score_422_on_missing_image_field() -> None:
+    # No "image" form field at all -> FastAPI/pydantic validation 422
+    resp = client.post("/score", files={})
+    assert resp.status_code == 422
+
+
+def test_score_400_on_empty_image() -> None:
+    resp = client.post(
+        "/score",
+        files={"image": ("empty.png", b"", "image/png")},
+    )
+    assert resp.status_code == 400
+    assert "empty" in resp.json()["detail"].lower()
