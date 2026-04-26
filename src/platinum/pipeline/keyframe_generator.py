@@ -160,6 +160,15 @@ async def generate_for_scene(
         result = check_hand_anomalies(path, mp_hands_factory=mp_hands_factory)
         anatomy_passed.append(result.passed)
 
+    if not any(scoring_succeeded):
+        raise KeyframeGenerationError(
+            scene_index=scene.index,
+            exceptions=[
+                RuntimeError(f"scoring failed for candidate {i} (path={p})")
+                for i, p in enumerate(candidate_paths)
+            ],
+        )
+
     threshold = float(quality_gates.get("aesthetic_min_score", 0.0))
     eligible = [
         i for i, (s, a) in enumerate(zip(scores, anatomy_passed, strict=True))

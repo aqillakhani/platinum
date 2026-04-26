@@ -475,3 +475,41 @@ async def test_generate_iterates_all_scenes(tmp_path: Path) -> None:
         assert len(scene.keyframe_scores) == 3
         assert scene.validation.get("keyframe_anatomy") == [True, True, True]
         assert scene.validation.get("keyframe_selected_via_fallback") is False
+
+
+async def test_all_scoring_fails_raises_keyframe_generation_error(
+    tmp_path: Path,
+) -> None:
+    """All 3 candidates' scoring throws -> KeyframeGenerationError (infra failure halts).
+
+    Distinguishes infrastructure failure (LAION threw for everyone -> halt) from
+    content failure (LAION returned scores, none passed gates -> fallback).
+    """
+    import httpx
+
+    from platinum.pipeline.keyframe_generator import (
+        KeyframeGenerationError,
+        generate_for_scene,
+    )
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(0)
+    fake_comfy, workflow_template = _build_fake_comfy_with_three_candidates()
+
+    class _ThrowingScorer:
+        async def score(self, image_path: Path) -> float:
+            raise httpx.ConnectError("score_server unreachable")
+
+    with pytest.raises(KeyframeGenerationError) as excinfo:
+        await generate_for_scene(
+            scene,
+            track_visual=_TRACK_VISUAL,
+            quality_gates=_GATES,
+            comfy=fake_comfy,
+            scorer=_ThrowingScorer(),
+            output_dir=tmp_path / "out",
+            workflow_template=workflow_template,
+            n_candidates=3,
+            mp_hands_factory=make_fake_hands_factory(None),
+        )
+    assert excinfo.value.scene_index == 0
