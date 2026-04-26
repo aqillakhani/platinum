@@ -82,22 +82,25 @@ def _seed_adapted_story(project: Path, story_id: str, n_scenes: int = 3) -> Path
     return story_dir / "story.json"
 
 
+def _redirect_config_to(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch Config so its __init__ uses `project` as root (Config defaults to _ROOT)."""
+    from platinum import cli as cli_mod
+
+    original_init = cli_mod.Config.__init__
+
+    def init_with_root(self, root=None):  # type: ignore[no-untyped-def]
+        original_init(self, root=project)
+
+    monkeypatch.setattr(cli_mod.Config, "__init__", init_with_root)
+
+
 def test_keyframes_dry_run_prints_plan_and_exits_zero(
     cli_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(cli_project)
     monkeypatch.setenv("PLATINUM_COMFYUI_HOST", "http://test:8188")
     monkeypatch.setenv("PLATINUM_AESTHETICS_HOST", "http://test:8189")
-
-    # Patch Config to use cli_project as root (Config defaults to package's _ROOT)
-    from platinum import cli as cli_mod
-
-    original_init = cli_mod.Config.__init__
-
-    def init_with_root(self, root=None):  # type: ignore[no-untyped-def]
-        original_init(self, root=cli_project)
-
-    monkeypatch.setattr(cli_mod.Config, "__init__", init_with_root)
+    _redirect_config_to(cli_project, monkeypatch)
 
     _seed_adapted_story(cli_project, "TEST_STORY", n_scenes=3)
 
@@ -109,3 +112,32 @@ def test_keyframes_dry_run_prints_plan_and_exits_zero(
     assert "0" in result.output
     assert "2" in result.output
     assert "test:8188" in result.output or "test:8189" in result.output
+
+
+def test_keyframes_invalid_scenes_raises_bad_parameter(
+    cli_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--scenes 0,abc,2 -> non-zero exit with 'comma-separated integers' or 'Invalid'."""
+    monkeypatch.chdir(cli_project)
+    _redirect_config_to(cli_project, monkeypatch)
+    _seed_adapted_story(cli_project, "X", n_scenes=3)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["keyframes", "X", "--scenes", "0,abc,2"])
+    assert result.exit_code != 0
+    output_lower = result.output.lower()
+    assert "comma-separated integers" in output_lower or "invalid" in output_lower
+
+
+def test_keyframes_out_of_range_scenes_raises_bad_parameter(
+    cli_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--scenes 0,99 against a 3-scene story -> non-zero exit mentioning the bad index."""
+    monkeypatch.chdir(cli_project)
+    _redirect_config_to(cli_project, monkeypatch)
+    _seed_adapted_story(cli_project, "Y", n_scenes=3)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["keyframes", "Y", "--scenes", "0,99"])
+    assert result.exit_code != 0
+    assert "99" in result.output
