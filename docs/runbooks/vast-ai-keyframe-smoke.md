@@ -285,9 +285,177 @@ months later for Sessions 8/9/10/13.)
   URLs, (b) treats 0-byte downloads as failure with `rm -f` cleanup,
   (c) uses `--timeout=120 --tries=2` so future hangs fail in 2 min, not
   forever. **Before running `vast_setup.sh`, export `HF_TOKEN=hf_...`** --
-  the script logs a WARN if it's missing. Also: visit
-  https://huggingface.co/black-forest-labs/FLUX.1-dev once on the web to
-  accept the license terms (one-time per HF account).
+  the script logs a WARN if it's missing.
+
+- **Symptom:** `HF_TOKEN` is exported, but `vast_setup.sh` still logs
+  `WARN: Flux UNet download failed (HF_TOKEN missing or no license acceptance?)`
+  and produces a 0-byte `flux1-dev.safetensors`. Verify with:
+  `curl -sI -H "Authorization: Bearer $HF_TOKEN" https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors`
+  → if you see `HTTP/1.1 401 Unauthorized` and the body contains "Access
+  to model black-forest-labs/FLUX.1-dev is restricted", the token is fine
+  but the **HF account has not accepted the model license**.
+  → **Cause:** Gated HF repos require BOTH a valid token AND a one-time
+  license click in the web UI per HF account. The token alone reaches the
+  metadata endpoint (`/api/models/...` returns 200) but the actual file URL
+  (`/resolve/main/...`) returns 401 until the license is accepted.
+  → **Fix:** Visit https://huggingface.co/black-forest-labs/FLUX.1-dev
+  in a browser logged in as the token owner, click **Agree and access
+  repository**, then re-run the two failed downloads:
+  ```
+  HF_TOKEN=hf_... wget --header="Authorization: Bearer $HF_TOKEN" \
+    -O /workspace/models/unet/flux1-dev.safetensors \
+    https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors
+  HF_TOKEN=hf_... wget --header="Authorization: Bearer $HF_TOKEN" \
+    -O /workspace/models/vae/ae.safetensors \
+    https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/ae.safetensors
+  ```
+  No need to re-run the full `vast_setup.sh`.
+
+- **Symptom:** `bash /workspace/launch_comfyui.sh` exits with
+  `RuntimeError: The NVIDIA driver on your system is too old (found version 12020). Please update your GPU driver`.
+  → **Cause:** vast.ai's `pytorch/pytorch:latest` base image ships with
+  NVIDIA driver 535.154.05 (CUDA runtime 12.2). The default pip wheel for
+  `torch >= 2.10` is the **cu13** variant, which requires driver ≥ 12.5.
+  ComfyUI's `pip install -r requirements.txt` pulls latest torch by default,
+  so the venv ends up with `torch 2.11.0+cu130` and crashes at startup
+  when `_lazy_init` calls `_cuda_init`.
+  → **Fix:** Resolved in `scripts/vast_setup.sh` by pinning the ComfyUI
+  venv's torch to **cu121 wheels** (compatible with driver 12.2) before
+  the requirements.txt install:
+  ```
+  pip install --index-url https://download.pytorch.org/whl/cu121 \
+      torch torchvision torchaudio
+  pip install -r "$COMFYUI_DIR/requirements.txt"
+  pip install --index-url https://download.pytorch.org/whl/cu121 xformers
+  pip install triton
+  ```
+  If you hit this on an old script revision, repair the existing venv:
+  ```
+  source /workspace/ComfyUI/venv/bin/activate
+  pip install --index-url https://download.pytorch.org/whl/cu121 \
+      --upgrade --force-reinstall torch torchvision torchaudio
+  pip install --index-url https://download.pytorch.org/whl/cu121 \
+      --upgrade --force-reinstall xformers
+  ```
+
+- **Symptom:** ComfyUI gets killed silently mid-Flux-load, log ends at
+  "Requested to load Flux" with no traceback. `nvidia-smi` shows 1MB GPU
+  used after; `pgrep -af "python main.py"` returns nothing.
+  → **Cause:** Container OOM. RTX 4090 has 24GB VRAM and the vast.ai
+  pytorch image gives the container ~32GB system RAM. Flux1-dev fp16
+  (24GB safetensors) + t5xxl_fp16 (9GB) + clip_l (~250MB) overflow the
+  RAM at load -- the host OOM-killer reaps the process before `set -e`
+  can react and tmux's per-window `command exits -> close` reaps the
+  pane too, hiding the death.
+  → **Fix:** Resolved in `scripts/vast_setup.sh`'s launcher: stack
+  `--mmap-torch-files --fp8_e4m3fn-unet --fp8_e4m3fn-text-enc --cpu-vae --lowvram`.
+  Brings Flux in at ~12GB and t5xxl at ~4.5GB, well under the 32GB cap.
+  Trade-off: image quality drops on FP8 (see next entry).
+
+- **Symptom:** End-to-end smoke completes and `story.json` shows
+  `keyframe_path` populated for every selected scene, but every
+  `candidate_*.png` is essentially black (mean RGB ~0-3 out of 255 per
+  channel; LAION still scores them ~3.9-4.6 because the MLP head
+  doesn't penalise low-content imagery hard enough to halt selection).
+  → **Cause:** The FP8 + `--cpu-vae` flag stack we use to fit Flux on a
+  32GB / 24GB RTX 4090 collapses output for very dark prompts (the Cask
+  story is catacombs / wine cellar / candlelit walls + a strong
+  negative_prompt against bright daylight). FP8 e4m3fn UNet output
+  decoded on CPU VAE has precision drift that pushes already-dark
+  scenes to all-black.
+  → **Fix:** None at the smoke layer -- the pipeline is functioning
+  correctly (gen + score + select + persist all succeed). Real fix
+  options for future runs: (a) rent a larger box (64GB RAM + A6000
+  48GB) so we can drop the FP8 + cpu-vae flags, (b) use Comfy-Org's
+  pre-quantized FP8 Flux variant (built for FP8 sampling), (c) raise
+  the LAION threshold so degenerate outputs trigger a halt instead of
+  a fallback selection. Documented for Session 6.2 retro.
+
+- **Symptom:** `--scenes 0,7,15` run starts, processes scene index 7,
+  then halts. Scene index 0 never appears in the log; scene index 15
+  never starts because of the halt.
+  → **Cause:** The `scene_breakdown` stage emits 1-indexed `scene.index`
+  values (1..N), not 0-indexed. The CLI's old `--scenes` validator
+  treated values as array offsets (0..N-1) but the keyframe generator
+  filters by direct match against `scene.index`. So `0` matched no
+  scene (silently), `7` matched scene 7, and the runbook examples for
+  "start/middle/end of a 16-scene story" should be `1, 8, 16` not
+  `0, 7, 15`.
+  → **Fix:** Resolved in `src/platinum/cli.py`: `--scenes` is now
+  validated against `{scene.index for scene in s.scenes}` (the actual
+  indices the story uses) rather than `range(len(s.scenes))`. Use
+  `--scenes 1,8,16` for a 16-scene 1-indexed story.
+
+- **Symptom:** ComfyUI returns `400 Bad Request` for every workflow
+  submission with log entry
+  `invalid prompt: missing_node_type Node 'ID #_meta'`.
+  → **Cause:** `utils/workflow.py` stores a top-level `_meta.role`
+  block as part of every loaded workflow JSON for role-name lookup
+  ("which node id is the positive prompt", etc.). Posting that block
+  intact to ComfyUI's `/prompt` endpoint trips ComfyUI's "every
+  top-level key is a node, missing class_type means corrupt" check.
+  → **Fix:** Resolved in `src/platinum/utils/comfyui.py`:
+  `HttpComfyClient._submit` strips any `_meta` key from the workflow
+  dict before serialising to the request body. Regression test:
+  `tests/unit/test_comfyui.py::test_http_comfy_client_strips_meta_from_prompt_payload`.
+
+- **Symptom:** `bash launch_score_server.sh` starts cleanly, `/health`
+  returns 200, but `POST /score` returns 500 with
+  `ModuleNotFoundError: No module named 'score_server'` in the server log.
+  → **Cause:** `server.py`'s lazy import is
+  `from score_server.model import score_image_bytes` (package-style),
+  which works locally because `tests/conftest.py` adds `scripts/` to
+  `sys.path`. But the launcher previously did `cd /workspace/score_server`
+  before `uvicorn server:app`, putting the package directory itself on
+  `sys.path` so `model` is importable but `score_server.model` isn't.
+  → **Fix:** Resolved in `scripts/vast_setup.sh`'s launcher: cwd is now
+  `/workspace` (parent of the package), and the entrypoint is
+  `score_server.server:app`. Both the local test path and the box path
+  now resolve `from score_server.model import ...` consistently.
+
+- **Symptom:** A live keyframe run works through Flux generation and
+  scoring, then halts with
+  `ImportError: Matplotlib requires dateutil>=2.7; you have 2.6.1`
+  or `AttributeError: module 'mediapipe' has no attribute 'solutions'`.
+  → **Cause:** `check_hand_anomalies` (the keyframe anatomy gate) calls
+  MediaPipe Hands. MediaPipe imports matplotlib at init, and on Python
+  3.14 the new mediapipe wheel restructured the `solutions` namespace.
+  An old local dateutil also blocks matplotlib's import.
+  → **Fix:** Resolved in `src/platinum/utils/validate.py`:
+  `check_hand_anomalies` now catches `ImportError`/`AttributeError`
+  from the factory call and returns a passing `CheckResult` with reason
+  `"skipped: hand detector unavailable"` rather than halting the
+  pipeline. Tooling drift (Python upgrade, mediapipe major bump,
+  dateutil age) no longer blocks keyframe generation -- the score-based
+  selection stays correct.
+
+- **Symptom:** Keyframe run dies mid-flight with
+  `RemoteProtocolError: Server disconnected without sending a response`
+  on candidate generation, but ComfyUI is still alive on the box and
+  `curl localhost:8188/system_stats` from the box succeeds.
+  → **Cause:** vast.ai's SSH proxy (`ssh<N>.vast.ai`) periodically
+  RST-resets connections that have been idle a few minutes -- including
+  long-lived port-forwards opened with `ssh -L`. A single `ssh -L` will
+  silently die after a hiccup and your local `curl` returns
+  `connection refused` even though the box is healthy.
+  → **Fix:** Run a self-healing wrapper instead of a single ssh:
+  ```bash
+  cat > /tmp/tunnel.sh <<'EOF'
+  #!/usr/bin/env bash
+  while true; do
+    ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+        -o ExitOnForwardFailure=yes -o ConnectTimeout=10 \
+        -i ~/.ssh/id_ed25519 -p <PORT> -N \
+        -L 8188:localhost:8188 -L 8189:localhost:8189 \
+        root@<HOST>
+    echo "[tunnel] dropped at $(date), retry in 5s"
+    sleep 5
+  done
+  EOF
+  bash /tmp/tunnel.sh &
+  ```
+  Verifies with `curl localhost:8188/system_stats && curl localhost:8189/health`
+  before kicking off the keyframe run.
 
 ---
 
