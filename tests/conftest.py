@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,12 @@ import pytest
 from platinum.config import Config
 from platinum.models.story import Scene, Source, StageRun, StageStatus, Story
 from platinum.pipeline.context import PipelineContext
+
+# Make scripts/ importable so tests can do `from score_server.server import ...`.
+# scripts/ is not a Python package on the install path; this lets tests reach the
+# in-repo score_server module without packaging it into platinum proper.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
 
 @pytest.fixture
