@@ -103,9 +103,6 @@ async def generate_for_scene(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    aesthetic_text = " ".join(
-        s for s in (track_visual.get("aesthetic"), scene.visual_prompt) if s
-    )
     negative_text = scene.negative_prompt or track_visual.get("negative_prompt", "")
 
     candidate_paths: list[Path] = []
@@ -113,7 +110,7 @@ async def generate_for_scene(
     for i, seed in enumerate(use_seeds):
         wf = inject(
             workflow_template,
-            prompt=aesthetic_text,
+            prompt=scene.visual_prompt,
             negative_prompt=negative_text,
             seed=seed,
             width=width,

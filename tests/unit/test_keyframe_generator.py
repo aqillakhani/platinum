@@ -115,7 +115,7 @@ def _build_fake_comfy_with_three_candidates() -> tuple[object, dict]:
     for seed, fixture in zip(seeds, candidates, strict=True):
         wf = inject(
             wf_template,
-            prompt="cinematic dark, candlelight a candle",
+            prompt="a candle",
             negative_prompt="bright daylight",
             seed=seed,
             width=1024, height=1024,
@@ -328,7 +328,7 @@ async def test_generate_for_scene_isolates_per_candidate_exception(
     for seed, fixture in [(0, fixtures / "candidate_0.png"), (2, fixtures / "candidate_2.png")]:
         wf = inject(
             wf_template,
-            prompt="cinematic dark, candlelight a candle",
+            prompt="a candle",
             negative_prompt="bright daylight",
             seed=seed,
             width=1024,
@@ -458,8 +458,7 @@ async def test_generate_iterates_all_scenes(tmp_path: Path) -> None:
             wf = inject(
                 wf_template,
                 prompt=(
-                    f"cinematic dark, candlelight a candle in dark hallway "
-                    f"scene {scene.index}"
+                    f"a candle in dark hallway scene {scene.index}"
                 ),
                 negative_prompt="bright daylight",
                 seed=seed,
@@ -616,7 +615,7 @@ async def test_generate_for_scene_brightness_gate_skips_laion_on_dark_candidates
     for i, seed in enumerate((0, 1, 2)):
         wf = inject(
             wf_template,
-            prompt="cinematic dark, candlelight dark scene",
+            prompt="dark scene",
             negative_prompt="bright daylight",
             seed=seed,
             width=1024, height=1024, output_prefix=f"scene_000_candidate_{i}",
@@ -930,7 +929,7 @@ async def test_generate_for_scene_subject_gate_skips_laion_on_solid_color(tmp_pa
 
     responses = {}
     for i, seed in enumerate((0, 1, 2)):
-        wf = inject(wf_template, prompt="cinematic dark, candlelight a candle",
+        wf = inject(wf_template, prompt="a candle",
                     negative_prompt="bright daylight",
                     seed=seed, width=1024, height=1024,
                     output_prefix=f"scene_000_candidate_{i}")
@@ -987,7 +986,7 @@ async def test_generate_for_scene_subject_gate_runs_after_brightness(tmp_path):
 
     responses = {}
     for i, seed in enumerate((0, 1, 2)):
-        wf = inject(wf_template, prompt="cinematic dark, candlelight a candle",
+        wf = inject(wf_template, prompt="a candle",
                     negative_prompt="bright daylight",
                     seed=seed, width=1024, height=1024,
                     output_prefix=f"scene_000_candidate_{i}")
@@ -1042,7 +1041,7 @@ async def test_generate_for_scene_halts_when_all_subject_fail(tmp_path):
 
     responses = {}
     for i, seed in enumerate((0, 1, 2)):
-        wf = inject(wf_template, prompt="cinematic dark, candlelight a candle",
+        wf = inject(wf_template, prompt="a candle",
                     negative_prompt="bright daylight",
                     seed=seed, width=1024, height=1024,
                     output_prefix=f"scene_000_candidate_{i}")
@@ -1184,3 +1183,65 @@ async def test_fallback_pool_excludes_subject_failing(tmp_path):
     # Specifically, max-scored among (subject_passed AND brightness_passed AND
     # scoring_succeeded) is cand 2 (score 5.5 > cand 0's 5.0).
     assert report.selected_index == 2
+
+
+@pytest.mark.asyncio
+async def test_track_aesthetic_prefix_no_longer_prepended(tmp_path: Path) -> None:
+    """Regression: track_visual['aesthetic'] must NOT appear in inject() prompt arg.
+
+    Phase 6.3 dropped the prefix because visual_prompts S4 stage already
+    incorporates track aesthetic per-scene; the prefix double-counted.
+    """
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_fake_hands_factory, make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    MARKER = "MARKER_DO_NOT_INCLUDE_PREFIX_REMOVED_S6_3"
+
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [fixture_dir / f"c{i}.png" for i in range(3)]
+    for p in fixture_paths:
+        make_synthetic_png(p, kind="checkerboard", size=(256, 256), block=16)
+
+    # Build EXPECTED workflow signatures using JUST scene.visual_prompt
+    # (no MARKER concatenation). If the impl still prepends, signatures
+    # won't match -> FakeComfyClient raises KeyError on lookup.
+    responses = {}
+    for i, seed in enumerate((0, 1, 2)):
+        wf = inject(wf_template, prompt="a candle", negative_prompt="bright daylight",
+                    seed=seed, width=1024, height=1024,
+                    output_prefix=f"scene_000_candidate_{i}")
+        responses[workflow_signature(wf)] = [fixture_paths[i]]
+
+    scorer = FakeAestheticScorer(fixed_score=8.0)
+    comfy = FakeComfyClient(responses=responses)
+
+    scene = _scene(idx=0, visual_prompt="a candle")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    # Pass an explicit aesthetic that would FAIL the test if it gets prepended.
+    report = await generate_for_scene(
+        scene,
+        track_visual={"aesthetic": MARKER, "negative_prompt": "bright daylight"},
+        quality_gates={"aesthetic_min_score": 6.0,
+                       "brightness_floor_mean_rgb": 20.0,
+                       "subject_min_edge_density": 0.020},
+        comfy=comfy, scorer=scorer,
+        output_dir=out,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+
+    # If the prefix is still applied, FakeComfyClient would have raised KeyError
+    # because no signature matches the prefixed prompt. Reaching here means
+    # the prompt was scene.visual_prompt alone.
+    assert all(report.brightness_passed)
+    assert all(report.subject_passed)

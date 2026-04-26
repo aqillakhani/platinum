@@ -77,17 +77,13 @@ def _build_responses_for_story(story: Story, repo_root: Path) -> dict[str, list[
     fixtures = _fixture_dir()
     out: dict[str, list[Path]] = {}
     for scene in story.scenes:
-        # Match exact aesthetic_text construction from generate_for_scene
-        aesthetic_text = " ".join(
-            s for s in (track_visual.get("aesthetic"), scene.visual_prompt) if s
-        )
         negative_text = scene.negative_prompt or track_visual.get("negative_prompt", "")
         for i, seed in enumerate(
             (scene.index * 1000, scene.index * 1000 + 1, scene.index * 1000 + 2)
         ):
             wf = inject(
                 wf_template,
-                prompt=aesthetic_text,
+                prompt=scene.visual_prompt,
                 negative_prompt=negative_text,
                 seed=seed,
                 width=1024,
@@ -366,9 +362,6 @@ async def test_stage_brightness_gate_persists_correct_selection(  # noqa: ANN001
     track_visual = dict(track_cfg.get("visual", {}))
 
     for scene in story.scenes:
-        aesthetic_text = " ".join(
-            s for s in (track_visual.get("aesthetic"), scene.visual_prompt) if s
-        )
         negative_text = scene.negative_prompt or track_visual.get("negative_prompt", "")
         for cand_idx in range(3):
             p = fixtures_dir / f"s{scene.index}_c{cand_idx}.png"
@@ -379,7 +372,7 @@ async def test_stage_brightness_gate_persists_correct_selection(  # noqa: ANN001
             seed = scene.index * 1000 + cand_idx
             wf = inject(
                 wf_template,
-                prompt=aesthetic_text,
+                prompt=scene.visual_prompt,
                 negative_prompt=negative_text,
                 seed=seed,
                 width=1024,
