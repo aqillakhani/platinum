@@ -207,6 +207,15 @@ async def generate_for_scene(
             ],
         )
 
+    if not any(subject_passed):
+        raise KeyframeGenerationError(
+            scene_index=scene.index,
+            exceptions=[
+                RuntimeError(f"subject gate failed for candidate {i} (path={p})")
+                for i, p in enumerate(candidate_paths)
+            ],
+        )
+
     if not any(scoring_succeeded):
         raise KeyframeGenerationError(
             scene_index=scene.index,

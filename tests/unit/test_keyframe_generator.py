@@ -1016,3 +1016,54 @@ async def test_generate_for_scene_subject_gate_runs_after_brightness(tmp_path):
     assert report.subject_passed[0] is False
     assert report.subject_passed[1] is True
     assert report.subject_passed[2] is True
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_halts_when_all_subject_fail(tmp_path):
+    """All 3 candidates solid-color -> KeyframeGenerationError."""
+    from platinum.pipeline.keyframe_generator import (
+        KeyframeGenerationError,
+        generate_for_scene,
+    )
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [fixture_dir / f"c{i}.png" for i in range(3)]
+    for p in fixture_paths:
+        # All bright (passes brightness) but solid-color (fails subject)
+        make_synthetic_png(p, kind="grey", value=200, size=(256, 256))
+
+    responses = {}
+    for i, seed in enumerate((0, 1, 2)):
+        wf = inject(wf_template, prompt="cinematic dark, candlelight a candle",
+                    negative_prompt="bright daylight",
+                    seed=seed, width=1024, height=1024,
+                    output_prefix=f"scene_000_candidate_{i}")
+        responses[workflow_signature(wf)] = [fixture_paths[i]]
+
+    scorer = FakeAestheticScorer(fixed_score=8.0)
+    comfy = FakeComfyClient(responses=responses)
+
+    scene = _scene(idx=0)
+    out = tmp_path / "scene_000"
+    with pytest.raises(KeyframeGenerationError) as exc_info:
+        await generate_for_scene(
+            scene,
+            track_visual=_TRACK_VISUAL,
+            quality_gates={"aesthetic_min_score": 6.0,
+                           "brightness_floor_mean_rgb": 20.0,
+                           "subject_min_edge_density": 0.020},
+            comfy=comfy, scorer=scorer,
+            output_dir=out,
+            workflow_template=wf_template,
+            seeds=(0, 1, 2),
+        )
+    assert exc_info.value.scene_index == 0
+    assert any("subject" in str(e).lower() for e in exc_info.value.exceptions)
