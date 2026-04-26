@@ -141,3 +141,50 @@ def test_keyframes_out_of_range_scenes_raises_bad_parameter(
     result = runner.invoke(app, ["keyframes", "Y", "--scenes", "0,99"])
     assert result.exit_code != 0
     assert "99" in result.output
+
+
+def test_keyframes_story_without_visual_prompts_exits_1(
+    cli_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Story with no visual_prompts COMPLETE StageRun -> exit 1 with red message."""
+    from platinum.models.story import Scene, Source, Story
+
+    monkeypatch.chdir(cli_project)
+    _redirect_config_to(cli_project, monkeypatch)
+
+    s = Story(
+        id="NO_VP",
+        track="atmospheric_horror",
+        source=Source(
+            type="gutenberg",
+            url="https://example/NO_VP",
+            title="NO VP",
+            author="A",
+            raw_text="raw...",
+            fetched_at=datetime(2026, 4, 25),
+            license="PD-US",
+        ),
+        scenes=[Scene(id="scene_000", index=0, narration_text="x", visual_prompt="x")],
+        stages=[],  # NO visual_prompts stage
+    )
+    story_dir = cli_project / "data" / "stories" / "NO_VP"
+    story_dir.mkdir(parents=True)
+    s.save(story_dir / "story.json")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["keyframes", "NO_VP"])
+    assert result.exit_code == 1
+    assert "no completed visual_prompts" in result.output.lower()
+
+
+def test_keyframes_missing_story_exits_1(
+    cli_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nonexistent story id -> exit 1 with 'not found' message."""
+    monkeypatch.chdir(cli_project)
+    _redirect_config_to(cli_project, monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["keyframes", "DOES_NOT_EXIST"])
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()
