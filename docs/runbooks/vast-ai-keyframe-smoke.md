@@ -265,7 +265,14 @@ encountered. Each entry: **Symptom** → **Fix**. Adding bullets here is the
 high-value artifact future-you will appreciate when re-running this runbook
 months later for Sessions 8/9/10/13.)
 
-- _(empty — populate as issues arise)_
+- **Symptom:** `vast_setup.sh` aborts at "Cloning ComfyUI" with
+  `fatal: destination path '/workspace/ComfyUI' already exists and is not an empty directory.`
+  → **Fix:** vast.ai's `pytorch/pytorch:latest` base image pre-creates an
+  empty `/workspace/ComfyUI/models` scaffold that confuses git clone.
+  Resolved permanently in `scripts/vast_setup.sh` (commit follow-up):
+  the script now `rm -rf "$COMFYUI_DIR"` before cloning when no `.git`
+  subdir is present. If you hit this on an old script revision, manually
+  `rm -rf /workspace/ComfyUI && bash /workspace/platinum/scripts/vast_setup.sh`.
 
 ---
 

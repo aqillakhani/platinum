@@ -44,6 +44,10 @@ mkdir -p "$WORKDIR" "$MODELS_DIR" "$COMFYUI_DIR/models"
 
 if [ ! -d "$COMFYUI_DIR/.git" ]; then
     log "Cloning ComfyUI"
+    # Some base images (vast.ai's pytorch image) pre-create an empty
+    # /workspace/ComfyUI/models scaffold that's not a git repo. Clear it before
+    # cloning -- otherwise `git clone` aborts with "destination not empty".
+    rm -rf "$COMFYUI_DIR"
     git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR"
 else
     log "ComfyUI already present, pulling latest"
