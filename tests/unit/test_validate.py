@@ -293,3 +293,38 @@ def test_check_image_brightness_pil_unavailable_passes_with_skip_reason(
     assert r.passed                                 # defensive: don't halt
     assert "skipped" in r.reason
     assert "PIL" in r.reason
+
+
+def test_check_image_subject_high_edge_passes(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_image_subject
+    from tests._fixtures import make_synthetic_png
+
+    path = tmp_path / "checker.png"
+    make_synthetic_png(path, kind="checkerboard", size=(256, 256), block=16)
+    result = check_image_subject(path, min_edge_density=0.020)
+    assert result.passed is True
+    assert result.metric > 0.020
+    assert "ok" in result.reason
+
+
+def test_check_image_subject_solid_color_fails(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_image_subject
+    from tests._fixtures import make_synthetic_png
+
+    path = tmp_path / "solid.png"
+    make_synthetic_png(path, kind="grey", value=127, size=(256, 256))
+    result = check_image_subject(path, min_edge_density=0.020)
+    assert result.passed is False
+    assert result.metric == 0.0
+    assert "no recognizable subject" in result.reason
+
+
+def test_check_image_subject_gradient_fails(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_image_subject
+    from tests._fixtures import make_synthetic_png
+
+    path = tmp_path / "gradient.png"
+    make_synthetic_png(path, kind="gradient", size=(256, 256))
+    result = check_image_subject(path, min_edge_density=0.020)
+    assert result.passed is False
+    assert result.metric < 0.020

@@ -384,3 +384,62 @@ def check_image_brightness(
         threshold=min_mean_rgb,
         reason=f"image too dark (mean_rgb={mean_rgb:.1f} < min_rgb={min_mean_rgb:.1f})",
     )
+
+
+def check_image_subject(
+    path: Path,
+    *,
+    min_edge_density: float = 0.020,
+) -> CheckResult:
+    """Reject mood-only renders that lack subject boundaries.
+
+    Brightness floor catches "fade to black" failures but not "abstract color
+    field at high brightness" -- a yellow-and-dark color field can pass
+    brightness floor (mean RGB ~100) and LAION (~4.3) yet contain no
+    recognizable subjects. This primitive uses OpenCV Canny edge detection
+    as a cheap proxy for "are there object boundaries in the image?".
+
+    Edge density = count(Canny edges) / total pixels. Real photos and
+    rendered scenes typically score 0.03-0.15. Smooth color fields score
+    <0.01. Per-track threshold lives in track YAML's quality_gates block.
+    """
+    try:
+        import cv2 as _cv2  # type: ignore[import-untyped]
+        import numpy as _np
+        from PIL import Image as _Image
+    except ImportError as exc:
+        return CheckResult(
+            passed=True,                            # fail-open -- mirror check_hand_anomalies
+            metric=0.0,
+            threshold=min_edge_density,
+            reason=f"skipped: {exc.name} unavailable",
+        )
+
+    try:
+        with _Image.open(path) as img:
+            arr = _np.asarray(img.convert("RGB"), dtype=_np.uint8)
+        gray = _cv2.cvtColor(arr, _cv2.COLOR_RGB2GRAY)
+        edges = _cv2.Canny(gray, 100, 200)
+        density = float(_np.count_nonzero(edges)) / float(edges.size)
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult(
+            passed=False,
+            metric=0.0,
+            threshold=min_edge_density,
+            reason=f"failed to read image: {exc!r}",
+        )
+
+    if density >= min_edge_density:
+        return CheckResult(
+            passed=True,
+            metric=density,
+            threshold=min_edge_density,
+            reason=f"ok (edge_density={density:.4f} >= min={min_edge_density:.4f})",
+        )
+    return CheckResult(
+        passed=False,
+        metric=density,
+        threshold=min_edge_density,
+        reason=f"no recognizable subject "
+               f"(edge_density={density:.4f} < min={min_edge_density:.4f})",
+    )
