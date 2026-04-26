@@ -720,3 +720,134 @@ async def test_generate_for_scene_eligibility_excludes_brightness_failures(
     assert report.brightness_passed == [True, False, True]
     assert report.selected_index == 2                           # NOT 1
     assert not report.selected_via_fallback                      # cand 2 is eligible
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_fallback_skips_brightness_failures(
+    tmp_path: Path,
+) -> None:
+    """When NO candidate is eligible (all below threshold OR anatomy fails),
+    fallback must pick highest-scored among (scoring_succeeded AND brightness_passed),
+    NOT the highest raw score (which could be a dark candidate).
+
+    Setup: all 3 below 6.0 threshold. Cand 0 = bright + 5.0, cand 1 = dark + 5.8
+    (highest raw), cand 2 = bright + 5.5. Fallback: pick cand 2 (highest among
+    bright). Cand 1 never picked despite higher raw score.
+    """
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    # Create fixture PNGs that FakeComfyClient will copy from.
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [
+        fixture_dir / "candidate_0.png",
+        fixture_dir / "candidate_1.png",
+        fixture_dir / "candidate_2.png",
+    ]
+    make_synthetic_png(fixture_paths[0], kind="grey", value=200)
+    make_synthetic_png(fixture_paths[1], kind="grey", value=0)
+    make_synthetic_png(fixture_paths[2], kind="grey", value=200)
+
+    responses = {}
+    for i, seed in enumerate((0, 1, 2)):
+        wf = inject(wf_template, prompt="x", negative_prompt="", seed=seed,
+                    width=1024, height=1024, output_prefix=f"scene_000_candidate_{i}")
+        responses[workflow_signature(wf)] = [fixture_paths[i]]
+
+    out = tmp_path / "out"
+    out.mkdir()
+    score_map = {
+        out / "candidate_0.png": 5.0,
+        out / "candidate_1.png": 5.8,                            # highest, but dark
+        out / "candidate_2.png": 5.5,
+    }
+    scorer = MappedFakeScorer(scores_by_path=score_map, default=0.0)
+    comfy = FakeComfyClient(responses=responses)
+
+    scene = Scene(id="s0", index=0, narration_text="x",
+                  narration_duration_seconds=1.0, visual_prompt="x")
+
+    report = await generate_for_scene(
+        scene,
+        track_visual={},
+        quality_gates={"aesthetic_min_score": 6.0, "brightness_floor_mean_rgb": 20.0},
+        comfy=comfy, scorer=scorer,
+        output_dir=out,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+    )
+
+    assert report.brightness_passed == [True, False, True]
+    assert report.selected_via_fallback                         # all below threshold
+    assert report.selected_index == 2                           # NOT 1
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_halts_on_all_dark_candidates(
+    tmp_path: Path,
+) -> None:
+    """Task 9: All-dark-candidates halt raises KeyframeGenerationError."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene, KeyframeGenerationError
+    from platinum.models.story import Scene
+    from platinum.utils.workflow import inject, load_workflow
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    # Create fixture PNGs: all DARK (mean RGB < 20.0).
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [
+        fixture_dir / "candidate_0.png",
+        fixture_dir / "candidate_1.png",
+        fixture_dir / "candidate_2.png",
+    ]
+    make_synthetic_png(fixture_paths[0], kind="grey", value=10)   # dark
+    make_synthetic_png(fixture_paths[1], kind="grey", value=5)    # darker
+    make_synthetic_png(fixture_paths[2], kind="grey", value=15)   # still dark
+
+    responses = {}
+    for i, seed in enumerate((0, 1, 2)):
+        wf = inject(wf_template, prompt="x", negative_prompt="", seed=seed,
+                    width=1024, height=1024, output_prefix=f"scene_000_candidate_{i}")
+        responses[workflow_signature(wf)] = [fixture_paths[i]]
+
+    out = tmp_path / "out"
+    out.mkdir()
+    score_map = {
+        out / "candidate_0.png": 8.0,
+        out / "candidate_1.png": 9.0,   # all would score fine
+        out / "candidate_2.png": 7.0,
+    }
+    scorer = MappedFakeScorer(scores_by_path=score_map, default=0.0)
+    comfy = FakeComfyClient(responses=responses)
+
+    scene = Scene(id="s0", index=0, narration_text="x",
+                  narration_duration_seconds=1.0, visual_prompt="x")
+
+    # All candidates fail brightness floor (all mean RGB < 20).
+    # Should halt with KeyframeGenerationError, even though all scored.
+    with pytest.raises(KeyframeGenerationError) as exc_info:
+        await generate_for_scene(
+            scene,
+            track_visual={},
+            quality_gates={"aesthetic_min_score": 6.0, "brightness_floor_mean_rgb": 20.0},
+            comfy=comfy, scorer=scorer,
+            output_dir=out,
+            workflow_template=wf_template,
+            seeds=(0, 1, 2),
+        )
+
+    assert exc_info.value.scene_index == 0
+    assert len(exc_info.value.exceptions) == 3
+    assert all("brightness floor" in str(e) for e in exc_info.value.exceptions)
