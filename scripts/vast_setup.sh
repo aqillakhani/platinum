@@ -58,8 +58,19 @@ python3 -m venv "$COMFYUI_DIR/venv"
 # shellcheck source=/dev/null
 source "$COMFYUI_DIR/venv/bin/activate"
 pip install --upgrade pip
+# Pin torch to cu121 wheels -- vast.ai's pytorch base image ships NVIDIA driver
+# 535.x (CUDA 12.2 runtime), and the default pip wheel for torch >=2.10 is cu13
+# which requires driver >=12.5 and crashes ComfyUI at startup with
+# "RuntimeError: NVIDIA driver on your system is too old". Pinning cu121
+# (compatible with driver 12.2) keeps ComfyUI starting cleanly.
+pip install --index-url https://download.pytorch.org/whl/cu121 \
+    torch torchvision torchaudio
 pip install -r "$COMFYUI_DIR/requirements.txt"
-pip install xformers triton            # speed wins on Flux + Wan 2.2
+# xformers/triton wheels must match the installed torch ABI; build with the same
+# index-url so they pick the cu121 variant rather than reinstalling cu13 torch.
+pip install --index-url https://download.pytorch.org/whl/cu121 \
+    xformers
+pip install triton                     # triton has no cu-tagged wheels
 
 # Manager (custom node manager — useful for IP-Adapter & ControlNet nodes)
 mkdir -p "$COMFYUI_DIR/custom_nodes"
@@ -215,10 +226,26 @@ dl "https://github.com/christophschuhmann/improved-aesthetic-predictor/raw/main/
 cat > /workspace/launch_comfyui.sh <<'EOF'
 #!/usr/bin/env bash
 # Launch ComfyUI listening on all interfaces so the orchestrator can hit it.
+# vast.ai pytorch container = ~32GB system RAM, RTX 4090 = 24GB VRAM.
+# Flux1-dev fp16 (24GB safetensors) + t5xxl_fp16 (9GB) + clip_l (~250MB)
+# overflow system RAM at load time -> host OOM-killer reaps the process
+# silently mid-load. --lowvram alone is not enough because ComfyUI still
+# loads the t5xxl encoder fully (~9GB) before the unet load even starts.
+# Stack these flags to stay safely under both RAM and VRAM caps:
+#   --mmap-torch-files     load weights via mmap (no full 24GB RAM spike)
+#   --fp8_e4m3fn-unet      Flux UNet stored in fp8 -> ~12GB instead of 24GB
+#   --fp8_e4m3fn-text-enc  t5xxl in fp8 -> ~4.5GB instead of 9GB
+#   --cpu-vae              VAE on CPU, frees ~1GB VRAM during decode
+#   --lowvram              stream unet chunks to GPU rather than full load
 set -euo pipefail
 cd /workspace/ComfyUI
 source venv/bin/activate
-exec python main.py --listen 0.0.0.0 --port 8188 --disable-auto-launch
+exec python main.py --listen 0.0.0.0 --port 8188 --disable-auto-launch \
+    --mmap-torch-files \
+    --fp8_e4m3fn-unet \
+    --fp8_e4m3fn-text-enc \
+    --cpu-vae \
+    --lowvram
 EOF
 chmod +x /workspace/launch_comfyui.sh
 
@@ -227,10 +254,13 @@ chmod +x /workspace/launch_comfyui.sh
 cat > /workspace/launch_score_server.sh <<'EOF'
 #!/usr/bin/env bash
 # Launch LAION-Aesthetics v2 score server. Loads CLIP+MLP into GPU at startup.
+# cwd is /workspace so `score_server` resolves as a Python package and
+# server.py's `from score_server.model import ...` import works the same way
+# it does in tests/conftest.py (which adds scripts/ to sys.path).
 set -euo pipefail
-cd /workspace/score_server
-source venv/bin/activate
-exec uvicorn server:app --host 0.0.0.0 --port 8189 --workers 1
+cd /workspace
+source /workspace/score_server/venv/bin/activate
+exec uvicorn score_server.server:app --host 0.0.0.0 --port 8189 --workers 1
 EOF
 chmod +x /workspace/launch_score_server.sh
 
