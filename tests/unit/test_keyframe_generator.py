@@ -20,6 +20,7 @@ def test_keyframe_report_is_frozen_and_carries_fields() -> None:
         anatomy_passed=[True, True, False],
         scoring_succeeded=[True, True, True],
         brightness_passed=[True, True, True],
+        subject_passed=[True, True, True],
         selected_index=0,
         selected_via_fallback=False,
     )
@@ -44,6 +45,7 @@ def test_keyframe_report_carries_brightness_passed_field() -> None:
         anatomy_passed=[True, True, True],
         scoring_succeeded=[True, True, True],
         brightness_passed=[False, True, True],
+        subject_passed=[True, True, True],
         selected_index=2,
         selected_via_fallback=False,
     )
@@ -851,3 +853,35 @@ async def test_generate_for_scene_halts_on_all_dark_candidates(
     assert exc_info.value.scene_index == 0
     assert len(exc_info.value.exceptions) == 3
     assert all("brightness floor" in str(e) for e in exc_info.value.exceptions)
+
+
+@pytest.mark.asyncio
+async def test_keyframe_report_carries_subject_passed_field(tmp_path):
+    """KeyframeReport must expose subject_passed: list[bool] alongside brightness_passed."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(idx=0)
+    output_dir = tmp_path / "scene_000"
+    scorer = FakeAestheticScorer(fixed_score=8.0)
+    comfy, wf_template = _build_fake_comfy_with_three_candidates()
+
+    report = await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates={"aesthetic_min_score": 6.0,
+                       "brightness_floor_mean_rgb": 0.0,        # permissive
+                       "subject_min_edge_density": 0.0},        # permissive
+        comfy=comfy,
+        scorer=scorer,
+        output_dir=output_dir,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+
+    assert hasattr(report, "subject_passed")
+    assert isinstance(report.subject_passed, list)
+    assert len(report.subject_passed) == 3
+    assert all(isinstance(p, bool) for p in report.subject_passed)

@@ -34,6 +34,7 @@ class KeyframeReport:
     anatomy_passed: list[bool]
     scoring_succeeded: list[bool]
     brightness_passed: list[bool]
+    subject_passed: list[bool]
     selected_index: int
     selected_via_fallback: bool
 
@@ -144,12 +145,14 @@ async def generate_for_scene(
     anatomy_passed: list[bool] = []
     scoring_succeeded: list[bool] = []
     brightness_passed: list[bool] = []
+    subject_passed: list[bool] = []
     for path, candidate_exc in zip(candidate_paths, candidate_exceptions, strict=True):
         if candidate_exc is not None or not path.exists():
             scores.append(0.0)
             anatomy_passed.append(False)
             scoring_succeeded.append(False)
             brightness_passed.append(False)
+            subject_passed.append(False)
             continue
 
         # NEW: brightness gate runs BEFORE the LAION call (saves the round-trip).
@@ -164,6 +167,7 @@ async def generate_for_scene(
             scores.append(0.0)
             anatomy_passed.append(False)
             scoring_succeeded.append(False)
+            subject_passed.append(False)
             continue
 
         try:
@@ -180,6 +184,7 @@ async def generate_for_scene(
         scoring_succeeded.append(scoring_ok)
         result = check_hand_anomalies(path, mp_hands_factory=mp_hands_factory)
         anatomy_passed.append(result.passed)
+        subject_passed.append(True)  # placeholder: Task 5 wires the real gate
 
     if not any(brightness_passed):
         raise KeyframeGenerationError(
@@ -236,6 +241,7 @@ async def generate_for_scene(
         anatomy_passed=anatomy_passed,
         scoring_succeeded=scoring_succeeded,
         brightness_passed=brightness_passed,
+        subject_passed=subject_passed,
         selected_index=selected_index,
         selected_via_fallback=selected_via_fallback,
     )
