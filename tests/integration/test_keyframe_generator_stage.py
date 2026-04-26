@@ -220,3 +220,66 @@ async def test_keyframe_stage_records_failure_in_artifacts(tmp_project, repo_roo
     stage = KeyframeGeneratorStage()
     with pytest.raises(KeyframeGenerationError):
         await stage.run(story, ctx)
+
+
+async def test_keyframe_stage_scene_filter_processes_only_selected_indices(  # noqa: ANN001
+    tmp_project, repo_root,
+) -> None:
+    """Filter {0, 2} on 3-scene story -> scenes 0,2 get keyframe_path; scene 1 stays None."""
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    config = _setup_config(tmp_project, repo_root)
+    story = _build_story(n=3)
+    story_dir = tmp_project / "data" / "stories" / story.id
+    story_dir.mkdir(parents=True, exist_ok=True)
+
+    responses = _build_responses_for_story(story, repo_root)
+    comfy = FakeComfyClient(responses=responses)
+    config.settings["runtime"] = {"scene_filter": {0, 2}}
+    config.settings["test"] = {
+        "comfy_client": comfy,
+        "aesthetic_scorer": FakeAestheticScorer(fixed_score=8.0),
+        "mp_hands_factory": make_fake_hands_factory(None),
+    }
+    ctx = PipelineContext(config=config, logger=__import__("logging").getLogger("test"))
+
+    stage = KeyframeGeneratorStage()
+    await stage.run(story, ctx)
+
+    assert story.scenes[0].keyframe_path is not None
+    assert story.scenes[1].keyframe_path is None  # filtered out
+    assert story.scenes[2].keyframe_path is not None
+
+
+async def test_keyframe_stage_no_scene_filter_processes_all_scenes(  # noqa: ANN001
+    tmp_project, repo_root,
+) -> None:
+    """No scene_filter (or None) -> all 3 scenes processed (regression for default path)."""
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    config = _setup_config(tmp_project, repo_root)
+    story = _build_story(n=3)
+    story_dir = tmp_project / "data" / "stories" / story.id
+    story_dir.mkdir(parents=True, exist_ok=True)
+
+    responses = _build_responses_for_story(story, repo_root)
+    comfy = FakeComfyClient(responses=responses)
+    # Note: deliberately omit the runtime block; default behaviour should process all.
+    config.settings["test"] = {
+        "comfy_client": comfy,
+        "aesthetic_scorer": FakeAestheticScorer(fixed_score=8.0),
+        "mp_hands_factory": make_fake_hands_factory(None),
+    }
+    ctx = PipelineContext(config=config, logger=__import__("logging").getLogger("test"))
+
+    stage = KeyframeGeneratorStage()
+    await stage.run(story, ctx)
+
+    for scene in story.scenes:
+        assert scene.keyframe_path is not None

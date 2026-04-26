@@ -210,12 +210,15 @@ async def generate(
     scorer: Any,
     output_root: Path,
     mp_hands_factory: Callable[[], Any] | None = None,
+    scene_filter: set[int] | None = None,
 ) -> list[KeyframeReport]:
     """Run keyframe generation for every scene whose keyframe_path is None.
 
     Mutates each scene in-place: keyframe_candidates, keyframe_scores,
     keyframe_path, validation["keyframe_anatomy"],
     validation["keyframe_selected_via_fallback"].
+
+    If scene_filter is set, only scenes whose index is in scene_filter are processed.
     """
     from platinum.utils.workflow import load_workflow
 
@@ -232,6 +235,9 @@ async def generate(
                 scene.index,
                 scene.keyframe_path,
             )
+            continue
+        if scene_filter is not None and scene.index not in scene_filter:
+            logger.info("scene %d not in scene_filter; skipping", scene.index)
             continue
         scene_dir = output_root / f"scene_{scene.index:03d}"
         report = await generate_for_scene(
@@ -294,6 +300,12 @@ class KeyframeGeneratorStage(Stage):
             story_dir = Path("data/stories") / story.id
         output_root = story_dir / "keyframes"
 
+        runtime_overrides = ctx.config.settings.get("runtime", {})
+        scene_filter_raw = runtime_overrides.get("scene_filter")
+        scene_filter: set[int] | None = (
+            set(scene_filter_raw) if scene_filter_raw is not None else None
+        )
+
         scenes_total = len(story.scenes)
         try:
             reports = await generate(
@@ -303,6 +315,7 @@ class KeyframeGeneratorStage(Stage):
                 scorer=scorer,
                 output_root=output_root,
                 mp_hands_factory=mp_hands_factory,
+                scene_filter=scene_filter,
             )
         except KeyframeGenerationError:
             # Save what we have so far before re-raising.
