@@ -794,11 +794,11 @@ async def test_generate_for_scene_halts_on_all_dark_candidates(
     tmp_path: Path,
 ) -> None:
     """Task 9: All-dark-candidates halt raises KeyframeGenerationError."""
-    from platinum.pipeline.keyframe_generator import generate_for_scene, KeyframeGenerationError
     from platinum.models.story import Scene
-    from platinum.utils.workflow import inject, load_workflow
-    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.pipeline.keyframe_generator import KeyframeGenerationError, generate_for_scene
     from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
     from tests._fixtures import make_synthetic_png
 
     repo_root = Path(__file__).resolve().parents[2]
