@@ -340,3 +340,39 @@ def check_hand_anomalies(
         threshold=float(EXPECTED_LANDMARKS_PER_HAND),
         reason=f"passed: {len(counts)} hand(s) with valid landmark counts",
     )
+
+
+def check_image_brightness(
+    path: Path,
+    *,
+    min_mean_rgb: float = 20.0,
+) -> CheckResult:
+    """Reject perceptually degenerate (near-black) images.
+
+    LAION-Aesthetics v2 doesn't penalise low-content imagery (a fully black
+    PNG scores 3.9-4.6). This primitive provides a hard floor independent
+    of the aesthetic scorer -- catches FP8 + cpu-vae collapse, VAE decode
+    bugs, and similar model-layer failures.
+
+    Mean is computed over all RGB pixels (alpha ignored); fully black image
+    has mean_rgb=0; pure white has mean_rgb=255.
+    """
+    import numpy as np
+    from PIL import Image
+
+    with Image.open(path) as img:
+        arr = np.asarray(img.convert("RGB"), dtype=np.float64)
+    mean_rgb = float(arr.mean())
+    if mean_rgb >= min_mean_rgb:
+        return CheckResult(
+            passed=True,
+            metric=mean_rgb,
+            threshold=min_mean_rgb,
+            reason=f"ok (mean_rgb={mean_rgb:.1f} >= min_rgb={min_mean_rgb:.1f})",
+        )
+    return CheckResult(
+        passed=False,
+        metric=mean_rgb,
+        threshold=min_mean_rgb,
+        reason=f"image too dark (mean_rgb={mean_rgb:.1f} < min_rgb={min_mean_rgb:.1f})",
+    )

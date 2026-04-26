@@ -225,3 +225,16 @@ def test_check_hand_anomalies_factory_unavailable_passes_with_skip_reason(tmp_pa
     r = check_hand_anomalies(img, mp_hands_factory=broken_factory)
     assert r.passed
     assert "skipped" in r.reason.lower() or "unavailable" in r.reason.lower()
+
+
+def test_check_image_brightness_white_image_passes(tmp_path: Path) -> None:
+    from platinum.utils.validate import check_image_brightness
+    from tests._fixtures import make_synthetic_png
+
+    img = tmp_path / "white.png"
+    make_synthetic_png(img, kind="grey", value=255, size=(64, 64))
+    r = check_image_brightness(img, min_mean_rgb=20.0)
+    assert r.passed
+    assert r.metric == 255.0
+    assert r.threshold == 20.0
+    assert "ok" in r.reason
