@@ -393,6 +393,11 @@ async def test_stage_brightness_gate_persists_correct_selection(  # noqa: ANN001
     story_path = story_dir / "story.json"
     story.save(story_path)
 
+    # Override quality_gates to disable subject gate for this brightness-only regression test.
+    # This test uses solid-color PNGs which have edge_density=0 and would fail the subject gate.
+    track_cfg = config.track(story.track)
+    track_cfg.setdefault("quality_gates", {})["subject_min_edge_density"] = 0.0
+
     config.settings["test"] = {
         "comfy_client": FakeComfyClient(responses=responses),
         "aesthetic_scorer": FakeAestheticScorer(fixed_score=8.0),
