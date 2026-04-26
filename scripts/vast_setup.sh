@@ -145,6 +145,32 @@ print("Whisper large-v3 cached.")
 PY
 deactivate
 
+# ---- LAION-Aesthetics v2 score server (Session 6.1) -----------------------
+
+SCORE_DIR="/workspace/score_server"
+mkdir -p "$SCORE_DIR" "$MODELS_DIR/aesthetic"
+
+# Assumes /workspace/platinum is git-cloned (see docs/runbooks/vast-ai-keyframe-smoke.md).
+if [ -d "/workspace/platinum/scripts/score_server" ]; then
+    log "Copying score_server tree from /workspace/platinum"
+    cp -r /workspace/platinum/scripts/score_server/. "$SCORE_DIR/"
+else
+    log "WARNING: /workspace/platinum/scripts/score_server not found; skipping score_server copy"
+fi
+
+if [ -f "$SCORE_DIR/requirements.txt" ]; then
+    python3 -m venv "$SCORE_DIR/venv"
+    # shellcheck source=/dev/null
+    source "$SCORE_DIR/venv/bin/activate"
+    pip install --upgrade pip
+    pip install -r "$SCORE_DIR/requirements.txt"
+    deactivate
+fi
+
+# LAION MLP head (~6MB)
+dl "https://github.com/christophschuhmann/improved-aesthetic-predictor/raw/main/sac%2Blogos%2Bava1-l14-linearMSE.pth" \
+   "$MODELS_DIR/aesthetic/sac+logos+ava1-l14-linearMSE.pth"
+
 # ---- ComfyUI launch helper ------------------------------------------------
 
 cat > /workspace/launch_comfyui.sh <<'EOF'
@@ -157,7 +183,21 @@ exec python main.py --listen 0.0.0.0 --port 8188 --disable-auto-launch
 EOF
 chmod +x /workspace/launch_comfyui.sh
 
+# ---- score_server launch helper -------------------------------------------
+
+cat > /workspace/launch_score_server.sh <<'EOF'
+#!/usr/bin/env bash
+# Launch LAION-Aesthetics v2 score server. Loads CLIP+MLP into GPU at startup.
+set -euo pipefail
+cd /workspace/score_server
+source venv/bin/activate
+exec uvicorn server:app --host 0.0.0.0 --port 8189 --workers 1
+EOF
+chmod +x /workspace/launch_score_server.sh
+
 log "Setup complete."
-log "Start ComfyUI:  bash /workspace/launch_comfyui.sh"
-log "Verify HTTP API:  curl http://localhost:8188/system_stats"
-log "Set COMFYUI_HOST in your local secrets/.env to <public-ip>:8188"
+log "Start ComfyUI:        bash /workspace/launch_comfyui.sh"
+log "Start score_server:   bash /workspace/launch_score_server.sh"
+log "Verify ComfyUI:       curl http://localhost:8188/system_stats"
+log "Verify score_server:  curl http://localhost:8189/health"
+log "Set PLATINUM_COMFYUI_HOST and PLATINUM_AESTHETICS_HOST in your local .env"
