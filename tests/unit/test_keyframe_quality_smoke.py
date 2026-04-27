@@ -33,3 +33,17 @@ def test_smoke_driver_synthetic_scene_index_is_deterministic_per_label() -> None
     assert s1 == s2                                      # deterministic
     assert s1 != s3                                      # different labels -> different indices
     assert 0 <= s1 < 10000
+
+
+def test_smoke_driver_loads_rebuilt_workflow() -> None:
+    """Smoke driver imports succeed and workflow load returns the rebuilt JSON."""
+    from platinum.utils.workflow import load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    # Sanity: rebuilt workflow has the new roles (S6.3 contract).
+    roles = wf["_meta"]["role"]
+    assert "model_sampling_flux" in roles
+    assert "flux_guidance" in roles
+    # Sanity: KSampler.cfg=1.0 (S6.3) not 3.5 (pre-S6.3)
+    assert wf[roles["sampler"]]["inputs"]["cfg"] == 1.0
