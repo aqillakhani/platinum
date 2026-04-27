@@ -79,6 +79,27 @@ def test_track_yaml_carries_brightness_floor(track_name: str, expected_floor: fl
     assert qg.get("brightness_floor_mean_rgb") == expected_floor
 
 
+@pytest.mark.parametrize(
+    "track,expected_subject",
+    [
+        ("atmospheric_horror", 0.020),
+        ("folktales_world_myths", 0.030),
+        ("childrens_fables", 0.040),
+        ("scifi_concept", 0.030),
+        ("slice_of_life", 0.030),
+    ],
+)
+def test_track_yaml_subject_min_edge_density(track: str, expected_subject: float) -> None:
+    """Each track YAML's quality_gates carries the documented subject_min_edge_density."""
+    cfg = Config(root=REPO_ROOT)
+    track_cfg = cfg.track(track)
+    gates = track_cfg.get("quality_gates", {})
+    assert "subject_min_edge_density" in gates, \
+        f"track {track} missing subject_min_edge_density"
+    assert gates["subject_min_edge_density"] == expected_subject, \
+        f"track {track}: expected {expected_subject}, got {gates['subject_min_edge_density']}"
+
+
 def test_check_audio_levels_round_trips_with_real_ffmpeg(tmp_path: Path) -> None:
     """Generate a tone, measure with loudnorm, verify check_audio_levels matches."""
     from platinum.utils.validate import _measure_lufs, check_audio_levels

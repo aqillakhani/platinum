@@ -63,6 +63,7 @@ track:
   # Quality gates -- automated thresholds enforced before human review (Session 5).
   quality_gates:
     brightness_floor_mean_rgb: 80.0
+    subject_min_edge_density: 0.040
     aesthetic_min_score: 6.5
     black_frame_max_ratio: 0.005
     luminance_threshold: 16.0
