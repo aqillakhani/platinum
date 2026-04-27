@@ -535,6 +535,108 @@ months later for Sessions 8/9/10/13.)
   Verifies with `curl localhost:8188/system_stats && curl localhost:8189/health`
   before kicking off the keyframe run.
 
+- **Symptom:** vast.ai's `pytorch/pytorch:latest` base image ships Python 3.10.
+  `pip install -e .` fails with `meson-python: error: package requires
+  Python >=3.11` (numpy 2.4+ build requirement), and after fixing that,
+  imports fail with `ImportError: cannot import name 'StrEnum' from 'enum'`
+  and `cannot import name 'UTC' from 'datetime'` (both 3.11-only).
+  → **Cause:** Mismatch between platinum's `requires-python = ">=3.11"` and
+  the box's Python 3.10. Even with `--ignore-requires-python`, transitive
+  deps (numpy 2.x, contourpy 1.4+, matplotlib 3.10+) demand 3.11.
+  → **Fix (workaround used in S6.3 Phase 2):** Lean install with version
+  constraints + sitecustomize polyfill for the two stdlib gaps:
+  ```bash
+  pip install --ignore-requires-python "numpy<2" "opencv-python<4.11" \
+      "pillow<11" "httpx>=0.27" "pyyaml>=6" "python-dotenv>=1" \
+      "typer>=0.12" "jinja2>=3.1" "rich>=13.7" "sqlalchemy>=2.0" \
+      "aiosqlite>=0.20" "alembic>=1.13" "anthropic>=0.40"
+  pip install -e . --no-deps --ignore-requires-python
+  SP=$(python -c 'import site; print(site.getsitepackages()[0])')
+  cat > "$SP/_strenum_polyfill.py" <<'EOF'
+  import enum, datetime as _dt
+  if not hasattr(enum, "StrEnum"):
+      class StrEnum(str, enum.Enum): pass
+      enum.StrEnum = StrEnum
+  if not hasattr(_dt, "UTC"):
+      _dt.UTC = _dt.timezone.utc
+  EOF
+  echo "import _strenum_polyfill" > "$SP/sitecustomize.py"
+  ```
+  → **Proper fix (S6.4 scope):** `vast_setup.sh` should install Python 3.11
+  via `conda create -n p311 python=3.11 -y` and have all subsequent platinum
+  invocations use `/opt/conda/envs/p311/bin/python`. Avoids the polyfill
+  dance entirely and lets the full pyproject install resolve normally.
+
+- **Symptom:** `python -m platinum keyframes <story> --scenes X,Y` exits in
+  <5s with "Keyframes complete" but generates zero PNGs. story.json shows
+  `keyframe_path: None` for the requested scenes after.
+  → **Cause:** Orchestrator's `Stage.is_complete()` checks
+  `story.stages` (in-memory list of StageRun records, persisted to story.json)
+  for the latest entry matching the stage name. A prior COMPLETE run leaves
+  that record behind. `reset_scene_keyframes.py` clears per-scene
+  `keyframe_path` + candidate files but does NOT strip the StageRun history,
+  so the next invocation's orchestrator sees "keyframe_generator already
+  COMPLETE, skip stage entirely" and never enters `generate()`.
+  → **Fix (manual):** Before rerunning, strip the stage entries:
+  ```bash
+  python -c "
+  import json
+  from pathlib import Path
+  p = Path('data/stories/<id>/story.json')
+  d = json.loads(p.read_text())
+  d['stages'] = [s for s in d['stages']
+                 if s.get('stage') != 'keyframe_generator']
+  p.write_text(json.dumps(d, indent=2))
+  "
+  ```
+  Note: deleting `data/platinum.db` is NOT enough — the resume state lives
+  in story.json, not the SQLite projection. → **Proper fix (S6.4):**
+  `reset_scene_keyframes.py` should accept `--reset-stage` to strip
+  matching `keyframe_generator` StageRuns from story.json. Test:
+  rerun-after-reset produces fresh PNGs.
+
+- **Symptom:** `image_model.candidates_per_scene: 6` set in
+  `config/tracks/atmospheric_horror.yaml`, but `platinum keyframes` still
+  generates exactly 3 candidates per scene.
+  → **Cause:** `generate()` in `keyframe_generator.py` calls
+  `generate_for_scene(scene, ...)` without passing `n_candidates`. The
+  function's default (`n_candidates: int = 3`) wins. The yaml setting is
+  read for documentation but never forwarded.
+  → **Fix (S6.4):** In `generate()` (or `KeyframeGeneratorStage.run`),
+  read `track_cfg["image_model"]["candidates_per_scene"]` and forward
+  to `generate_for_scene(n_candidates=N)`. Add integration test asserting
+  a yaml override of 5 produces 5 candidate PNGs on disk.
+
+- **Symptom:** Cask scene 1 (Venetian nobleman portrait, single oil lamp)
+  consistently produces output below the brightness floor (mean_rgb 2.6-3.0)
+  regardless of FluxGuidance + ModelSamplingFlux + sampler tweaks. Subjects
+  ARE rendered (a face IS in the latent) but invisibly dim — unviewable as
+  shippable keyframes.
+  → **Cause:** The visual_prompt for scene 1 is over-loaded with darkness
+  modifiers — "dark velvet doublet, candlelit study at night, single oil
+  lamp casting deep amber glow across half his face, the other half lost in
+  shadow, deep oxblood velvet drapery, vaulted dark oak ceiling". Flux
+  faithfully renders the prompt; the prompt itself describes a
+  near-imperceptible image. Negative prompt also fights brightness ("bright
+  daylight", "multiple light sources").
+  → **Fix (S6.4):** Re-run `platinum adapt` with a revised visual_prompts
+  template that caps darkness-modifier density (rule of thumb: at most one
+  explicit darkness cue per clause, primary subjects described in lit
+  terms — e.g. "amber-lit face" rather than "half-lit, half lost in
+  shadow"). Test with Cask scene 1 specifically. Catacomb scenes (8 + 16)
+  with torchlight + bone walls + ambient amber render cleanly without this
+  treatment.
+
+- **Symptom (positive lesson, not a failure):** Bumping KSampler
+  `steps: 30 → 60` materially improves Flux Dev output quality on
+  chiaroscuro scenes — less "AI slop" texture, sharper subject definition,
+  cleaner figure rendering. Selected candidates' LAION scores moved from
+  ~5.7-6.2 to 6.2-6.5 in S6.3 Phase 2 Cask 8/16 testing.
+  → **Decision (shipped in S6.3 Phase 2):** `steps: 60` is the default in
+  `flux_dev_keyframe.json`. Generation time per candidate ~50s on A6000
+  (was ~25s), still within budget for 3 candidates × 16 scenes ≈ 40 min
+  per Cask story.
+
 ---
 
 ## Reference
