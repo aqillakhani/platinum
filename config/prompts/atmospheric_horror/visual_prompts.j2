@@ -13,6 +13,23 @@ CONVENTIONS
 - Negative prompt may extend the default with scene-specific exclusions (e.g. "no clear daylight" if the narration places the action in a sunlit field that the track aesthetic forbids).
 - Output exactly one entry per scene; preserve the input scene index.
 
+DARKNESS DENSITY CAPS (atmospheric horror -- Flux fades to black on
+over-loaded dark prompts; mean RGB hits 0-3 and the keyframe is unviewable):
+- At most one explicit darkness cue per clause. Stacked dark / shadow /
+  blackness / chiaroscuro signals collapse the rendered image.
+- Describe subjects in LIT terms, not absent terms. Tell Flux which
+  PIXELS are bright -- name a lit edge, a lit surface, and a lit
+  material per scene where possible. "Candlelight catching the bridge
+  of the nose and the rim of the goblet" beats "face turned toward a
+  candle." "Amber-lit face" beats "half-lit, half lost in shadow."
+- Atmosphere belongs to adjectives, not to the subject. "Man in candlelit
+  study" -- yes. "Candlelit study at night, mostly black, with a man
+  somewhere inside" -- no.
+- Negative prompts MUST NOT fight the scene's own light source. Forbidden:
+  "multiple light sources" when the prompt needs candlelight to reach the
+  subject. (Daylight remains a valid negative cue -- "bright daylight"
+  excludes a scene type, not a brightness floor.)
+
 SCENES
 {% for scene in scenes %}{{ scene.index }}. {{ scene.narration_text }}
 
