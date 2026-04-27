@@ -108,7 +108,7 @@ ssh root@<HOST> -p <PORT> \
   'export HF_TOKEN=hf_... \
           PLATINUM_COMFYUI_HOST=http://localhost:8188 \
           PLATINUM_AESTHETICS_HOST=http://localhost:8189; \
-   cd /workspace/platinum && python scripts/preflight_check.py'
+   cd /workspace/platinum && /opt/conda/envs/p311/bin/python scripts/preflight_check.py'
 ```
 
 Expected: 5 OK lines + workflow signature + "preflight OK". If any check
@@ -120,6 +120,16 @@ but token lacks gated access" gotcha and the "stale workflow on box" gotcha.
 
 Both ComfyUI and the score_server are long-running. Use tmux so they survive
 SSH disconnect:
+
+After provisioning, set this once for use in subsequent steps (it points
+at the conda env's Python binary; using it directly avoids `conda activate`
+shell-init fragility under SSH):
+
+```bash
+PLATINUM_PY=/opt/conda/envs/p311/bin/python
+```
+
+Still inside the box:
 
 ```bash
 # Still inside the box:
@@ -241,7 +251,7 @@ ssh root@<HOST> -p <PORT> \
        --scenes 1,8,16 --delete-files'
 
 # Run the actual keyframe stage.
-time python -m platinum keyframes <CASK_STORY_ID> --scenes 1,8,16 \
+time $PLATINUM_PY -m platinum keyframes <CASK_STORY_ID> --scenes 1,8,16 \
     2>&1 | tee /tmp/cask-smoke.log
 ```
 
@@ -562,10 +572,12 @@ months later for Sessions 8/9/10/13.)
   EOF
   echo "import _strenum_polyfill" > "$SP/sitecustomize.py"
   ```
-  → **Proper fix (S6.4 scope):** `vast_setup.sh` should install Python 3.11
-  via `conda create -n p311 python=3.11 -y` and have all subsequent platinum
-  invocations use `/opt/conda/envs/p311/bin/python`. Avoids the polyfill
-  dance entirely and lets the full pyproject install resolve normally.
+  → **Proper fix (S6.4 — RESOLVED):** `vast_setup.sh` now provisions a `p311`
+  conda env via `conda create -n p311 python=3.11 -y` and installs platinum
+  into it. All subsequent platinum invocations use `/opt/conda/envs/p311/bin/python`.
+  The polyfill workaround above is preserved as a cautionary tale of how an
+  ergonomically-bad workaround (sitecustomize.py + version-pinned deps +
+  --ignore-requires-python) accumulates if the right fix gets deferred.
 
 - **Symptom:** `python -m platinum keyframes <story> --scenes X,Y` exits in
   <5s with "Keyframes complete" but generates zero PNGs. story.json shows

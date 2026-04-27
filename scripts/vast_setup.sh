@@ -40,6 +40,30 @@ apt-get install -y --no-install-recommends \
 
 mkdir -p "$WORKDIR" "$MODELS_DIR" "$COMFYUI_DIR/models"
 
+# ---- Python 3.11 conda env (for platinum the package) ---------------------
+#
+# vast.ai's pytorch/pytorch:latest base image ships Python 3.10 but
+# platinum's pyproject requires >=3.11 (StrEnum, datetime.UTC, numpy 2.x,
+# matplotlib 3.10+). S6.3 Phase 2 burned ~30 min on a polyfill workaround;
+# this conda env eliminates that dance. ComfyUI / score_server / Chatterbox
+# / Whisper venvs are independent and stay on Python 3.10 (their deps don't
+# need 3.11 and ComfyUI's torch is cu121-pinned for driver-12.2 reasons).
+
+log "Creating Python 3.11 conda env for platinum"
+if ! command -v conda >/dev/null 2>&1; then
+    log "ERROR: conda not found on PATH. vast.ai's pytorch base image ships"
+    log "       conda; this script assumes that. If you're on a different"
+    log "       base image, install miniconda manually before re-running."
+    exit 1
+fi
+if ! conda env list | awk '{print $1}' | grep -qx 'p311'; then
+    conda create -n p311 python=3.11 -y
+else
+    log "p311 conda env already present (idempotent)"
+fi
+P311_PY=/opt/conda/envs/p311/bin/python
+P311_PIP=/opt/conda/envs/p311/bin/pip
+
 # ---- ComfyUI ---------------------------------------------------------------
 
 if [ ! -d "$COMFYUI_DIR/.git" ]; then
@@ -266,9 +290,33 @@ exec uvicorn score_server.server:app --host 0.0.0.0 --port 8189 --workers 1
 EOF
 chmod +x /workspace/launch_score_server.sh
 
+# ---- Install platinum into p311 -------------------------------------------
+#
+# Done late so a platinum install failure (e.g., transient pypi flake)
+# doesn't block the heavy ComfyUI / score-server / weights bring-up above.
+# Idempotent: pip install -e updates an existing install in place.
+#
+# The runbook expects the user to git-clone platinum to /workspace/platinum
+# BEFORE running this script (see runbook Step 3). Do not add a git-clone
+# block here -- it would clone the script's own parent over itself.
+
+if [ -d /workspace/platinum ]; then
+    log "Installing platinum into p311"
+    "$P311_PIP" install --upgrade pip
+    "$P311_PIP" install -e /workspace/platinum
+    "$P311_PY" -m platinum --help >/dev/null 2>&1 && \
+        log "platinum CLI ready: $P311_PY -m platinum" || \
+        log "WARN: platinum --help failed post-install; investigate"
+else
+    log "WARN: /workspace/platinum not present; skipping platinum install."
+    log "      git-clone platinum and rerun this script (idempotent)."
+fi
+
 log "Setup complete."
 log "Start ComfyUI:        bash /workspace/launch_comfyui.sh"
 log "Start score_server:   bash /workspace/launch_score_server.sh"
 log "Verify ComfyUI:       curl http://localhost:8188/system_stats"
 log "Verify score_server:  curl http://localhost:8189/health"
 log "Set PLATINUM_COMFYUI_HOST and PLATINUM_AESTHETICS_HOST in your local .env"
+log "Platinum CLI:        $P311_PY -m platinum <subcommand>"
+log "(or activate first:  source activate p311 && python -m platinum ...)"
