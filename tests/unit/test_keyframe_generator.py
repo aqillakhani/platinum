@@ -1245,3 +1245,208 @@ async def test_track_aesthetic_prefix_no_longer_prepended(tmp_path: Path) -> Non
     # the prompt was scene.visual_prompt alone.
     assert all(report.brightness_passed)
     assert all(report.subject_passed)
+
+
+@pytest.mark.asyncio
+async def test_generate_forwards_candidates_per_scene_from_track_config(
+    tmp_path: Path,
+) -> None:
+    """yaml track.image_model.candidates_per_scene=5 -> 5 candidate PNGs.
+
+    Currently FAILS because generate() doesn't read image_model and the
+    n_candidates default of 3 always wins. Wiring the yaml override into
+    generate_for_scene's n_candidates kwarg fixes it.
+    """
+    from datetime import datetime
+
+    from platinum.models.story import Scene, Source, Story
+    from platinum.pipeline.keyframe_generator import generate
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    # Synthesize 5 distinct PNGs in tmp_path with different gradient values.
+    candidate_files = []
+    for i in range(5):
+        path = tmp_path / f"src_candidate_{i}.png"
+        make_synthetic_png(path, kind="grey", value=50 + i * 40)
+        candidate_files.append(path)
+
+    # Build FakeComfyClient responses: one per seed.
+    # For scene.index=1, _seeds_for_scene(1, 5) yields (1000, 1001, 1002, 1003, 1004).
+    seeds = (1000, 1001, 1002, 1003, 1004)
+    responses: dict[str, list[Path]] = {}
+    for i, seed in enumerate(seeds):
+        wf = inject(
+            wf_template,
+            prompt="a candle",
+            negative_prompt="bright daylight",
+            seed=seed,
+            width=1024,
+            height=1024,
+            output_prefix=f"scene_001_candidate_{i}",
+        )
+        responses[workflow_signature(wf)] = [candidate_files[i]]
+
+    fake_comfy = FakeComfyClient(responses=responses)
+    fake_scorer = FakeAestheticScorer(fixed_score=7.0)
+
+    # Build a Story with 1 scene.
+    scene = Scene(
+        id="scene_001",
+        index=1,
+        narration_text="Once upon a time",
+        narration_duration_seconds=5.0,
+        visual_prompt="a candle",
+        negative_prompt="bright daylight",
+    )
+    story = Story(
+        id="story_test_5cand",
+        track="atmospheric_horror",
+        source=Source(
+            type="gutenberg",
+            url="http://example.test",
+            title="Test Story",
+            author="Test",
+            raw_text="x",
+            fetched_at=datetime(2026, 4, 25),
+            license="PD-US",
+        ),
+        scenes=[scene],
+    )
+
+    # Stub config that returns track cfg with image_model.candidates_per_scene=5.
+    class _StubConfig:
+        config_dir = repo_root / "config"
+
+        def track(self, _name: str) -> dict:
+            return {
+                "visual": {"aesthetic": "cinematic dark", "negative_prompt": "bright daylight"},
+                "quality_gates": {
+                    "aesthetic_min_score": 0.0,
+                    "brightness_floor_mean_rgb": 0.0,
+                    "subject_min_edge_density": 0.0,
+                },
+                "image_model": {"candidates_per_scene": 5},
+            }
+
+    output_root = tmp_path / "keyframes"
+    reports = await generate(
+        story,
+        config=_StubConfig(),
+        comfy=fake_comfy,
+        scorer=fake_scorer,
+        output_root=output_root,
+        mp_hands_factory=None,
+    )
+
+    # Assertions: should get 5 candidates when yaml specifies 5.
+    assert len(reports) == 1
+    assert len(reports[0].candidates) == 5
+    assert len(scene.keyframe_candidates) == 5
+    assert len(scene.keyframe_scores) == 5
+
+
+@pytest.mark.asyncio
+async def test_generate_defaults_to_three_when_image_model_missing(tmp_path: Path) -> None:
+    """yaml without image_model block -> falls back to n_candidates=3.
+
+    Pins the default behavior. Passes on both pre- and post-fix code (this
+    is a regression-pin, not a RED test).
+    """
+    from datetime import datetime
+
+    from platinum.models.story import Scene, Source, Story
+    from platinum.pipeline.keyframe_generator import generate
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    # Synthesize 3 distinct PNGs with different grey values.
+    candidate_files = []
+    for i in range(3):
+        path = tmp_path / f"src_candidate_{i}.png"
+        make_synthetic_png(path, kind="grey", value=50 + i * 70)
+        candidate_files.append(path)
+
+    # Build FakeComfyClient responses for 3 candidates.
+    # For scene.index=0, _seeds_for_scene(0, 3) yields (0, 1, 2).
+    seeds = (0, 1, 2)
+    responses: dict[str, list[Path]] = {}
+    for i, seed in enumerate(seeds):
+        wf = inject(
+            wf_template,
+            prompt="a candle",
+            negative_prompt="bright daylight",
+            seed=seed,
+            width=1024,
+            height=1024,
+            output_prefix=f"scene_000_candidate_{i}",
+        )
+        responses[workflow_signature(wf)] = [candidate_files[i]]
+
+    fake_comfy = FakeComfyClient(responses=responses)
+    fake_scorer = FakeAestheticScorer(fixed_score=7.0)
+
+    # Build Story with 1 scene.
+    scene = Scene(
+        id="scene_000",
+        index=0,
+        narration_text="Once upon a time",
+        narration_duration_seconds=5.0,
+        visual_prompt="a candle",
+        negative_prompt="bright daylight",
+    )
+    story = Story(
+        id="story_test_default",
+        track="atmospheric_horror",
+        source=Source(
+            type="gutenberg",
+            url="http://example.test",
+            title="Test Story",
+            author="Test",
+            raw_text="x",
+            fetched_at=datetime(2026, 4, 25),
+            license="PD-US",
+        ),
+        scenes=[scene],
+    )
+
+    # Stub config WITHOUT image_model block.
+    class _StubConfig:
+        config_dir = repo_root / "config"
+
+        def track(self, _name: str) -> dict:
+            return {
+                "visual": {"aesthetic": "cinematic dark", "negative_prompt": "bright daylight"},
+                "quality_gates": {
+                    "aesthetic_min_score": 0.0,
+                    "brightness_floor_mean_rgb": 0.0,
+                    "subject_min_edge_density": 0.0,
+                },
+                # NO image_model key -> should default to 3
+            }
+
+    output_root = tmp_path / "keyframes"
+    reports = await generate(
+        story,
+        config=_StubConfig(),
+        comfy=fake_comfy,
+        scorer=fake_scorer,
+        output_root=output_root,
+        mp_hands_factory=None,
+    )
+
+    # Assertions: should get 3 candidates (the default) when image_model is missing.
+    assert len(reports) == 1
+    assert len(reports[0].candidates) == 3
+    assert len(scene.keyframe_candidates) == 3
+    assert len(scene.keyframe_scores) == 3

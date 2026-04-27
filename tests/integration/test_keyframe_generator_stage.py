@@ -128,6 +128,101 @@ async def test_keyframe_stage_runs_end_to_end(tmp_project, repo_root) -> None:  
     assert artifacts["scenes_via_fallback"] == 0
 
 
+async def test_stage_respects_yaml_candidates_per_scene_override(tmp_project, repo_root) -> None:  # noqa: ANN001
+    """yaml track.image_model.candidates_per_scene=5 -> 5 keyframe candidates per scene.
+
+    Verifies end-to-end: Stage reads config override, forwards to generate(),
+    which forwards to generate_for_scene(), producing 5 candidates instead of 3.
+    """
+    import shutil
+
+    import yaml
+
+    from platinum.config import Config
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_fake_hands_factory, make_synthetic_png
+
+    # Setup config directory and modify YAML BEFORE creating Config.
+    (tmp_project / "config" / "tracks").mkdir(parents=True, exist_ok=True)
+    shutil.copy(
+        repo_root / "config" / "tracks" / "atmospheric_horror.yaml",
+        tmp_project / "config" / "tracks" / "atmospheric_horror.yaml",
+    )
+    shutil.copytree(
+        repo_root / "config" / "workflows",
+        tmp_project / "config" / "workflows",
+        dirs_exist_ok=True,
+    )
+
+    # Modify track YAML to specify 5 candidates and disable quality gates.
+    track_cfg_path = tmp_project / "config" / "tracks" / "atmospheric_horror.yaml"
+    track_yaml_str = track_cfg_path.read_text(encoding="utf-8")
+    data = yaml.safe_load(track_yaml_str)
+    track_cfg = data["track"]
+    # Update image_model candidates and relax quality gates for synthetic images.
+    if "image_model" not in track_cfg:
+        track_cfg["image_model"] = {}
+    track_cfg["image_model"]["candidates_per_scene"] = 5
+    if "quality_gates" not in track_cfg:
+        track_cfg["quality_gates"] = {}
+    track_cfg["quality_gates"].update({
+        "aesthetic_min_score": 0.0,
+        "brightness_floor_mean_rgb": 0.0,
+        "subject_min_edge_density": 0.0,
+    })
+    yaml_output = yaml.dump({"track": track_cfg}, default_flow_style=False)
+    track_cfg_path.write_text(yaml_output, encoding="utf-8")
+
+    # Now create Config with modified YAML.
+    config = Config(root=tmp_project)
+    story = _build_story(n=1)
+    story_dir = tmp_project / "data" / "stories" / story.id
+    story_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build FakeComfyClient responses for 5 candidates per scene.
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=tmp_project / "config")
+    responses: dict[str, list[Path]] = {}
+    scene = story.scenes[0]
+    for i in range(5):
+        seed = scene.index * 1000 + i
+        wf = inject(
+            wf_template,
+            prompt=scene.visual_prompt,
+            negative_prompt=scene.negative_prompt or "bright daylight",
+            seed=seed,
+            width=1024,
+            height=1024,
+            output_prefix=f"scene_{scene.index:03d}_candidate_{i}",
+        )
+        # Create distinct candidate PNG.
+        candidate_path = tmp_project / "fixtures" / f"candidate_{i}_5cand.png"
+        candidate_path.parent.mkdir(parents=True, exist_ok=True)
+        make_synthetic_png(candidate_path, kind="grey", value=50 + i * 40)
+        responses[workflow_signature(wf)] = [candidate_path]
+
+    comfy = FakeComfyClient(responses=responses)
+    scorer = FakeAestheticScorer(fixed_score=7.0)
+
+    config.settings["test"] = {
+        "comfy_client": comfy,
+        "aesthetic_scorer": scorer,
+        "mp_hands_factory": make_fake_hands_factory(None),
+    }
+    ctx = PipelineContext(config=config, logger=__import__("logging").getLogger("test"))
+
+    stage = KeyframeGeneratorStage()
+    artifacts = await stage.run(story, ctx)
+
+    # Assert: 5 candidates per scene when yaml specifies 5.
+    assert all(len(s.keyframe_candidates) == 5 for s in story.scenes)
+    assert all(len(s.keyframe_scores) == 5 for s in story.scenes)
+    assert artifacts["scenes_total"] == 1
+    assert artifacts["scenes_succeeded"] == 1
+
+
 async def test_keyframe_stage_persists_story_json_after_each_scene(tmp_project, repo_root) -> None:  # noqa: ANN001
     """Per-scene checkpoint: story.json on disk reflects each scene as it lands."""
     from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
