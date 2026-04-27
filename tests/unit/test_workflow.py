@@ -171,3 +171,52 @@ def test_flux_dev_workflow_uses_dpmpp_2m_karras_30steps() -> None:
     assert ksampler_inputs["scheduler"] == "karras"
     assert ksampler_inputs["steps"] == 30
     assert ksampler_inputs["cfg"] == 3.5
+
+
+def test_inject_sets_model_sampling_flux_width_height() -> None:
+    """When model_sampling_flux role is present, inject() sets width/height on it."""
+    from platinum.utils.workflow import inject
+
+    workflow = {
+        "_meta": {
+            "role": {
+                "positive_prompt": "3",
+                "negative_prompt": "4",
+                "empty_latent": "5",
+                "sampler": "6",
+                "save_image": "8",
+                "model_sampling_flux": "10",
+            }
+        },
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["2", 0]}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["2", 0]}},
+        "5": {"class_type": "EmptyLatentImage",
+              "inputs": {"width": 0, "height": 0, "batch_size": 1}},
+        "6": {"class_type": "KSampler", "inputs": {"seed": 0}},
+        "8": {"class_type": "SaveImage", "inputs": {"filename_prefix": ""}},
+        "10": {"class_type": "ModelSamplingFlux",
+               "inputs": {"max_shift": 1.15, "base_shift": 0.5,
+                          "width": 0, "height": 0, "model": ["1", 0]}},
+    }
+    out = inject(workflow, prompt="x", negative_prompt="", seed=42,
+                 width=1024, height=1024, output_prefix="test")
+    assert out["10"]["inputs"]["width"] == 1024
+    assert out["10"]["inputs"]["height"] == 1024
+
+
+def test_inject_works_without_model_sampling_flux_role() -> None:
+    """Backwards compat: workflows without the role still inject cleanly."""
+    from platinum.utils.workflow import inject
+
+    workflow = {
+        "_meta": {"role": {"positive_prompt": "3", "negative_prompt": "4",
+                           "empty_latent": "5", "sampler": "6", "save_image": "8"}},
+        "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["2", 0]}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["2", 0]}},
+        "5": {"class_type": "EmptyLatentImage",
+              "inputs": {"width": 0, "height": 0, "batch_size": 1}},
+        "6": {"class_type": "KSampler", "inputs": {"seed": 0}},
+        "8": {"class_type": "SaveImage", "inputs": {"filename_prefix": ""}},
+    }
+    out = inject(workflow, prompt="x", negative_prompt="", seed=42)
+    assert out["5"]["inputs"]["width"] == 1024

@@ -56,6 +56,8 @@ def inject(
 
     Required _meta.role entries: positive_prompt, negative_prompt,
     empty_latent, sampler, save_image. Raises KeyError if any are missing.
+
+    Optional _meta.role entries: model_sampling_flux.
     """
     out = copy.deepcopy(workflow)
     pos_id = _resolve_role(out, "positive_prompt")
@@ -69,4 +71,10 @@ def inject(
     out[latent_id]["inputs"]["height"] = height
     out[sampler_id]["inputs"]["seed"] = seed
     out[save_id]["inputs"]["filename_prefix"] = output_prefix
+    # Optional: ModelSamplingFlux carries its own width/height; keep aligned with empty_latent.
+    msf_roles = out.get("_meta", {}).get("role", {})
+    if "model_sampling_flux" in msf_roles:
+        msf_id = msf_roles["model_sampling_flux"]
+        out[msf_id]["inputs"]["width"] = width
+        out[msf_id]["inputs"]["height"] = height
     return out
