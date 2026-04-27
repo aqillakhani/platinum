@@ -25,6 +25,7 @@ def reset_scenes(
     scenes: list[int],
     story_dir: Path,
     delete_files: bool,
+    reset_stage: bool = False,
 ) -> int:
     story_path = Path(story_dir) / story_id / "story.json"
     if not story_path.exists():
@@ -50,6 +51,14 @@ def reset_scenes(
             if scene_subdir.exists():
                 for png in scene_subdir.glob("candidate_*.png"):
                     png.unlink()
+    if reset_stage:
+        before = len(data.get("stages", []))
+        data["stages"] = [
+            s for s in data.get("stages", [])
+            if s.get("stage") != "keyframe_generator"
+        ]
+        stripped = before - len(data["stages"])
+        print(f"stripped {stripped} keyframe_generator StageRun(s)", flush=True)
     tmp = story_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, indent=2))
     tmp.replace(story_path)
@@ -64,6 +73,11 @@ def main() -> int:
                         help="comma-separated scene indices (e.g. 1,8,16)")
     parser.add_argument("--delete-files", action="store_true",
                         help="also delete candidate_*.png from disk")
+    parser.add_argument("--reset-stage", action="store_true",
+                        help="Also strip keyframe_generator StageRuns from "
+                             "story.json so the orchestrator re-enters "
+                             "generate() instead of short-circuiting on "
+                             "Stage.is_complete().")
     parser.add_argument("--story-dir", type=Path, default=Path("data/stories"))
     args = parser.parse_args()
 
@@ -73,6 +87,7 @@ def main() -> int:
         scenes=scenes,
         story_dir=args.story_dir,
         delete_files=args.delete_files,
+        reset_stage=args.reset_stage,
     )
 
 

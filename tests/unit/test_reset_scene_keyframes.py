@@ -76,3 +76,85 @@ def test_reset_with_delete_files_removes_pngs(tmp_path):
     assert not (keyframes_dir / "candidate_0.png").exists()
     assert not (keyframes_dir / "candidate_1.png").exists()
     assert (keyframes_dir / "metadata.json").exists()       # NOT touched
+
+
+def test_reset_stage_strips_all_keyframe_generator_stage_runs(tmp_path):
+    """--reset-stage removes ALL keyframe_generator StageRuns from story.json.
+
+    Fixture has 1 visual_prompts + 2 keyframe_generator entries (one ERROR,
+    one COMPLETE -- both should be stripped, regardless of status).
+    """
+    from reset_scene_keyframes import reset_scenes
+
+    story_id = "test_story"
+    story_dir = tmp_path / story_id
+    story_dir.mkdir()
+    story_json = {
+        "id": story_id,
+        "scenes": [
+            {"index": 1, "keyframe_path": "/foo/c.png",
+             "keyframe_candidates": [], "keyframe_scores": [],
+             "validation": {}},
+        ],
+        "stages": [
+            {"stage": "visual_prompts", "status": "complete",
+             "started_at": "2026-04-25T00:00:00+00:00",
+             "completed_at": "2026-04-25T00:01:00+00:00"},
+            {"stage": "keyframe_generator", "status": "error",
+             "started_at": "2026-04-26T00:00:00+00:00",
+             "completed_at": "2026-04-26T00:00:30+00:00",
+             "error": "stale workflow"},
+            {"stage": "keyframe_generator", "status": "complete",
+             "started_at": "2026-04-26T01:00:00+00:00",
+             "completed_at": "2026-04-26T01:05:00+00:00"},
+        ],
+    }
+    (story_dir / "story.json").write_text(json.dumps(story_json))
+
+    rc = reset_scenes(story_id=story_id, scenes=[1],
+                      story_dir=tmp_path, delete_files=False,
+                      reset_stage=True)
+    assert rc == 0
+
+    out = json.loads((story_dir / "story.json").read_text())
+    assert len(out["stages"]) == 1
+    assert out["stages"][0]["stage"] == "visual_prompts"
+
+
+def test_reset_stage_default_off_preserves_stage_runs(tmp_path):
+    """Without --reset-stage, all StageRun records survive.
+
+    Pins the existing default behavior so future refactors don't silently
+    flip it on.
+    """
+    from reset_scene_keyframes import reset_scenes
+
+    story_id = "test_story"
+    story_dir = tmp_path / story_id
+    story_dir.mkdir()
+    stages_in = [
+        {"stage": "visual_prompts", "status": "complete"},
+        {"stage": "keyframe_generator", "status": "error"},
+        {"stage": "keyframe_generator", "status": "complete"},
+    ]
+    story_json = {
+        "id": story_id,
+        "scenes": [
+            {"index": 1, "keyframe_path": "/foo/c.png",
+             "keyframe_candidates": [], "keyframe_scores": [],
+             "validation": {}},
+        ],
+        "stages": stages_in,
+    }
+    (story_dir / "story.json").write_text(json.dumps(story_json))
+
+    # Note: reset_stage omitted (defaults to False)
+    rc = reset_scenes(story_id=story_id, scenes=[1],
+                      story_dir=tmp_path, delete_files=False)
+    assert rc == 0
+
+    out = json.loads((story_dir / "story.json").read_text())
+    assert len(out["stages"]) == 3
+    assert [s["stage"] for s in out["stages"]] == [
+        "visual_prompts", "keyframe_generator", "keyframe_generator",
+    ]
