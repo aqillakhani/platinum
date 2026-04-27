@@ -258,3 +258,29 @@ def test_rebuilt_flux_workflow_has_required_roles_and_cfg_1() -> None:
     assert wf["11"]["class_type"] == "FluxGuidance"
     assert wf["11"]["inputs"]["guidance"] == 3.5
     assert wf["11"]["inputs"]["conditioning"] == ["3", 0]
+
+
+def test_inject_against_rebuilt_workflow_produces_valid_wiring() -> None:
+    """End-to-end inject on the actual config/workflows JSON: width/height
+    flow into both EmptyLatentImage AND ModelSamplingFlux."""
+    from platinum.utils.workflow import inject, load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    out = inject(wf, prompt="hello world", negative_prompt="ugly",
+                 seed=12345, width=1024, height=1024, output_prefix="test")
+
+    # Positive/negative text injected into nodes 3/4
+    assert out["3"]["inputs"]["text"] == "hello world"
+    assert out["4"]["inputs"]["text"] == "ugly"
+    # EmptyLatent dimensions
+    assert out["5"]["inputs"]["width"] == 1024
+    assert out["5"]["inputs"]["height"] == 1024
+    # ModelSamplingFlux dimensions match
+    assert out["10"]["inputs"]["width"] == 1024
+    assert out["10"]["inputs"]["height"] == 1024
+    # Seed + filename
+    assert out["6"]["inputs"]["seed"] == 12345
+    assert out["8"]["inputs"]["filename_prefix"] == "test"
+    # FluxGuidance untouched (guidance is static template constant)
+    assert out["11"]["inputs"]["guidance"] == 3.5
