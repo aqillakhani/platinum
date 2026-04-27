@@ -5,8 +5,10 @@ story (default: Cask of Amontillado, scenes 1/8/16) on a freshly rented vast.ai
 A6000 48GB box (or A6000 Ada / A100 / H100 — anything >=48GB VRAM AND >=64GB
 system RAM). Mirrors the data-flow diagram in
 `docs/plans/2026-04-25-session-6.1-keyframe-live-smoke-design.md` Section 5;
-S6.2 quality fix details in
-`docs/plans/2026-04-26-session-6.2-keyframe-quality-fix-design.md`.
+S6.3 workflow rebuild details in
+`docs/plans/2026-04-26-session-6.3-flux-workflow-rebuild-design.md`. The S6.3
+rebuild added `FluxGuidance` + `ModelSamplingFlux` nodes to produce detailed
+subjects (fixing the S6.2 mood-only-render issue).
 
 **Time budget:** ~50-75 min total
 - Provisioning: 30-45 min (mostly weight downloads)
@@ -96,6 +98,24 @@ ls -lh /workspace/models/unet/flux1-dev.safetensors \
 ```
 Expected: `flux1-dev.safetensors` ~24GB, MLP head ~6MB.
 
+### Pre-flight check (~30s)
+
+After `vast_setup.sh` completes, run the pre-flight script to verify the box
+is fully ready before any GPU work:
+
+```bash
+ssh root@<HOST> -p <PORT> \
+  'export HF_TOKEN=hf_... \
+          PLATINUM_COMFYUI_HOST=http://localhost:8188 \
+          PLATINUM_AESTHETICS_HOST=http://localhost:8189; \
+   cd /workspace/platinum && python scripts/preflight_check.py'
+```
+
+Expected: 5 OK lines + workflow signature + "preflight OK". If any check
+FAILs, fix it before proceeding (re-run vast_setup.sh, accept HF license,
+restart ComfyUI/score_server, etc.). Pre-flight catches the "whoami passes
+but token lacks gated access" gotcha and the "stale workflow on box" gotcha.
+
 ## 4. Launch services in tmux (~2 min)
 
 Both ComfyUI and the score_server are long-running. Use tmux so they survive
@@ -120,22 +140,17 @@ exit  # close the SSH session
 
 ## 5. Verify endpoints from local (~30s)
 
+Step 3's pre-flight already verified ComfyUI + score-server alive on the box
+itself. From your local terminal, just confirm the SSH tunnel is forwarding:
+
 ```bash
-# From your local terminal:
-curl -sf http://<HOST>:8188/system_stats | head -20
+curl -sf http://<HOST>:8188/system_stats | head -5
 curl -sf http://<HOST>:8189/health
 ```
 
-Expected:
-- ComfyUI: 200, JSON with GPU info (RTX 4090, CUDA version, etc.)
-- score_server: 200, `{"ok":true,"model":"ViT-L-14 + LAION MLP"}`
-
-If either fails:
-- SSH back to the box: `ssh root@<HOST> -p <PORT>`
-- `tmux attach -t platinum` and check the failing window for errors
-- Check vast.ai's port forwarding — sometimes the public IP/port differs from
-  the SSH host/port (look at `vastai show instance <ID>` for explicit
-  port mappings).
+Both should return 200. If either fails, the issue is the SSH tunnel/proxy,
+not the services themselves (since pre-flight succeeded on the box). See
+Step 12's "vast.ai SSH proxy resets" entry for the self-healing tunnel script.
 
 ## 6. Wire platinum to the box
 
@@ -152,83 +167,118 @@ python -c "from platinum.config import Config; c = Config(); print(c.settings['c
 ```
 Expected: prints both URLs.
 
-## 7. Dry-run the keyframe command
+## 7. Run workflow probes (S6.3 first run only)
+
+S6.3 added FluxGuidance + ModelSamplingFlux nodes to the workflow. Before
+the full Cask validation in Step 8, run two diagnostic probes to confirm
+the rebuild produces detailed subjects (the S6.2 issue was mood-only renders
+with no recognizable subjects).
+
+### 7a. Probe A: cfg=1.0 alone (~3 min)
+
+This probe temporarily removes the new nodes to isolate whether `cfg=1.0`
+alone fixes the issue. If it does, the workflow rebuild was over-engineered
+and we can ship a simpler config.
+
+On the box, edit the workflow JSON to point KSampler.model back at node 1
+and KSampler.positive back at node 3 (skipping nodes 10 and 11). Keep cfg=1.0.
 
 ```bash
-python -m platinum keyframes <CASK_STORY_ID> --scenes 0,7,15 --dry-run
+# (One-line sed or inline Python -- the implementer chose at runtime)
+ssh root@<HOST> -p <PORT> 'cd /workspace/platinum && \
+  python scripts/keyframe_quality_smoke.py \
+    --prompt "<Tuscan vineyard prompt>" --label tuscan-A \
+    --output-dir /tmp/smoke-A
+  python scripts/keyframe_quality_smoke.py \
+    --prompt "<Cask scene 1 chiaroscuro prompt>" --label cask1-A \
+    --output-dir /tmp/smoke-A'
 ```
 
-Expected:
-```
-Would generate keyframes for scenes [0, 7, 15] of story <CASK_STORY_ID>
-  comfy   = http://<HOST>:8188
-  scorer  = http://<HOST>:8189
-```
-Exit code 0. If the host URLs are blank: re-check Step 6 (`.env` not loaded —
-ensure you're in the project root or the file is at `secrets/.env`).
+scp the 6 PNGs locally and eye-check:
+- Tuscan: vineyard rendered? cypress trees? farmhouse? Or yellow/dark blob?
+- Cask 1: nobleman + goblet + furniture? Or amber smudge in black?
 
-## 8. Run for real
+### 7b. Probe B: full reference (only if 7a inadequate)
 
-### 8a. Cask regression smoke (~4 min)
+If 7a's outputs are mood-only blobs, restore Phase 1's full reference workflow:
 
 ```bash
+ssh root@<HOST> -p <PORT> 'cd /workspace/platinum && \
+  git checkout config/workflows/flux_dev_keyframe.json && \
+  python scripts/keyframe_quality_smoke.py \
+    --prompt "<Tuscan>" --label tuscan-B --output-dir /tmp/smoke-B
+  python scripts/keyframe_quality_smoke.py \
+    --prompt "<Cask 1>" --label cask1-B --output-dir /tmp/smoke-B'
+```
+
+Eye-check 6 more PNGs. If 7b STILL produces mood-only output, the workflow
+hypothesis is wrong; halt session and open a new diagnostic ladder (likely
+visual_prompts revision, or escape to flux_pro_api).
+
+**Decision:** ship the FULL REFERENCE workflow regardless of which probe wins
+the eye-check. Probe A is a diagnostic, not a config we'd ship — "cfg=1.0
+with no FluxGuidance" gives Flux zero guidance signal.
+
+## 8. Cask 1/8/16 validation + threshold calibration
+
+### 8a. Reset + Cask validation (~6 min)
+
+Phase 2 must re-run scenes 1, 8, 16 against the rebuilt workflow. The
+orchestrator skips scenes whose `keyframe_path` is already set, so we
+need to clear stale state from S6.2 Phase 2:
+
+```bash
+# scp the local Cask story.json to the box (avoids re-paying Claude $1
+# to re-run platinum adapt; visual_prompts are deterministic-enough).
+scp -P <PORT> \
+    data/stories/<CASK_STORY_ID>/story.json \
+    root@<HOST>:/workspace/platinum/data/stories/<CASK_STORY_ID>/story.json
+
+# Reset stale keyframe state.
+ssh root@<HOST> -p <PORT> \
+    'cd /workspace/platinum && \
+     python scripts/reset_scene_keyframes.py <CASK_STORY_ID> \
+       --scenes 1,8,16 --delete-files'
+
+# Run the actual keyframe stage.
 time python -m platinum keyframes <CASK_STORY_ID> --scenes 1,8,16 \
     2>&1 | tee /tmp/cask-smoke.log
 ```
 
-Expected: 3 progress lines per scene, 3 score + brightness lines per scene,
-final summary print, exit 0. Wall-clock ~4 min on A6000 (3 scenes x 3
-candidates x ~25s/Flux + 9 x ~50ms LAION + 9 x brightness checks).
+Expected: 9 PNGs (3 candidates x 3 scenes), all passing brightness AND
+subject gates, LAION 5.5-7+, ~0-2 fallbacks total, exit 0. Wall-clock
+~6 min on A6000.
 
-Verify artifacts:
-```bash
-ls -lh data/stories/<CASK_STORY_ID>/keyframes/scene_{001,008,016}/
-```
-Expected: 9 PNGs, ~150-300 KB each, mean_rgb >= 20 each (verify via
-`python -c "from PIL import Image; import numpy as np; ..."` if needed).
+### 8b. Threshold calibration
 
-Verify story.json was updated:
+Print per-candidate edge densities to tune `subject_min_edge_density` for
+atmospheric_horror:
+
 ```bash
 python -c "
-from platinum.models.story import Story
 from pathlib import Path
-import os
-cask = os.environ.get('CASK_STORY_ID')
-s = Story.load(Path(f'data/stories/{cask}/story.json'))
-for i in (1, 8, 16):
-    print(s.scenes[i].keyframe_path, s.scenes[i].keyframe_scores,
-          s.scenes[i].validation.get('keyframe_selected_via_fallback'))
+from platinum.utils.validate import check_image_subject
+for p in sorted(Path('data/stories/<CASK_STORY_ID>/keyframes').glob('scene_*/candidate_*.png')):
+    r = check_image_subject(p, min_edge_density=0.0)
+    print(f'{p}  edge_density={r.metric:.4f}')
 "
 ```
-Expected: each line shows a real path + 3 floats + a bool.
 
-### 8b. Bright-probe smoke (~3 min)
-
-```bash
-python scripts/keyframe_quality_smoke.py \
-    --prompt "sunlit Tuscan vineyard at golden hour, rolling hills covered in vine rows, cypress trees standing dark against amber sky, dust motes in slanting warm light, ancient stone farmhouse in the distance, rich saturated greens and golds, oil painting quality, fine film grain, painterly brushwork" \
-    --label tuscan-vineyard \
-    --output-dir /tmp/smoke
-
-python scripts/keyframe_quality_smoke.py \
-    --prompt "snowy alpine peak at dawn, jagged crystalline ice formations catching first light, vast white slopes under pale blue-pink sky, distant clouds bathed in cold rose-gold, sharp shadow detail, cobalt blue ice caves glinting, oil painting quality, fine film grain, atmospheric clarity" \
-    --label alpine-peak \
-    --output-dir /tmp/smoke
-```
-
-Expected: per-prompt table with 3 candidates, all passing brightness,
-LAION scores 5.5-7+, mean_rgb ~120-180.
+If a viable Cask 1 scores edge_density 0.015 (below the 0.020 floor), drop
+the floor for atmospheric_horror to 0.012. If a non-viable candidate scores
+0.025, raise to 0.030. Edit `config/tracks/atmospheric_horror.yaml` locally
+and commit.
 
 ## 9. Eye-check (~1 min)
 
-Open the 15 PNGs (9 Cask regression + 6 bright probe) and sanity-check:
+Open the 9 Cask PNGs (3 scenes x 3 candidates from Step 8a) and sanity-check:
 
 ```bash
 # Windows
-explorer data/stories/<CASK_STORY_ID>/keyframes/scene_000
+explorer data/stories/<CASK_STORY_ID>/keyframes/scene_001
 
 # macOS / Linux
-open data/stories/<CASK_STORY_ID>/keyframes/scene_000
+open data/stories/<CASK_STORY_ID>/keyframes/scene_001
 ```
 
 Look for:
@@ -243,18 +293,26 @@ Look for:
   from Step 8 should look subjectively better than the rejected ones.
   If the selection seems random, the LAION model may not be discriminating
   well — record the example for future tuning.
+- **Closure criterion (≥2 of 3 viable):** if at least 2 of the 3 Cask scenes
+  (1, 8, 16) show recognizable subjects on eye-check, ship S6.3. If 0 or 1
+  are viable, S6.3 doesn't close — escalate to S6.4 (visual_prompts revision).
 
-## 10. Tear down -- SKIP for Session 6.2
+## 10. Tear down
 
-Session 7 ("full Cask 16-scene keyframe run") begins immediately after S6.2
-and reuses this box. Leave the instance running. ComfyUI + score_server in
-the tmux session continue to serve.
+S6.3 closes with explicit teardown. S7 spins a fresh box.
 
-Reminder: tear down at the END of Session 7 with `vastai destroy <ID>`.
-S7's design captures this in its closeout checklist.
+```bash
+vastai destroy instance <ID>
+```
 
-If Session 7 is unexpectedly delayed >24h, tear down anyway -- idle cost
-($0.60-0.90/hr * 24h = $14-22) exceeds re-provisioning cost ($0.30 + 30 min).
+Verify all rentals are cleaned up:
+```bash
+vastai show instances
+```
+
+Both rentals (Probe rental from Step 7 and Cask validation rental from Step 8)
+should be destroyed. S7 begins from a clean slate to limit hang exposure
+across rentals.
 
 ## 11. Commit smoke artifacts
 
@@ -379,20 +437,17 @@ months later for Sessions 8/9/10/13.)
   `candidate_*.png` is essentially black (mean RGB ~0-3 out of 255 per
   channel; LAION still scores them ~3.9-4.6 because the MLP head
   doesn't penalise low-content imagery hard enough to halt selection).
-  [RESOLVED IN S6.2 -- A6000 fp16; preserved for historical context]
-  → **Cause:** The FP8 + `--cpu-vae` flag stack we use to fit Flux on a
-  32GB / 24GB RTX 4090 collapses output for very dark prompts (the Cask
-  story is catacombs / wine cellar / candlelit walls + a strong
-  negative_prompt against bright daylight). FP8 e4m3fn UNet output
-  decoded on CPU VAE has precision drift that pushes already-dark
-  scenes to all-black.
-  → **Fix:** None at the smoke layer -- the pipeline is functioning
-  correctly (gen + score + select + persist all succeed). Real fix
-  options for future runs: (a) rent a larger box (64GB RAM + A6000
-  48GB) so we can drop the FP8 + cpu-vae flags, (b) use Comfy-Org's
-  pre-quantized FP8 Flux variant (built for FP8 sampling), (c) raise
-  the LAION threshold so degenerate outputs trigger a halt instead of
-  a fallback selection. Documented for Session 6.2 retro.
+  [ROOT CAUSE WAS WORKFLOW, NOT FP8 -- FIXED IN S6.3 commit <find via git log>; preserved as cautionary tale]
+  → **Cause:** S6.2 initially hypothesized FP8 quantization, but S6.2 Phase 2
+  reproduced the same black-PNG output on A6000 fp16 (no FP8). The true root
+  cause was the missing `FluxGuidance` + `ModelSamplingFlux` nodes in the
+  Flux workflow. Without those nodes, Flux produces mood-only renders with
+  zero subject detail for dark scenes like Cask catacombs.
+  → **Fix:** S6.3 rebuild added `FluxGuidance` + `ModelSamplingFlux` nodes
+  with `KSampler.cfg=1.0`. This forces Flux to render detailed subjects.
+  The FP8 + `--cpu-vae` flag stack was never the problem -- merely a red
+  herring chased by misdiagnosis. The "Fix options" list below is now
+  historical, kept as a reminder of the diagnostic blind alley.
 
 - **Symptom:** `--scenes 0,7,15` run starts, processes scene index 7,
   then halts. Scene index 0 never appears in the log; scene index 15
@@ -484,8 +539,12 @@ months later for Sessions 8/9/10/13.)
 
 ## Reference
 
-- Design doc: `docs/plans/2026-04-25-session-6.1-keyframe-live-smoke-design.md`
-- Plan doc: `docs/plans/2026-04-25-session-6.1-keyframe-live-smoke-plan.md`
+- S6.1 design doc: `docs/plans/2026-04-25-session-6.1-keyframe-live-smoke-design.md`
+- S6.1 plan doc: `docs/plans/2026-04-25-session-6.1-keyframe-live-smoke-plan.md`
+- S6.3 design doc: `docs/plans/2026-04-26-session-6.3-flux-workflow-rebuild-design.md`
+- S6.3 plan doc: `docs/plans/2026-04-26-session-6.3-flux-workflow-rebuild-plan.md`
 - score_server source: `scripts/score_server/`
 - Provisioning script: `scripts/vast_setup.sh`
+- Pre-flight script: `scripts/preflight_check.py`
+- Reset script: `scripts/reset_scene_keyframes.py`
 - CLI command: `src/platinum/cli.py` — `keyframes`
