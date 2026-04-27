@@ -53,7 +53,7 @@
     "class_type": "KSampler",
     "inputs": {
       "seed": 0,
-      "steps": 30,
+      "steps": 60,
       "cfg": 1.0,
       "sampler_name": "dpmpp_2m",
       "scheduler": "karras",
