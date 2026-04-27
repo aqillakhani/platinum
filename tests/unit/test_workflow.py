@@ -157,7 +157,7 @@ def test_flux_dev_workflow_uses_dpmpp_2m_karras_30steps() -> None:
       sampler_name=dpmpp_2m + scheduler=karras -- community-validated for
         Flux Dev; produces sharper detail than ComfyUI's euler/simple default.
       steps=30 -- upper-mid range for Flux; diminishing returns past ~30.
-      cfg=3.5 -- BFL's trained value; higher ranges induce rigid output.
+      cfg=1.0 -- reduced from 3.5 in S6.3; guidance moved to FluxGuidance node.
     """
     from platinum.utils.workflow import load_workflow
 
@@ -170,7 +170,7 @@ def test_flux_dev_workflow_uses_dpmpp_2m_karras_30steps() -> None:
     assert ksampler_inputs["sampler_name"] == "dpmpp_2m"
     assert ksampler_inputs["scheduler"] == "karras"
     assert ksampler_inputs["steps"] == 30
-    assert ksampler_inputs["cfg"] == 3.5
+    assert ksampler_inputs["cfg"] == 1.0
 
 
 def test_inject_sets_model_sampling_flux_width_height() -> None:
@@ -220,3 +220,41 @@ def test_inject_works_without_model_sampling_flux_role() -> None:
     }
     out = inject(workflow, prompt="x", negative_prompt="", seed=42)
     assert out["5"]["inputs"]["width"] == 1024
+
+
+def test_rebuilt_flux_workflow_has_required_roles_and_cfg_1() -> None:
+    """Post-S6.3, the workflow has FluxGuidance + ModelSamplingFlux, cfg=1.0."""
+    from pathlib import Path
+
+    from platinum.utils.workflow import load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    roles = wf.get("_meta", {}).get("role", {})
+    # Existing roles preserved
+    for role in ("positive_prompt", "negative_prompt", "empty_latent",
+                 "sampler", "save_image"):
+        assert role in roles, f"role {role!r} missing"
+    # New roles registered
+    assert roles["model_sampling_flux"] == "10"
+    assert roles["flux_guidance"] == "11"
+
+    # KSampler.cfg = 1.0 (was 3.5 in S6.2)
+    sampler_id = roles["sampler"]
+    assert wf[sampler_id]["inputs"]["cfg"] == 1.0
+    # KSampler.model now points at ModelSamplingFlux output
+    assert wf[sampler_id]["inputs"]["model"] == ["10", 0]
+    # KSampler.positive now points at FluxGuidance output
+    assert wf[sampler_id]["inputs"]["positive"] == ["11", 0]
+
+    # Node 10: ModelSamplingFlux exists with proper shifts
+    assert wf["10"]["class_type"] == "ModelSamplingFlux"
+    assert wf["10"]["inputs"]["max_shift"] == 1.15
+    assert wf["10"]["inputs"]["base_shift"] == 0.5
+    assert wf["10"]["inputs"]["model"] == ["1", 0]
+
+    # Node 11: FluxGuidance exists with guidance=3.5
+    assert wf["11"]["class_type"] == "FluxGuidance"
+    assert wf["11"]["inputs"]["guidance"] == 3.5
+    assert wf["11"]["inputs"]["conditioning"] == ["3", 0]

@@ -7,7 +7,9 @@
       "negative_prompt": "4",
       "empty_latent": "5",
       "sampler": "6",
-      "save_image": "8"
+      "save_image": "8",
+      "model_sampling_flux": "10",
+      "flux_guidance": "11"
     }
   },
   "1": {
@@ -52,12 +54,12 @@
     "inputs": {
       "seed": 0,
       "steps": 30,
-      "cfg": 3.5,
+      "cfg": 1.0,
       "sampler_name": "dpmpp_2m",
       "scheduler": "karras",
       "denoise": 1.0,
-      "model": ["1", 0],
-      "positive": ["3", 0],
+      "model": ["10", 0],
+      "positive": ["11", 0],
       "negative": ["4", 0],
       "latent_image": ["5", 0]
     }
@@ -80,6 +82,23 @@
     "class_type": "VAELoader",
     "inputs": {
       "vae_name": "ae.safetensors"
+    }
+  },
+  "10": {
+    "class_type": "ModelSamplingFlux",
+    "inputs": {
+      "max_shift": 1.15,
+      "base_shift": 0.5,
+      "width": 1024,
+      "height": 1024,
+      "model": ["1", 0]
+    }
+  },
+  "11": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "guidance": 3.5,
+      "conditioning": ["3", 0]
     }
   }
 }
