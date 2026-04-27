@@ -9,7 +9,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib  # noqa: F401 (used in Task 17 for workflow signature)
+import hashlib
 import json
 import os
 import sys
@@ -87,6 +87,13 @@ def _check_score_server_alive(host: str) -> tuple[bool, str]:
         return False, f"score-server unreachable at {host}: {exc!r}"
 
 
+def _workflow_signature(path: Path) -> str:
+    """sha256 of canonical-form JSON (sorted keys); short hex prefix."""
+    data = json.loads(Path(path).read_text())
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(canonical).hexdigest()[:12]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -123,6 +130,8 @@ def main() -> int:
         if not passed:
             return 1
 
+    sig = _workflow_signature(args.workflow)
+    print(f"  [INFO] workflow signature: {sig}", flush=True)
     print("preflight OK", flush=True)
     return 0
 

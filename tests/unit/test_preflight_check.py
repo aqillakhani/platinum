@@ -162,3 +162,21 @@ def test_check_score_server_503(monkeypatch):
     monkeypatch.setattr(httpx, "Client", _MockClient)
     ok, msg = _check_score_server_alive("http://test:8189")
     assert ok is False
+
+
+def test_workflow_signature_stable(tmp_path):
+    """sha256 of canonical-form JSON is stable for equivalent input."""
+    import json
+
+    from preflight_check import _workflow_signature
+
+    wf1 = {"a": 1, "b": [1, 2, 3]}
+    wf2 = {"b": [1, 2, 3], "a": 1}                    # different key order
+    p1 = tmp_path / "wf1.json"
+    p2 = tmp_path / "wf2.json"
+    p1.write_text(json.dumps(wf1))
+    p2.write_text(json.dumps(wf2))
+    sig1 = _workflow_signature(p1)
+    sig2 = _workflow_signature(p2)
+    assert sig1 == sig2
+    assert len(sig1) == 12                            # short hash
