@@ -61,6 +61,32 @@ def _check_workflow_json(path: Path) -> tuple[bool, str]:
     return True, f"workflow JSON OK ({len(data)} nodes, {len(roles)} roles)"
 
 
+def _check_comfyui_alive(host: str) -> tuple[bool, str]:
+    """GET /system_stats to verify ComfyUI is responding."""
+    try:
+        with httpx.Client(timeout=5) as client:
+            resp = client.get(f"{host}/system_stats")
+        if resp.status_code != 200:
+            return False, f"ComfyUI {host}: {resp.status_code}"
+        stats = resp.json()
+        gpu_name = (stats.get("devices") or [{}])[0].get("name", "?")
+        return True, f"ComfyUI alive at {host} (GPU={gpu_name})"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"ComfyUI unreachable at {host}: {exc!r}"
+
+
+def _check_score_server_alive(host: str) -> tuple[bool, str]:
+    """GET /health to verify score-server is responding."""
+    try:
+        with httpx.Client(timeout=5) as client:
+            resp = client.get(f"{host}/health")
+        if resp.status_code != 200:
+            return False, f"score-server {host}: {resp.status_code}"
+        return True, f"score-server alive at {host}"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"score-server unreachable at {host}: {exc!r}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -70,13 +96,23 @@ def main() -> int:
     args = parser.parse_args()
 
     hf_token = os.environ.get("HF_TOKEN", "")
+    comfyui_host = os.environ.get("PLATINUM_COMFYUI_HOST", "")
+    aesthetics_host = os.environ.get("PLATINUM_AESTHETICS_HOST", "")
     if not hf_token:
         print("ERROR: HF_TOKEN not in env", file=sys.stderr)
+        return 2
+    if not comfyui_host:
+        print("ERROR: PLATINUM_COMFYUI_HOST not in env", file=sys.stderr)
+        return 2
+    if not aesthetics_host:
+        print("ERROR: PLATINUM_AESTHETICS_HOST not in env", file=sys.stderr)
         return 2
 
     checks = [
         ("HF token resolve",      lambda: _check_hf_token(hf_token)),
         ("Workflow JSON",         lambda: _check_workflow_json(args.workflow)),
+        ("ComfyUI alive",         lambda: _check_comfyui_alive(comfyui_host)),
+        ("Score-server alive",    lambda: _check_score_server_alive(aesthetics_host)),
     ]
     for label, fn in checks:
         t0 = time.monotonic()
@@ -87,7 +123,7 @@ def main() -> int:
         if not passed:
             return 1
 
-    print("preflight OK (partial: HF token + workflow only)", flush=True)
+    print("preflight OK", flush=True)
     return 0
 
 

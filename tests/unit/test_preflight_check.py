@@ -86,3 +86,79 @@ def test_check_workflow_json_missing_role(tmp_path):
     ok, msg = _check_workflow_json(p)
     assert ok is False
     assert "missing" in msg.lower()
+
+
+def test_check_comfyui_alive(monkeypatch):
+    import httpx
+    from preflight_check import _check_comfyui_alive
+
+    class _MockResponse:
+        status_code = 200
+        def json(self): return {"devices": [{"name": "RTX A6000"}]}
+
+    class _MockClient:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url): return _MockResponse()
+
+    monkeypatch.setattr(httpx, "Client", _MockClient)
+    ok, msg = _check_comfyui_alive("http://test:8188")
+    assert ok is True
+    assert "RTX A6000" in msg
+
+
+def test_check_comfyui_503(monkeypatch):
+    import httpx
+    from preflight_check import _check_comfyui_alive
+
+    class _MockResponse:
+        status_code = 503
+        def json(self): return {}
+
+    class _MockClient:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url): return _MockResponse()
+
+    monkeypatch.setattr(httpx, "Client", _MockClient)
+    ok, msg = _check_comfyui_alive("http://test:8188")
+    assert ok is False
+    assert "503" in msg
+
+
+def test_check_score_server_alive(monkeypatch):
+    import httpx
+    from preflight_check import _check_score_server_alive
+
+    class _MockResponse:
+        status_code = 200
+
+    class _MockClient:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url): return _MockResponse()
+
+    monkeypatch.setattr(httpx, "Client", _MockClient)
+    ok, msg = _check_score_server_alive("http://test:8189")
+    assert ok is True
+
+
+def test_check_score_server_503(monkeypatch):
+    import httpx
+    from preflight_check import _check_score_server_alive
+
+    class _MockResponse:
+        status_code = 503
+
+    class _MockClient:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url): return _MockResponse()
+
+    monkeypatch.setattr(httpx, "Client", _MockClient)
+    ok, msg = _check_score_server_alive("http://test:8189")
+    assert ok is False
