@@ -150,13 +150,15 @@ def test_flux_dev_keyframe_workflow_loads_and_injects() -> None:
     assert out[save_id]["inputs"]["filename_prefix"] == "scene_001_candidate_0"
 
 
-def test_flux_dev_workflow_uses_dpmpp_2m_karras_30steps() -> None:
+def test_flux_dev_workflow_uses_dpmpp_2m_karras_60steps() -> None:
     """The Flux Dev keyframe workflow uses the BFL-recommended sampler combo.
 
     Why these values:
       sampler_name=dpmpp_2m + scheduler=karras -- community-validated for
         Flux Dev; produces sharper detail than ComfyUI's euler/simple default.
-      steps=30 -- upper-mid range for Flux; diminishing returns past ~30.
+      steps=60 -- bumped from 30 in S6.3 Phase 2 (commit 11113d0); selected
+        LAION moved 5.7-6.2 -> 6.2-6.5 on Cask 8/16 with cleaner subject
+        definition. +25s per candidate on A6000, still within budget.
       cfg=1.0 -- reduced from 3.5 in S6.3; guidance moved to FluxGuidance node.
     """
     from platinum.utils.workflow import load_workflow
@@ -169,7 +171,7 @@ def test_flux_dev_workflow_uses_dpmpp_2m_karras_30steps() -> None:
     ksampler_inputs = wf["6"]["inputs"]
     assert ksampler_inputs["sampler_name"] == "dpmpp_2m"
     assert ksampler_inputs["scheduler"] == "karras"
-    assert ksampler_inputs["steps"] == 30
+    assert ksampler_inputs["steps"] == 60
     assert ksampler_inputs["cfg"] == 1.0
 
 

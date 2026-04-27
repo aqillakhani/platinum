@@ -57,7 +57,7 @@ def test_all_tracks_have_quality_gates(track_id: str) -> None:
 @pytest.mark.parametrize(
     "track_name, expected_floor",
     [
-        ("atmospheric_horror", 20.0),
+        ("atmospheric_horror", 5.0),
         ("folktales_world_myths", 60.0),
         ("childrens_fables", 80.0),
         ("scifi_concept", 40.0),
@@ -68,7 +68,8 @@ def test_track_yaml_carries_brightness_floor(track_name: str, expected_floor: fl
     """Each track YAML must declare its brightness floor under quality_gates.
 
     Floors are calibrated per-track:
-      atmospheric_horror -- chiaroscuro tolerated; 20 lets candle scenes pass.
+      atmospheric_horror -- chiaroscuro tolerated; recalibrated S6.3 Phase 2
+        from 20 -> 5 (was rejecting legitimate 5-10 mean_rgb chiaroscuro).
       folktales / slice_of_life -- daylight typical; 60 catches degenerate output.
       scifi_concept -- mixed (cosmic darkness + bright tech); 40 splits the diff.
       childrens_fables -- bright/saturated; 80 enforces the cheerful palette.
@@ -82,7 +83,7 @@ def test_track_yaml_carries_brightness_floor(track_name: str, expected_floor: fl
 @pytest.mark.parametrize(
     "track,expected_subject",
     [
-        ("atmospheric_horror", 0.020),
+        ("atmospheric_horror", 0.005),
         ("folktales_world_myths", 0.030),
         ("childrens_fables", 0.040),
         ("scifi_concept", 0.030),
