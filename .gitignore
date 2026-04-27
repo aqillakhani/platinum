@@ -32,6 +32,9 @@ data/stories/*/clips/
 data/stories/*/audio/
 data/stories/*/output/
 data/stories/*/subtitles/
+# Smoke run artifacts (PNGs scp'd from vast.ai for eye-check; never committed)
+data/smoke/
+data/tmp/
 !data/stories/.gitkeep
 !data/logs/.gitkeep
 
