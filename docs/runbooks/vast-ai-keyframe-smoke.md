@@ -543,6 +543,7 @@ months later for Sessions 8/9/10/13.)
 - S6.1 plan doc: `docs/plans/2026-04-25-session-6.1-keyframe-live-smoke-plan.md`
 - S6.3 design doc: `docs/plans/2026-04-26-session-6.3-flux-workflow-rebuild-design.md`
 - S6.3 plan doc: `docs/plans/2026-04-26-session-6.3-flux-workflow-rebuild-plan.md`
+- Rebuilt Flux Dev workflow: `config/workflows/flux_dev_keyframe.json`
 - score_server source: `scripts/score_server/`
 - Provisioning script: `scripts/vast_setup.sh`
 - Pre-flight script: `scripts/preflight_check.py`
