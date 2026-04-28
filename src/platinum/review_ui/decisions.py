@@ -48,3 +48,19 @@ def apply_regenerate(story: Story, scene_id: str) -> Story:
     scene.keyframe_path = None
     scene.review_status = ReviewStatus.REGENERATE
     return story
+
+
+def apply_reject(story: Story, scene_id: str, *, feedback: str) -> Story:
+    """Reject scene with textual feedback for `--rerun-rejected` Claude regen.
+
+    Clears visual_prompt and keyframe_path (visual_prompts will rewrite the
+    prompt; keyframe_generator re-renders from the new prompt).
+    """
+    if not feedback or not feedback.strip():
+        raise ValueError("feedback is required and must not be blank")
+    scene = _find_scene(story, scene_id)
+    scene.review_feedback = feedback.strip()
+    scene.visual_prompt = None
+    scene.keyframe_path = None
+    scene.review_status = ReviewStatus.REJECTED
+    return story

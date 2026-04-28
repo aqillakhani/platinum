@@ -105,3 +105,31 @@ def test_apply_regenerate_preserves_visual_prompt() -> None:
     original_prompt = story.scenes[0].visual_prompt
     decisions.apply_regenerate(story, "scene_001")
     assert story.scenes[0].visual_prompt == original_prompt
+
+
+def test_apply_reject_writes_feedback() -> None:
+    story = _make_story()
+    decisions.apply_reject(story, "scene_001", feedback="too dark; need amber lighting")
+    assert story.scenes[0].review_feedback == "too dark; need amber lighting"
+
+
+def test_apply_reject_clears_keyframe_path_and_visual_prompt() -> None:
+    story = _make_story()
+    decisions.apply_reject(story, "scene_001", feedback="bad")
+    assert story.scenes[0].keyframe_path is None
+    assert story.scenes[0].visual_prompt is None
+
+
+def test_apply_reject_sets_status_REJECTED() -> None:
+    story = _make_story()
+    decisions.apply_reject(story, "scene_001", feedback="bad")
+    assert story.scenes[0].review_status == ReviewStatus.REJECTED
+
+
+def test_apply_reject_empty_feedback_raises() -> None:
+    """A reject with no feedback is meaningless -- guard against accidental empty submissions."""
+    story = _make_story()
+    with pytest.raises(ValueError, match="feedback"):
+        decisions.apply_reject(story, "scene_001", feedback="")
+    with pytest.raises(ValueError, match="feedback"):
+        decisions.apply_reject(story, "scene_001", feedback="   ")
