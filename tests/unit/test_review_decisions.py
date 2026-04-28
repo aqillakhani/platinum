@@ -4,7 +4,7 @@ S7 §3.2 / §6.2.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -26,7 +26,7 @@ def _make_story(*, n_scenes: int = 3, all_have_keyframes: bool = True) -> Story:
         title="Test",
         author="Test",
         raw_text="hello",
-        fetched_at=datetime.now(timezone.utc),
+        fetched_at=datetime.now(UTC),
         license="PD-US",
     )
     adapted = Adapted(

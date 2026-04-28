@@ -10,14 +10,9 @@ and S6 (keyframe_generator.generate_for_scene).
 """
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
-
 from platinum.models.story import (
     ReviewStatus,
     Scene,
-    StageRun,
-    StageStatus,
     Story,
 )
 
