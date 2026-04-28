@@ -355,16 +355,57 @@ def render(
     _stub("render", "Sessions 6-14 (render pipeline)")
 
 
-@app.command()
-def review(
-    target: str = typer.Argument(..., help="What to review: 'keyframes' or 'final'."),
+# ---------------------------------------------------------------------------
+# review sub-app (S7 keyframes; S15 will add `final`)
+# ---------------------------------------------------------------------------
+
+review_app = typer.Typer(
+    name="review",
+    help="Launch a review UI gate (Flask). 'keyframes' after stage 6.",
+    no_args_is_help=True,
+)
+app.add_typer(review_app, name="review")
+
+
+@review_app.command("keyframes")
+def review_keyframes(
     story: str = typer.Argument(..., help="Story id."),
+    port: int = typer.Option(5001, "--port", "-p", help="Flask binding port."),
+    no_browser: bool = typer.Option(
+        False, "--no-browser", help="Skip webbrowser.open()."
+    ),
+    threshold: float = typer.Option(
+        6.0, "--threshold", "-t",
+        help="Default value for the batch-approve threshold input.",
+    ),
 ) -> None:
-    """Launch a review UI gate (Flask). 'keyframes' after stage 6, 'final' after stage 14."""
-    if target not in {"keyframes", "final"}:
-        console.print(f"[red]Unknown review target:[/red] {target} (use 'keyframes' or 'final')")
+    """Launch the keyframe review UI for a story.
+
+    Local 127.0.0.1 only. Loads the story from data/stories/<id>/story.json
+    and serves a Flask app with per-scene Approve / Reject / Regenerate
+    actions.
+    """
+    import webbrowser
+
+    from platinum.review_ui.app import create_app
+
+    cfg = Config()
+    story_path = cfg.stories_dir / story / "story.json"
+    if not story_path.exists():
+        console.print(
+            f"[red]Story not found:[/red] {story} (looked in {story_path})"
+        )
         raise typer.Exit(code=1)
-    _stub("review", "Sessions 7 / 15 (review UIs)")
+
+    flask_app = create_app(story_id=story, data_root=cfg.stories_dir)
+    flask_app.config["DEFAULT_THRESHOLD"] = threshold
+
+    url = f"http://127.0.0.1:{port}/"
+    if not no_browser:
+        webbrowser.open(url)
+
+    console.print(f"[green]Review UI listening on {url}[/green] (Ctrl+C to stop)")
+    flask_app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
 
 
 @app.command()
