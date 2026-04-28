@@ -75,3 +75,34 @@ def test_health_check_route_returns_200(story_factory, tmp_path: Path) -> None:
         resp = client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json == {"status": "ok"}
+
+
+def test_get_api_story_returns_snapshot(story_factory, tmp_path: Path) -> None:
+    from platinum.review_ui.app import create_app
+
+    story, _ = story_factory(n_scenes=3)
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(f"/api/story/{story.id}")
+    assert resp.status_code == 200
+    data = resp.json
+    assert data["id"] == story.id
+    assert len(data["scenes"]) == 3
+    assert data["rollup"]["pending"] == 3
+    assert data["rollup"]["approved"] == 0
+
+
+def test_get_api_story_404_on_missing(story_factory, tmp_path: Path) -> None:
+    from platinum.review_ui.app import create_app
+
+    story, _ = story_factory()
+    app = create_app(
+        story_id="story_doesnt_exist",
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get("/api/story/story_doesnt_exist")
+    assert resp.status_code == 404
