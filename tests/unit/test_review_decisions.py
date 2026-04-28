@@ -14,6 +14,7 @@ from platinum.models.story import (
     ReviewStatus,
     Scene,
     Source,
+    StageStatus,
     Story,
 )
 from platinum.review_ui import decisions
@@ -193,3 +194,59 @@ def test_apply_batch_approve_above_skips_no_keyframe_scenes() -> None:
     story = _make_story(n_scenes=1, all_have_keyframes=False)
     decisions.apply_batch_approve_above(story, threshold=0.0)
     assert story.scenes[0].review_status == ReviewStatus.PENDING
+
+
+def test_finalize_no_op_when_pending_remains() -> None:
+    story = _make_story(n_scenes=3)
+    decisions.apply_approve(story, "scene_001")
+    decisions.apply_approve(story, "scene_002")
+    # scene_003 still PENDING
+    decisions.finalize_review_if_complete(story)
+    assert story.latest_stage_run("keyframe_review") is None
+    assert "keyframe_review" not in story.review_gates
+
+
+def test_finalize_appends_stagerun_when_all_approved() -> None:
+    story = _make_story(n_scenes=3)
+    for s in story.scenes:
+        decisions.apply_approve(story, s.id)
+    decisions.finalize_review_if_complete(story)
+    run = story.latest_stage_run("keyframe_review")
+    assert run is not None
+    assert run.status == StageStatus.COMPLETE
+    assert run.completed_at is not None
+
+
+def test_finalize_writes_review_gate() -> None:
+    story = _make_story(n_scenes=3)
+    for s in story.scenes:
+        decisions.apply_approve(story, s.id)
+    decisions.finalize_review_if_complete(story)
+    gate = story.review_gates.get("keyframe_review")
+    assert gate is not None
+    assert gate["approved_count"] == 3
+
+
+def test_finalize_idempotent() -> None:
+    """Running finalize twice on an already-final story does NOT append a second StageRun."""
+    story = _make_story(n_scenes=2)
+    for s in story.scenes:
+        decisions.apply_approve(story, s.id)
+    decisions.finalize_review_if_complete(story)
+    decisions.finalize_review_if_complete(story)
+    runs = [r for r in story.stages if r.stage == "keyframe_review"]
+    assert len(runs) == 1
+
+
+def test_finalize_records_regen_total_in_artifacts() -> None:
+    story = _make_story(n_scenes=2)
+    decisions.apply_regenerate(story, "scene_001")  # bump 0->1
+    decisions.apply_regenerate(story, "scene_001")  # bump 1->2
+    decisions.apply_regenerate(story, "scene_002")  # bump 0->1
+    # Now approve them -- pretend GPU re-render happened in between
+    for s in story.scenes:
+        s.review_status = ReviewStatus.APPROVED
+    decisions.finalize_review_if_complete(story)
+    run = story.latest_stage_run("keyframe_review")
+    assert run is not None
+    assert run.artifacts["regen_total"] == 3

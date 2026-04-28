@@ -10,9 +10,14 @@ and S6 (keyframe_generator.generate_for_scene).
 """
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 from platinum.models.story import (
     ReviewStatus,
     Scene,
+    StageRun,
+    StageStatus,
     Story,
 )
 
@@ -104,4 +109,40 @@ def apply_batch_approve_above(story: Story, *, threshold: float) -> Story:
             continue
         if scene.keyframe_scores[selected_idx] >= threshold:
             scene.review_status = ReviewStatus.APPROVED
+    return story
+
+
+def finalize_review_if_complete(story: Story) -> Story:
+    """If every scene is APPROVED, append a COMPLETE StageRun for
+    'keyframe_review' (idempotent) and write the review_gates summary.
+    """
+    if not story.scenes:
+        return story
+    if any(s.review_status != ReviewStatus.APPROVED for s in story.scenes):
+        return story
+    # All approved. Check we haven't already finalized.
+    existing = story.latest_stage_run("keyframe_review")
+    if existing is not None and existing.status == StageStatus.COMPLETE:
+        return story  # idempotent
+
+    now = datetime.now()
+    regen_total = sum(s.regen_count for s in story.scenes)
+    artifacts: dict[str, Any] = {
+        "approved_count": len(story.scenes),
+        "regen_total": regen_total,
+    }
+    story.stages.append(
+        StageRun(
+            stage="keyframe_review",
+            status=StageStatus.COMPLETE,
+            started_at=now,
+            completed_at=now,
+            artifacts=dict(artifacts),
+        )
+    )
+    story.review_gates["keyframe_review"] = {
+        "completed_at": now.isoformat(),
+        "reviewer": "user",
+        **artifacts,
+    }
     return story
