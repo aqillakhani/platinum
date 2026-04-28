@@ -194,6 +194,10 @@ def adapt(
     track: str | None = typer.Option(
         None, "--track", "-t", help="Restrict to one track id."
     ),
+    rerun_rejected: bool = typer.Option(
+        False, "--rerun-rejected",
+        help="Re-run visual_prompts for REJECTED scenes using review_feedback (S7).",
+    ),
 ) -> None:
     """Adapt curator-approved stories: narration -> scenes -> visual prompts.
 
@@ -204,7 +208,7 @@ def adapt(
     """
     import logging
 
-    from platinum.models.story import StageStatus, Story
+    from platinum.models.story import ReviewStatus, StageStatus, Story
     from platinum.pipeline.context import PipelineContext
     from platinum.pipeline.orchestrator import Orchestrator
     from platinum.pipeline.scene_breakdown import SceneBreakdownStage
@@ -212,6 +216,67 @@ def adapt(
     from platinum.pipeline.visual_prompts import VisualPromptsStage
 
     cfg = Config()
+
+    if rerun_rejected:
+        eligible_rejected: list[tuple[Story, set[int]]] = []
+        for story_dir in sorted(p for p in cfg.stories_dir.iterdir() if p.is_dir()):
+            story_json = story_dir / "story.json"
+            if not story_json.exists():
+                continue
+            try:
+                s = Story.load(story_json)
+            except Exception as exc:
+                console.print(f"[yellow]Skipping unreadable {story_dir.name}: {exc}[/yellow]")
+                continue
+            if story is not None and s.id != story:
+                continue
+            if track is not None and s.track != track:
+                continue
+            vp = s.latest_stage_run("visual_prompts")
+            if vp is None or vp.status != StageStatus.COMPLETE:
+                continue
+            rejected_indices = {sc.index for sc in s.scenes
+                                if sc.review_status == ReviewStatus.REJECTED}
+            if not rejected_indices:
+                continue
+            eligible_rejected.append((s, rejected_indices))
+
+        if not eligible_rejected:
+            console.print("[yellow]No rejected scenes found.[/yellow]")
+            raise typer.Exit(code=0)
+
+        ctx = PipelineContext(config=cfg, logger=logging.getLogger("platinum.adapt"))
+        for s, rejected_indices in eligible_rejected:
+            deviation_feedback = [
+                {
+                    "index": sc.index,
+                    "current_prompt": sc.visual_prompt or "(cleared)",
+                    "feedback": sc.review_feedback or "",
+                }
+                for sc in s.scenes
+                if sc.index in rejected_indices
+            ]
+            cfg.settings.setdefault("runtime", {})["scene_filter"] = rejected_indices
+            cfg.settings.setdefault("runtime", {})["deviation_feedback"] = deviation_feedback
+            console.print(
+                f"[cyan]Re-prompting {s.id} (scenes={sorted(rejected_indices)})...[/cyan]"
+            )
+            stage = VisualPromptsStage()
+            try:
+                asyncio.run(stage.run(s, ctx))
+            except Exception as exc:
+                console.print(f"[red]{s.id} failed: {exc}[/red]")
+                raise
+            # Save the mutated story back
+            s.save(cfg.stories_dir / s.id / "story.json")
+
+        # Clear the runtime knobs after the run so they don't affect later state
+        cfg.settings.get("runtime", {}).pop("scene_filter", None)
+        cfg.settings.get("runtime", {}).pop("deviation_feedback", None)
+
+        console.print(f"[green]Re-prompted {len(eligible_rejected)} story candidate(s).[/green]")
+        return
+
     eligible: list[Story] = []
     for story_dir in sorted(p for p in cfg.stories_dir.iterdir() if p.is_dir()):
         story_json = story_dir / "story.json"

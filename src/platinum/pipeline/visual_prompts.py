@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, ClassVar
 
-from platinum.models.story import Scene, Story
+from platinum.models.story import ReviewStatus, Scene, Story
 from platinum.pipeline.context import PipelineContext
 from platinum.pipeline.stage import Stage
 from platinum.utils.claude import (
@@ -51,6 +51,7 @@ VISUAL_PROMPTS_TOOL: dict[str, Any] = {
 
 def _build_request(
     *, story: Story, track_cfg: dict, prompts_dir: Path,
+    deviation_feedback: list | None = None,
 ) -> tuple[list[dict], list[dict]]:
     system = [
         {"type": "text", "text": render_template(
@@ -69,14 +70,23 @@ def _build_request(
                     {"index": s.index, "narration_text": s.narration_text}
                     for s in story.scenes
                 ],
+                "deviation_feedback": deviation_feedback,
             },
         )}
     ]
     return system, messages
 
 
-def _zip_into_scenes(story_scenes: list[Scene], tool_input: dict) -> list[Scene]:
-    """Mutate each Scene with visual_prompt + negative_prompt by index match.
+def _zip_into_scenes(
+    story_scenes: list[Scene], tool_input: dict,
+    *, scene_filter: set[int] | None = None,
+) -> list[Scene]:
+    """Mutate scenes with new visual_prompt + negative_prompt by index match.
+
+    When scene_filter is set, only apply to scenes whose index is in the
+    filter. For REJECTED scenes that get applied, also clear review_feedback
+    and keyframe_path and flip status to REGENERATE.
+
     Raises ClaudeProtocolError on count mismatch or missing scene index.
     """
     raw = tool_input.get("scenes", [])
@@ -92,8 +102,14 @@ def _zip_into_scenes(story_scenes: list[Scene], tool_input: dict) -> list[Scene]
             raise ClaudeProtocolError(
                 f"visual_prompts response missing scene index {scene.index}"
             )
+        if scene_filter is not None and scene.index not in scene_filter:
+            continue
         scene.visual_prompt = item["visual_prompt"]
         scene.negative_prompt = item["negative_prompt"]
+        if scene.review_status == ReviewStatus.REJECTED:
+            scene.review_status = ReviewStatus.REGENERATE
+            scene.review_feedback = None
+            scene.keyframe_path = None
         out.append(scene)
     return out
 
@@ -101,6 +117,8 @@ def _zip_into_scenes(story_scenes: list[Scene], tool_input: dict) -> list[Scene]
 async def visual_prompts(
     *, story: Story, track_cfg: dict, prompts_dir: Path,
     db_path: Path, recorder: Recorder | None = None,
+    scene_filter: set[int] | None = None,
+    deviation_feedback: list | None = None,
 ) -> tuple[list[Scene], ClaudeResult]:
     """Run the visual_prompts call. Mutates story.scenes in place
     (sets visual_prompt and negative_prompt per scene) and returns it
@@ -114,13 +132,14 @@ async def visual_prompts(
         )
     system, messages = _build_request(
         story=story, track_cfg=track_cfg, prompts_dir=prompts_dir,
+        deviation_feedback=deviation_feedback,
     )
     result = await claude_call(
         model=MODEL, system=system, messages=messages, tool=VISUAL_PROMPTS_TOOL,
         story_id=story.id, stage="visual_prompts",
         db_path=db_path, recorder=recorder,
     )
-    scenes = _zip_into_scenes(story.scenes, result.tool_input)
+    scenes = _zip_into_scenes(story.scenes, result.tool_input, scene_filter=scene_filter)
     return scenes, result
 
 
@@ -134,10 +153,16 @@ class VisualPromptsStage(Stage):
             )
         track_cfg = ctx.config.track(story.track)
         recorder = ctx.config.settings.get("test", {}).get("claude_recorder")
+        runtime = ctx.config.settings.get("runtime", {})
+        scene_filter_raw = runtime.get("scene_filter")
+        scene_filter = set(scene_filter_raw) if scene_filter_raw is not None else None
+        deviation_feedback = runtime.get("deviation_feedback")
         _, claude_result = await visual_prompts(
             story=story, track_cfg=track_cfg,
             prompts_dir=ctx.config.prompts_dir,
             db_path=ctx.db_path, recorder=recorder,
+            scene_filter=scene_filter,
+            deviation_feedback=deviation_feedback,
         )
         return {
             "model": claude_result.usage.model,

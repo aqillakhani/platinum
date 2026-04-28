@@ -34,4 +34,18 @@ SCENES
 {% for scene in scenes %}{{ scene.index }}. {{ scene.narration_text }}
 
 {% endfor %}
+{% if deviation_feedback %}
+
+DEVIATION FEEDBACK (reviewer flagged the following scenes for rewrite):
+
+{% for entry in deviation_feedback %}
+- Scene {{ entry.index }}
+  Current prompt: "{{ entry.current_prompt }}"
+  Feedback: {{ entry.feedback }}
+{% endfor %}
+
+For each flagged scene, address the feedback while keeping the scene's
+narration intent and the atmospheric_horror track aesthetic. Other scenes
+should be re-emitted unchanged from their current visual_prompts.
+{% endif %}
 Submit your prompts via the submit_visual_prompts tool.

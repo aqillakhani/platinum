@@ -132,6 +132,7 @@ def test_visual_prompts_template_includes_aesthetic_and_scenes() -> None:
                 {"index": 1, "narration_text": "It was a dark night."},
                 {"index": 2, "narration_text": "He went into the cellar."},
             ],
+            "deviation_feedback": None,
         },
     )
     assert "cinematic dark" in out
