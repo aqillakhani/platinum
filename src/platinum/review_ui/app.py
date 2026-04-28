@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, send_file
+from flask import Flask, abort, jsonify, redirect, render_template, send_file, url_for
 from werkzeug.security import safe_join
 
 from platinum.models.story import ReviewStatus, Story
@@ -88,6 +88,44 @@ def create_app(*, story_id: str, data_root: Path) -> Flask:
                     body["scene"] = sc.to_dict()
                     break
         return jsonify(body)
+
+    def _scene_relpath(scene) -> str:
+        """The keyframe_path is stored absolute or relative; return a relpath
+        usable in url_for('image', relpath=...). Falls back to filename."""
+        if scene.keyframe_path is None:
+            return ""
+        return f"scene_{scene.index:03d}/{Path(scene.keyframe_path).name}"
+
+    def _candidate_relpath(scene, idx: int) -> str:
+        return f"scene_{scene.index:03d}/candidate_{idx}.png"
+
+    def _selected_score(scene) -> float | None:
+        if scene.keyframe_path is None:
+            return None
+        try:
+            i = scene.keyframe_candidates.index(scene.keyframe_path)
+        except ValueError:
+            return None
+        if i >= len(scene.keyframe_scores):
+            return None
+        return scene.keyframe_scores[i]
+
+    @app.get("/")
+    def index():
+        return redirect(url_for("story", story_id=app.config["STORY_ID"]))
+
+    @app.get("/story/<story_id>")
+    def story(story_id: str):
+        story_obj = _load_story_or_404(app.config["DATA_ROOT"], story_id)
+        return render_template(
+            "keyframe_gallery.html",
+            story=story_obj,
+            rollup=_rollup(story_obj),
+            default_threshold=app.config.get("DEFAULT_THRESHOLD", 6.0),
+            scene_relpath=_scene_relpath,
+            candidate_relpath=_candidate_relpath,
+            selected_score_for=_selected_score,
+        )
 
     @app.post("/api/story/<story_id>/scene/<scene_id>/approve")
     def post_approve(story_id: str, scene_id: str):

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}Keyframe Review{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>Keyframe Review</h1>
+  <div id="rollup-bar">
+    <span class="pill pending"   id="rollup-pending">Pending: {{ rollup.pending }}</span>
+    <span class="pill approved"  id="rollup-approved">Approved: {{ rollup.approved }}</span>
+    <span class="pill rejected"  id="rollup-rejected">Rejected: {{ rollup.rejected }}</span>
+    <span class="pill regen"     id="rollup-regen">Regen: {{ rollup.regen_requested }}</span>
+  </div>
+  <div id="batch-bar">
+    <label>Approve all PENDING with score &geq;
+      <input type="number" id="batch-threshold" value="{{ default_threshold }}" step="0.1" min="0" max="10">
+    </label>
+    <button id="batch-approve-btn">Batch approve</button>
+  </div>
+</header>
+<main id="story-grid" data-story-id="{{ story.id }}">
+  {% block content %}{% endblock %}
+</main>
+<dialog id="reject-dialog">
+  <form method="dialog">
+    <h2>Reject scene <span id="reject-scene-id"></span></h2>
+    <p>What went wrong with this keyframe? Feedback is passed to Claude on
+       <code>platinum adapt --rerun-rejected</code>.</p>
+    <textarea id="reject-feedback" rows="4" cols="60"
+              placeholder="e.g. face is in shadow; needs amber side lighting"></textarea>
+    <menu>
+      <button value="cancel">Cancel</button>
+      <button id="reject-submit-btn" value="confirm">Reject</button>
+    </menu>
+  </form>
+</dialog>
+<script>
+{% include 'review_ui.js' %}
+</script>
+</body>
+</html>

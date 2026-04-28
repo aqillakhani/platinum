@@ -308,3 +308,35 @@ def test_post_finalizes_when_all_approved(story_factory, tmp_path: Path) -> None
     run = rt.latest_stage_run("keyframe_review")
     assert run is not None
     assert run.status == StageStatus.COMPLETE
+
+
+def test_get_story_renders_template(story_factory, tmp_path: Path) -> None:
+    from platinum.review_ui.app import create_app
+
+    story, _ = story_factory(n_scenes=2)
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(f"/story/{story.id}")
+    assert resp.status_code == 200
+    assert b"Keyframe Review" in resp.data
+    assert story.id.encode() in resp.data
+    # Each scene appears
+    assert b"scene_001" in resp.data
+    assert b"scene_002" in resp.data
+
+
+def test_get_root_redirects_to_story(story_factory, tmp_path: Path) -> None:
+    from platinum.review_ui.app import create_app
+
+    story, _ = story_factory()
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get("/")
+    assert resp.status_code == 302
+    assert f"/story/{story.id}" in resp.location

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+{% for scene in story.scenes %}
+<article class="scene-tile" data-scene-id="{{ scene.id }}"
+         data-status="{{ scene.review_status.value }}">
+  <header class="scene-header">
+    <span class="scene-index">#{{ scene.index }}</span>
+    <span class="status-pill {{ scene.review_status.value }}">
+      {{ scene.review_status.value }}
+    </span>
+    {% if scene.regen_count %}
+    <span class="regen-badge" title="regen attempts">↻{{ scene.regen_count }}</span>
+    {% endif %}
+  </header>
+  {% if scene.keyframe_path %}
+  <img class="thumb" alt="keyframe scene {{ scene.index }}"
+       src="{{ url_for('image', story_id=story.id, relpath=scene_relpath(scene)) }}">
+  {% else %}
+  <div class="thumb missing">no keyframe — regenerate or run keyframes</div>
+  {% endif %}
+  <div class="prompt-blurb" title="{{ scene.visual_prompt or '' }}">
+    {{ (scene.visual_prompt or '(prompt cleared)') | truncate(140) }}
+  </div>
+  <div class="score-row">
+    {% set selected_score = selected_score_for(scene) %}
+    <span class="score">LAION
+      {% if selected_score is not none %}
+        {{ "%.2f"|format(selected_score) }}
+      {% else %}—{% endif %}
+    </span>
+    {% if scene.keyframe_candidates|length > 1 %}
+    <details class="alternatives">
+      <summary>View alternatives</summary>
+      <div class="alt-grid">
+        {% for c in scene.keyframe_candidates %}
+        {% set ci = loop.index0 %}
+        <button class="alt-thumb"
+                data-scene="{{ scene.id }}"
+                data-candidate="{{ ci }}"
+                {% if scene.keyframe_path == c %}disabled{% endif %}>
+          <img alt="candidate {{ ci }}"
+               src="{{ url_for('image', story_id=story.id, relpath=candidate_relpath(scene, ci)) }}">
+          <span>
+            {% if ci < scene.keyframe_scores|length %}
+              {{ "%.2f"|format(scene.keyframe_scores[ci]) }}
+            {% else %}—{% endif %}
+          </span>
+        </button>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
+  <div class="actions">
+    <button class="btn approve"    data-scene="{{ scene.id }}">Approve</button>
+    <button class="btn regenerate" data-scene="{{ scene.id }}">Regenerate</button>
+    <button class="btn reject"     data-scene="{{ scene.id }}">Reject</button>
+  </div>
+</article>
+{% endfor %}
+{% endblock %}

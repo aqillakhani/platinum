@@ -1,0 +1,117 @@
+:root {
+  --bg: #1a1a1a;
+  --fg: #eaeaea;
+  --muted: #888;
+  --accent: #d4a05c;
+  --pending: #888;
+  --approved: #4a8;
+  --rejected: #c66;
+  --regenerate: #ca6;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+header {
+  position: sticky; top: 0; z-index: 10;
+  background: #222; padding: 1rem 2rem;
+  border-bottom: 1px solid #333;
+  display: flex; align-items: center; gap: 2rem; flex-wrap: wrap;
+}
+h1 { font-size: 1.4rem; margin: 0; }
+.pill {
+  display: inline-block; padding: 0.2rem 0.6rem; border-radius: 1rem;
+  font-size: 0.85rem; margin-right: 0.5rem;
+}
+.pill.pending { background: var(--pending); color: black; }
+.pill.approved { background: var(--approved); color: black; }
+.pill.rejected { background: var(--rejected); color: black; }
+.pill.regen { background: var(--regenerate); color: black; }
+
+#batch-bar input[type=number] { width: 4rem; }
+#batch-bar button { padding: 0.4rem 0.8rem; }
+
+main#story-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 1rem; padding: 1rem 2rem;
+}
+
+.scene-tile {
+  background: #222; border: 2px solid transparent;
+  border-radius: 8px; padding: 1rem; display: flex; flex-direction: column;
+  gap: 0.75rem; transition: border-color 0.2s;
+}
+.scene-tile[data-status="approved"] { border-color: var(--approved); }
+.scene-tile[data-status="rejected"] { border-color: var(--rejected); }
+.scene-tile[data-status="regenerate"] { border-color: var(--regenerate); }
+
+.scene-header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.scene-index { font-weight: bold; color: var(--accent); }
+.status-pill {
+  font-size: 0.8rem; padding: 0.15rem 0.5rem; border-radius: 0.8rem;
+  background: var(--pending); color: black;
+}
+.status-pill.approved { background: var(--approved); }
+.status-pill.rejected { background: var(--rejected); }
+.status-pill.regenerate { background: var(--regenerate); }
+.regen-badge { color: var(--regenerate); font-family: monospace; }
+
+.thumb {
+  width: 100%; aspect-ratio: 1 / 1; object-fit: cover;
+  border-radius: 4px; background: #111;
+}
+.thumb.missing {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-style: italic; padding: 2rem;
+}
+
+.prompt-blurb {
+  font-size: 0.85rem; color: var(--muted); line-height: 1.3;
+  max-height: 3em; overflow: hidden; text-overflow: ellipsis;
+}
+
+.score-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 0.9rem;
+}
+.score { color: var(--accent); font-family: monospace; }
+
+details.alternatives summary {
+  cursor: pointer; color: var(--muted); font-size: 0.85rem;
+}
+.alt-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+.alt-thumb {
+  background: none; border: 1px solid #444; border-radius: 4px;
+  padding: 0.3rem; cursor: pointer; display: flex; flex-direction: column;
+  align-items: center; gap: 0.2rem; color: var(--fg);
+}
+.alt-thumb:disabled { opacity: 0.4; cursor: default; border-color: var(--accent); }
+.alt-thumb img { width: 100%; aspect-ratio: 1/1; object-fit: cover; }
+.alt-thumb span { font-size: 0.75rem; color: var(--accent); font-family: monospace; }
+
+.actions {
+  display: flex; gap: 0.4rem; margin-top: auto;
+}
+.btn {
+  flex: 1; padding: 0.5rem; border: 0; border-radius: 4px;
+  font-weight: 600; cursor: pointer;
+}
+.btn.approve    { background: var(--approved); color: black; }
+.btn.regenerate { background: var(--regenerate); color: black; }
+.btn.reject     { background: var(--rejected); color: black; }
+
+dialog { background: #2a2a2a; color: var(--fg); border: 1px solid #444;
+         border-radius: 6px; padding: 1.5rem; }
+dialog textarea { width: 100%; background: #1a1a1a; color: var(--fg);
+                  border: 1px solid #444; padding: 0.5rem; }
+dialog menu { display: flex; gap: 0.5rem; padding: 0; margin-top: 1rem;
+              justify-content: flex-end; }
