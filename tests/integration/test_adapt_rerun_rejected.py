@@ -15,7 +15,13 @@ import pytest
 from typer.testing import CliRunner
 
 from platinum.models.story import (
-    Adapted, ReviewStatus, Scene, Source, StageRun, StageStatus, Story,
+    Adapted,
+    ReviewStatus,
+    Scene,
+    Source,
+    StageRun,
+    StageStatus,
+    Story,
 )
 
 
