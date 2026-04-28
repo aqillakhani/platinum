@@ -269,6 +269,10 @@ def keyframes(
         False, "--dry-run",
         help="Print the planned scene set + comfy/aesthetics hosts; do not call.",
     ),
+    rerun_regen_requested: bool = typer.Option(
+        False, "--rerun-regen-requested",
+        help="Auto-build --scenes filter from REGENERATE-status scenes (S7 review loop).",
+    ),
 ) -> None:
     """Generate keyframes for a curator-approved + adapted story.
 
@@ -278,7 +282,7 @@ def keyframes(
     """
     import logging
 
-    from platinum.models.story import StageStatus, Story
+    from platinum.models.story import ReviewStatus, StageStatus, Story
     from platinum.pipeline.context import PipelineContext
     from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
     from platinum.pipeline.orchestrator import Orchestrator
@@ -304,7 +308,25 @@ def keyframes(
     # `scene.index` (which the scene_breakdown stage emits as 1-indexed),
     # not against the array offset.
     scene_filter: set[int] | None = None
-    if scenes is not None:
+
+    if rerun_regen_requested:
+        if scenes is not None:
+            raise typer.BadParameter(
+                "--rerun-regen-requested is mutually exclusive with --scenes",
+                param_hint="--rerun-regen-requested",
+            )
+        regen_indices = sorted({
+            sc.index for sc in s.scenes
+            if sc.review_status == ReviewStatus.REGENERATE
+        })
+        if not regen_indices:
+            console.print(
+                "[yellow]No scenes flagged for regeneration. Run "
+                "'platinum review keyframes <id>' first.[/yellow]"
+            )
+            raise typer.Exit(code=0)
+        scene_filter = set(regen_indices)
+    elif scenes is not None:
         try:
             scene_filter = {int(x.strip()) for x in scenes.split(",") if x.strip()}
         except ValueError as exc:
@@ -343,6 +365,12 @@ def keyframes(
     except Exception as exc:
         console.print(f"[red]keyframes failed for {story}: {exc}[/red]")
         raise
+
+    if rerun_regen_requested and scene_filter is not None:
+        for sc in s.scenes:
+            if sc.index in scene_filter and sc.keyframe_path is not None:
+                sc.review_status = ReviewStatus.PENDING
+        s.save(story_path)
 
     console.print(f"[green]Keyframes complete for {story}.[/green]")
 
