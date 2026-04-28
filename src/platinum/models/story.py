@@ -159,6 +159,8 @@ class Scene:
     sfx_cues: list[str] = field(default_factory=list)
     validation: dict[str, Any] = field(default_factory=dict)
     review_status: ReviewStatus = ReviewStatus.PENDING
+    review_feedback: str | None = None
+    regen_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -182,6 +184,8 @@ class Scene:
             "sfx_cues": list(self.sfx_cues),
             "validation": dict(self.validation),
             "review_status": self.review_status.value,
+            "review_feedback": self.review_feedback,
+            "regen_count": self.regen_count,
         }
 
     @classmethod
@@ -207,6 +211,8 @@ class Scene:
             sfx_cues=list(d.get("sfx_cues", [])),
             validation=dict(d.get("validation", {})),
             review_status=ReviewStatus(d.get("review_status", ReviewStatus.PENDING.value)),
+            review_feedback=d.get("review_feedback"),
+            regen_count=int(d.get("regen_count", 0)),
         )
 
 
