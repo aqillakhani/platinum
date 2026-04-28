@@ -59,7 +59,9 @@ def _seeds_for_scene(
     """Deterministic seeds: scene_index*1000 + regen_count*100 + offset.
 
     regen_count=0 reproduces pre-S7 seed sequences exactly. Capacity:
-    100 regens * 100 candidates per scene before collision.
+    10 regens per scene, with up to 100 candidates per regen (each scene
+    is reserved a 1000-seed block; regen_count=10 would collide with the
+    next scene's regen_count=0).
     """
     return tuple(scene_index * 1000 + regen_count * 100 + i for i in range(n))
 
