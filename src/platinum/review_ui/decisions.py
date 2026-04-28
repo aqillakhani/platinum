@@ -34,3 +34,17 @@ def apply_approve(story: Story, scene_id: str) -> Story:
     scene = _find_scene(story, scene_id)
     scene.review_status = ReviewStatus.APPROVED
     return story
+
+
+def apply_regenerate(story: Story, scene_id: str) -> Story:
+    """Mark scene for re-render with same prompt + new seed.
+
+    Bumps regen_count, clears keyframe_path (so re-render runs), preserves
+    visual_prompt and review_feedback. CLI then re-runs keyframe_generator
+    via `platinum keyframes <id> --rerun-regen-requested`.
+    """
+    scene = _find_scene(story, scene_id)
+    scene.regen_count += 1
+    scene.keyframe_path = None
+    scene.review_status = ReviewStatus.REGENERATE
+    return story

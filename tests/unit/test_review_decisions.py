@@ -76,3 +76,32 @@ def test_apply_approve_unknown_scene_id_raises() -> None:
     story = _make_story()
     with pytest.raises(KeyError, match="scene_xyz"):
         decisions.apply_approve(story, "scene_xyz")
+
+
+def test_apply_regenerate_clears_keyframe_path() -> None:
+    story = _make_story()
+    decisions.apply_regenerate(story, "scene_001")
+    assert story.scenes[0].keyframe_path is None
+
+
+def test_apply_regenerate_bumps_regen_count() -> None:
+    story = _make_story()
+    assert story.scenes[0].regen_count == 0
+    decisions.apply_regenerate(story, "scene_001")
+    assert story.scenes[0].regen_count == 1
+    decisions.apply_regenerate(story, "scene_001")
+    assert story.scenes[0].regen_count == 2
+
+
+def test_apply_regenerate_sets_status_REGENERATE() -> None:
+    story = _make_story()
+    decisions.apply_regenerate(story, "scene_001")
+    assert story.scenes[0].review_status == ReviewStatus.REGENERATE
+
+
+def test_apply_regenerate_preserves_visual_prompt() -> None:
+    """Same prompt, new seed -- visual_prompt MUST stay intact."""
+    story = _make_story()
+    original_prompt = story.scenes[0].visual_prompt
+    decisions.apply_regenerate(story, "scene_001")
+    assert story.scenes[0].visual_prompt == original_prompt
