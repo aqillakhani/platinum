@@ -155,3 +155,156 @@ def test_get_image_blocks_path_traversal(story_factory, tmp_path: Path) -> None:
         resp = client.get(f"/image/{story.id}/../../../secret.txt")
     # safe_join returns None for traversal -> 404
     assert resp.status_code == 404
+
+
+def test_post_approve_persists_to_disk(story_factory, tmp_path: Path) -> None:
+    from platinum.models.story import ReviewStatus, Story
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=3)
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.post(f"/api/story/{story.id}/scene/scene_001/approve")
+    assert resp.status_code == 200
+    rt = Story.load(story_dir / "story.json")
+    assert rt.scenes[0].review_status == ReviewStatus.APPROVED
+    assert resp.json["rollup"]["approved"] == 1
+
+
+def test_post_regenerate_bumps_count_and_clears_keyframe(story_factory, tmp_path: Path) -> None:
+    from platinum.models.story import Story
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory()
+    # Give scene_001 a keyframe_path to clear
+    story.scenes[0].keyframe_path = Path("scene_001/candidate_0.png")
+    story.save(story_dir / "story.json")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.post(f"/api/story/{story.id}/scene/scene_001/regenerate")
+    assert resp.status_code == 200
+    rt = Story.load(story_dir / "story.json")
+    assert rt.scenes[0].keyframe_path is None
+    assert rt.scenes[0].regen_count == 1
+
+
+def test_post_reject_requires_feedback(story_factory, tmp_path: Path) -> None:
+    from platinum.review_ui.app import create_app
+
+    story, _ = story_factory()
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.post(
+            f"/api/story/{story.id}/scene/scene_001/reject",
+            json={},  # no feedback field
+        )
+    assert resp.status_code == 400
+
+
+def test_post_reject_persists_feedback(story_factory, tmp_path: Path) -> None:
+    from platinum.models.story import ReviewStatus, Story
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory()
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.post(
+            f"/api/story/{story.id}/scene/scene_001/reject",
+            json={"feedback": "scene 1 face needs amber"},
+        )
+    assert resp.status_code == 200
+    rt = Story.load(story_dir / "story.json")
+    assert rt.scenes[0].review_feedback == "scene 1 face needs amber"
+    assert rt.scenes[0].review_status == ReviewStatus.REJECTED
+
+
+def test_post_select_candidate_swaps_keyframe_path(story_factory, tmp_path: Path) -> None:
+    from platinum.models.story import Story
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory()
+    # Give scene 0 candidate paths
+    story.scenes[0].keyframe_candidates = [
+        Path("scene_001/candidate_0.png"),
+        Path("scene_001/candidate_1.png"),
+        Path("scene_001/candidate_2.png"),
+    ]
+    story.scenes[0].keyframe_scores = [5.5, 6.2, 5.9]
+    story.scenes[0].keyframe_path = story.scenes[0].keyframe_candidates[1]
+    story.save(story_dir / "story.json")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.post(
+            f"/api/story/{story.id}/scene/scene_001/select_candidate",
+            json={"index": 0},
+        )
+    assert resp.status_code == 200
+    rt = Story.load(story_dir / "story.json")
+    assert rt.scenes[0].keyframe_path == Path("scene_001/candidate_0.png")
+
+
+def test_post_batch_approve_marks_pending_above_threshold(story_factory, tmp_path: Path) -> None:
+    from platinum.models.story import ReviewStatus, Story
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=2)
+    # scene 0 selected score = 6.2 (above 6.0)
+    story.scenes[0].keyframe_candidates = [Path("a.png"), Path("b.png")]
+    story.scenes[0].keyframe_scores = [5.0, 6.2]
+    story.scenes[0].keyframe_path = story.scenes[0].keyframe_candidates[1]
+    # scene 1 selected score = 5.5 (below 6.0)
+    story.scenes[1].keyframe_candidates = [Path("c.png")]
+    story.scenes[1].keyframe_scores = [5.5]
+    story.scenes[1].keyframe_path = story.scenes[1].keyframe_candidates[0]
+    story.save(story_dir / "story.json")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.post(
+            f"/api/story/{story.id}/batch_approve",
+            json={"threshold": 6.0},
+        )
+    assert resp.status_code == 200
+    rt = Story.load(story_dir / "story.json")
+    assert rt.scenes[0].review_status == ReviewStatus.APPROVED
+    assert rt.scenes[1].review_status == ReviewStatus.PENDING
+
+
+def test_post_finalizes_when_all_approved(story_factory, tmp_path: Path) -> None:
+    """The last approve should append a keyframe_review StageRun."""
+    from platinum.models.story import StageStatus, Story
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=2)
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        client.post(f"/api/story/{story.id}/scene/scene_001/approve")
+        resp = client.post(f"/api/story/{story.id}/scene/scene_002/approve")
+    assert resp.status_code == 200
+    rt = Story.load(story_dir / "story.json")
+    run = rt.latest_stage_run("keyframe_review")
+    assert run is not None
+    assert run.status == StageStatus.COMPLETE

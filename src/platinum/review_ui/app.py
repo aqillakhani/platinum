@@ -15,6 +15,7 @@ from flask import Flask, abort, jsonify, send_file
 from werkzeug.security import safe_join
 
 from platinum.models.story import ReviewStatus, Story
+from platinum.review_ui import decisions
 
 
 def _story_path(data_root: Path, story_id: str) -> Path:
@@ -75,5 +76,78 @@ def create_app(*, story_id: str, data_root: Path) -> Flask:
         if not full_path.exists() or not full_path.is_file():
             abort(404)
         return send_file(full_path)
+
+    def _save_and_respond(story: Story, *, scene_id: str | None = None):
+        """Common tail: finalize -> save -> return JSON of touched scene + rollup."""
+        decisions.finalize_review_if_complete(story)
+        story.save(_story_path(app.config["DATA_ROOT"], story.id))
+        body: dict = {"rollup": _rollup(story)}
+        if scene_id is not None:
+            for sc in story.scenes:
+                if sc.id == scene_id:
+                    body["scene"] = sc.to_dict()
+                    break
+        return jsonify(body)
+
+    @app.post("/api/story/<story_id>/scene/<scene_id>/approve")
+    def post_approve(story_id: str, scene_id: str):
+        story = _load_story_or_404(app.config["DATA_ROOT"], story_id)
+        try:
+            decisions.apply_approve(story, scene_id)
+        except KeyError:
+            abort(404, description=f"scene not found: {scene_id}")
+        return _save_and_respond(story, scene_id=scene_id)
+
+    @app.post("/api/story/<story_id>/scene/<scene_id>/regenerate")
+    def post_regenerate(story_id: str, scene_id: str):
+        story = _load_story_or_404(app.config["DATA_ROOT"], story_id)
+        try:
+            decisions.apply_regenerate(story, scene_id)
+        except KeyError:
+            abort(404, description=f"scene not found: {scene_id}")
+        return _save_and_respond(story, scene_id=scene_id)
+
+    @app.post("/api/story/<story_id>/scene/<scene_id>/reject")
+    def post_reject(story_id: str, scene_id: str):
+        from flask import request
+        body = request.get_json(silent=True) or {}
+        feedback = body.get("feedback", "")
+        story = _load_story_or_404(app.config["DATA_ROOT"], story_id)
+        try:
+            decisions.apply_reject(story, scene_id, feedback=feedback)
+        except KeyError:
+            abort(404, description=f"scene not found: {scene_id}")
+        except ValueError as exc:
+            abort(400, description=str(exc))
+        return _save_and_respond(story, scene_id=scene_id)
+
+    @app.post("/api/story/<story_id>/scene/<scene_id>/select_candidate")
+    def post_select_candidate(story_id: str, scene_id: str):
+        from flask import request
+        body = request.get_json(silent=True) or {}
+        if "index" not in body:
+            abort(400, description="'index' field required")
+        story = _load_story_or_404(app.config["DATA_ROOT"], story_id)
+        try:
+            decisions.apply_swap_candidate(
+                story, scene_id, candidate_index=int(body["index"])
+            )
+        except KeyError:
+            abort(404, description=f"scene not found: {scene_id}")
+        except IndexError as exc:
+            abort(400, description=str(exc))
+        return _save_and_respond(story, scene_id=scene_id)
+
+    @app.post("/api/story/<story_id>/batch_approve")
+    def post_batch_approve(story_id: str):
+        from flask import request
+        body = request.get_json(silent=True) or {}
+        if "threshold" not in body:
+            abort(400, description="'threshold' field required")
+        story = _load_story_or_404(app.config["DATA_ROOT"], story_id)
+        decisions.apply_batch_approve_above(
+            story, threshold=float(body["threshold"])
+        )
+        return _save_and_respond(story)
 
     return app
