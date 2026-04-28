@@ -64,3 +64,20 @@ def apply_reject(story: Story, scene_id: str, *, feedback: str) -> Story:
     scene.keyframe_path = None
     scene.review_status = ReviewStatus.REJECTED
     return story
+
+
+def apply_swap_candidate(story: Story, scene_id: str, *, candidate_index: int) -> Story:
+    """Override the auto-selected best with a different candidate.
+
+    Used by the 'view alternatives' UX to let a reviewer pick a candidate
+    the gates ranked lower but that reads better on eye-check. Does not
+    change review_status -- the user must explicitly approve afterward.
+    """
+    scene = _find_scene(story, scene_id)
+    if candidate_index < 0 or candidate_index >= len(scene.keyframe_candidates):
+        raise IndexError(
+            f"candidate_index out of range: {candidate_index} "
+            f"(scene has {len(scene.keyframe_candidates)} candidates)"
+        )
+    scene.keyframe_path = scene.keyframe_candidates[candidate_index]
+    return story

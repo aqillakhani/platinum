@@ -133,3 +133,25 @@ def test_apply_reject_empty_feedback_raises() -> None:
         decisions.apply_reject(story, "scene_001", feedback="")
     with pytest.raises(ValueError, match="feedback"):
         decisions.apply_reject(story, "scene_001", feedback="   ")
+
+
+def test_apply_swap_candidate_updates_keyframe_path() -> None:
+    story = _make_story()
+    original = story.scenes[0].keyframe_path
+    decisions.apply_swap_candidate(story, "scene_001", candidate_index=0)
+    assert story.scenes[0].keyframe_path == story.scenes[0].keyframe_candidates[0]
+    assert story.scenes[0].keyframe_path != original
+
+
+def test_apply_swap_candidate_invalid_index_raises() -> None:
+    story = _make_story()  # 3 candidates per scene
+    with pytest.raises(IndexError, match="candidate_index"):
+        decisions.apply_swap_candidate(story, "scene_001", candidate_index=99)
+
+
+def test_apply_swap_candidate_preserves_review_status() -> None:
+    """Swapping should not silently approve / unapprove."""
+    story = _make_story()
+    story.scenes[0].review_status = ReviewStatus.PENDING
+    decisions.apply_swap_candidate(story, "scene_001", candidate_index=0)
+    assert story.scenes[0].review_status == ReviewStatus.PENDING
