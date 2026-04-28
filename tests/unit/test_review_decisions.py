@@ -155,3 +155,41 @@ def test_apply_swap_candidate_preserves_review_status() -> None:
     story.scenes[0].review_status = ReviewStatus.PENDING
     decisions.apply_swap_candidate(story, "scene_001", candidate_index=0)
     assert story.scenes[0].review_status == ReviewStatus.PENDING
+
+
+def test_apply_batch_approve_above_threshold_marks_pending_only() -> None:
+    """Already-decided scenes (REJECTED, REGENERATE, APPROVED) must NOT be touched."""
+    story = _make_story(n_scenes=4)
+    # Scene 0: PENDING, score 6.2 (above)
+    # Scene 1: PENDING, score 5.0 (below)
+    # Scene 2: REJECTED already, score 6.5 (above but already decided)
+    # Scene 3: APPROVED already, score 6.5
+    story.scenes[1].keyframe_scores = [5.0, 5.0, 5.0]
+    story.scenes[1].keyframe_path = story.scenes[1].keyframe_candidates[0]
+    story.scenes[2].review_status = ReviewStatus.REJECTED
+    story.scenes[3].review_status = ReviewStatus.APPROVED
+
+    decisions.apply_batch_approve_above(story, threshold=6.0)
+
+    assert story.scenes[0].review_status == ReviewStatus.APPROVED  # promoted
+    assert story.scenes[1].review_status == ReviewStatus.PENDING   # below threshold
+    assert story.scenes[2].review_status == ReviewStatus.REJECTED  # left alone
+    assert story.scenes[3].review_status == ReviewStatus.APPROVED  # already approved
+
+
+def test_apply_batch_approve_above_uses_selected_candidate_score() -> None:
+    """Threshold compares against the score of the SELECTED candidate, not max(scores)."""
+    story = _make_story(n_scenes=1)
+    story.scenes[0].keyframe_scores = [5.5, 6.5, 5.9]
+    # Manually point keyframe_path at candidate 0 (score 5.5)
+    story.scenes[0].keyframe_path = story.scenes[0].keyframe_candidates[0]
+    decisions.apply_batch_approve_above(story, threshold=6.0)
+    # Selected has score 5.5, below threshold -> not approved
+    assert story.scenes[0].review_status == ReviewStatus.PENDING
+
+
+def test_apply_batch_approve_above_skips_no_keyframe_scenes() -> None:
+    """A scene with keyframe_path=None has no selected score; must not approve."""
+    story = _make_story(n_scenes=1, all_have_keyframes=False)
+    decisions.apply_batch_approve_above(story, threshold=0.0)
+    assert story.scenes[0].review_status == ReviewStatus.PENDING

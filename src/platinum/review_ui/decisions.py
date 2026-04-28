@@ -81,3 +81,27 @@ def apply_swap_candidate(story: Story, scene_id: str, *, candidate_index: int) -
         )
     scene.keyframe_path = scene.keyframe_candidates[candidate_index]
     return story
+
+
+def apply_batch_approve_above(story: Story, *, threshold: float) -> Story:
+    """Approve all PENDING scenes whose selected candidate's score >= threshold.
+
+    Already-decided scenes (REJECTED / REGENERATE / APPROVED) are left
+    untouched -- batch action is additive, never overrides prior intent.
+    Scenes without a selected keyframe (keyframe_path is None) are skipped.
+    """
+    for scene in story.scenes:
+        if scene.review_status != ReviewStatus.PENDING:
+            continue
+        if scene.keyframe_path is None:
+            continue
+        # Find selected candidate's score
+        try:
+            selected_idx = scene.keyframe_candidates.index(scene.keyframe_path)
+        except ValueError:
+            continue  # keyframe_path not in candidates (shouldn't happen, defensive)
+        if selected_idx >= len(scene.keyframe_scores):
+            continue
+        if scene.keyframe_scores[selected_idx] >= threshold:
+            scene.review_status = ReviewStatus.APPROVED
+    return story
