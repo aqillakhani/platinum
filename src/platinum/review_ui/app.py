@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flask import Flask, abort, jsonify
+from flask import Flask, abort, jsonify, send_file
+from werkzeug.security import safe_join
 
 from platinum.models.story import ReviewStatus, Story
 
@@ -63,5 +64,16 @@ def create_app(*, story_id: str, data_root: Path) -> Flask:
         body = story.to_dict()
         body["rollup"] = _rollup(story)
         return jsonify(body)
+
+    @app.get("/image/<story_id>/<path:relpath>")
+    def image(story_id: str, relpath: str):
+        keyframes_root = app.config["DATA_ROOT"] / story_id / "keyframes"
+        full = safe_join(str(keyframes_root), relpath)
+        if full is None:
+            abort(404)
+        full_path = Path(full)
+        if not full_path.exists() or not full_path.is_file():
+            abort(404)
+        return send_file(full_path)
 
     return app

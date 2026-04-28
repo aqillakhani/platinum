@@ -106,3 +106,52 @@ def test_get_api_story_404_on_missing(story_factory, tmp_path: Path) -> None:
     with app.test_client() as client:
         resp = client.get("/api/story/story_doesnt_exist")
     assert resp.status_code == 404
+
+
+def test_get_image_serves_png(story_factory, tmp_path: Path) -> None:
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory()
+    keyframes_dir = story_dir / "keyframes" / "scene_001"
+    keyframes_dir.mkdir(parents=True)
+    png_path = keyframes_dir / "candidate_0.png"
+    png_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(f"/image/{story.id}/scene_001/candidate_0.png")
+    assert resp.status_code == 200
+    assert resp.data == b"\x89PNG\r\n\x1a\nfake"
+
+
+def test_get_image_404_on_missing(story_factory, tmp_path: Path) -> None:
+    from platinum.review_ui.app import create_app
+
+    story, _ = story_factory()
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(f"/image/{story.id}/nonexistent/x.png")
+    assert resp.status_code == 404
+
+
+def test_get_image_blocks_path_traversal(story_factory, tmp_path: Path) -> None:
+    from platinum.review_ui.app import create_app
+
+    story, _ = story_factory()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("hunter2")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(f"/image/{story.id}/../../../secret.txt")
+    # safe_join returns None for traversal -> 404
+    assert resp.status_code == 404
