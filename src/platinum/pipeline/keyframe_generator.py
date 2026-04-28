@@ -53,9 +53,15 @@ class KeyframeGenerationError(RuntimeError):
         super().__init__(f"all candidates failed for scene_index={scene_index}: {joined}")
 
 
-def _seeds_for_scene(scene_index: int, n: int) -> tuple[int, ...]:
-    """Deterministic seeds: scene_index*1000 + offset."""
-    return tuple(scene_index * 1000 + i for i in range(n))
+def _seeds_for_scene(
+    scene_index: int, n: int, *, regen_count: int = 0
+) -> tuple[int, ...]:
+    """Deterministic seeds: scene_index*1000 + regen_count*100 + offset.
+
+    regen_count=0 reproduces pre-S7 seed sequences exactly. Capacity:
+    100 regens * 100 candidates per scene before collision.
+    """
+    return tuple(scene_index * 1000 + regen_count * 100 + i for i in range(n))
 
 
 def _is_finite(x: float) -> bool:
@@ -97,7 +103,12 @@ async def generate_for_scene(
         if config_dir is None:
             raise ValueError("either workflow_template or config_dir is required")
         workflow_template = load_workflow("flux_dev_keyframe", config_dir=config_dir)
-    use_seeds = tuple(seeds) if seeds is not None else _seeds_for_scene(scene.index, n_candidates)
+    regen_count = int(getattr(scene, "regen_count", 0))
+    use_seeds = (
+        tuple(seeds)
+        if seeds is not None
+        else _seeds_for_scene(scene.index, n_candidates, regen_count=regen_count)
+    )
     if len(use_seeds) != n_candidates:
         raise ValueError(f"seeds length {len(use_seeds)} != n_candidates {n_candidates}")
 
