@@ -161,6 +161,7 @@ class Scene:
     review_status: ReviewStatus = ReviewStatus.PENDING
     review_feedback: str | None = None
     regen_count: int = 0
+    reject_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -186,6 +187,7 @@ class Scene:
             "review_status": self.review_status.value,
             "review_feedback": self.review_feedback,
             "regen_count": self.regen_count,
+            "reject_count": self.reject_count,
         }
 
     @classmethod
@@ -213,6 +215,7 @@ class Scene:
             review_status=ReviewStatus(d.get("review_status", ReviewStatus.PENDING.value)),
             review_feedback=d.get("review_feedback"),
             regen_count=int(d.get("regen_count", 0)),
+            reject_count=int(d.get("reject_count", 0)),
         )
 
 

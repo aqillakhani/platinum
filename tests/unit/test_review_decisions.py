@@ -250,3 +250,32 @@ def test_finalize_records_regen_total_in_artifacts() -> None:
     run = story.latest_stage_run("keyframe_review")
     assert run is not None
     assert run.artifacts["regen_total"] == 3
+
+
+def test_apply_reject_bumps_reject_count() -> None:
+    """reject_count tracks rejection clicks across the review session."""
+    story = _make_story()
+    assert story.scenes[0].reject_count == 0
+    decisions.apply_reject(story, "scene_001", feedback="too dark")
+    assert story.scenes[0].reject_count == 1
+    # Subsequent rejects (after CLI flips to REGENERATE then user re-rejects)
+    # keep climbing.
+    decisions.apply_reject(story, "scene_001", feedback="still too dark")
+    assert story.scenes[0].reject_count == 2
+
+
+def test_finalize_records_rejected_total_in_artifacts() -> None:
+    """rejected_total = sum of reject_count across all scenes (S7 §4.4)."""
+    story = _make_story(n_scenes=3)
+    decisions.apply_reject(story, "scene_001", feedback="too dark")
+    decisions.apply_reject(story, "scene_001", feedback="still too dark")
+    decisions.apply_reject(story, "scene_002", feedback="bad framing")
+    # Pretend the CLI re-prompted + re-rendered + user approved.
+    for s in story.scenes:
+        s.review_status = ReviewStatus.APPROVED
+    decisions.finalize_review_if_complete(story)
+    run = story.latest_stage_run("keyframe_review")
+    assert run is not None
+    assert run.artifacts["rejected_total"] == 3
+    # Also visible in review_gates summary.
+    assert story.review_gates["keyframe_review"]["rejected_total"] == 3

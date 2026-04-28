@@ -68,6 +68,7 @@ def apply_reject(story: Story, scene_id: str, *, feedback: str) -> Story:
     scene.visual_prompt = None
     scene.keyframe_path = None
     scene.review_status = ReviewStatus.REJECTED
+    scene.reject_count += 1
     return story
 
 
@@ -127,9 +128,11 @@ def finalize_review_if_complete(story: Story) -> Story:
 
     now = datetime.now()
     regen_total = sum(s.regen_count for s in story.scenes)
+    rejected_total = sum(s.reject_count for s in story.scenes)
     artifacts: dict[str, Any] = {
         "approved_count": len(story.scenes),
         "regen_total": regen_total,
+        "rejected_total": rejected_total,
     }
     story.stages.append(
         StageRun(

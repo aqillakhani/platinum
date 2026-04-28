@@ -1,6 +1,7 @@
 """Round-trip + new-field tests for the Scene dataclass.
 
-S7 adds review_feedback (str | None) and regen_count (int) to Scene.
+S7 adds review_feedback (str | None), regen_count (int), and reject_count
+(int) to Scene.
 """
 from __future__ import annotations
 
@@ -45,3 +46,15 @@ def test_scene_from_dict_backfills_missing_review_feedback() -> None:
     scene = Scene.from_dict(raw)
     assert scene.review_feedback is None
     assert scene.regen_count == 0
+    assert scene.reject_count == 0
+
+
+def test_scene_reject_count_defaults_to_zero() -> None:
+    scene = _build_minimal_scene()
+    assert scene.reject_count == 0
+
+
+def test_scene_round_trip_preserves_reject_count() -> None:
+    scene = _build_minimal_scene(reject_count=2)
+    rt = Scene.from_dict(scene.to_dict())
+    assert rt.reject_count == 2
