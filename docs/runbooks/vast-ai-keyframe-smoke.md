@@ -651,15 +651,126 @@ months later for Sessions 8/9/10/13.)
 
 ---
 
+## Phase B verify run (S7.1.B7.3)
+
+The Phase B model stack (IP-Adapter FaceID + ControlNet Depth + ControlNet
+Pose, plus the pose+depth preprocessor pass) requires extra setup steps
+on the box and three new pipeline stages before keyframe generation.
+Run this section AFTER the standard provisioning above completes.
+
+### Step 4a: Re-author rejected scenes' prompts
+
+The S7.1.A1 visual_prompts template rewrite (structural language) plus
+the new composition_notes + character_refs fields means stories
+authored under Phase A's prompt template need a re-pass before Phase B
+verify. Run on the LOCAL machine:
+
+```bash
+platinum adapt --story story_2026_04_25_001 --rerun-rejected
+```
+
+Or for stories whose Phase A prompts are intact, the simpler:
+
+```bash
+platinum adapt --story story_2026_04_25_001 --rerun-all-prompts
+```
+
+`--rerun-all-prompts` is opt-in (NEW in S7.1) and re-asks Claude to emit
+the new fields for unrejected scenes too. Cost: ~$0.30 Anthropic.
+
+SCP the updated story.json to the box afterwards:
+
+```bash
+scp data/stories/story_2026_04_25_001/story.json \
+    root@$VAST_HOST:/workspace/data/stories/story_2026_04_25_001/story.json
+```
+
+### Step 4b: CharacterReferenceStage + eye-pick refs
+
+`platinum keyframes <story>` now blocks unless story.characters has a
+picked path for every recurring character (S7.1.B4.6). To produce
+candidates, first run the orchestrator through CharacterReferenceStage:
+
+```bash
+# On the box:
+cd /workspace/platinum
+source activate p311
+python -m platinum keyframes story_2026_04_25_001 --dry-run
+# (dry-run also fails the gate; this confirms the gate is wired before
+#  burning GPU on the rest of the pipeline.)
+```
+
+Per the user-pickup design, the actual flow is:
+1. SCP candidates back to local: `scp -r root@$VAST:/workspace/.../references ./data/stories/<id>/`
+2. Run `platinum review characters story_2026_04_25_001` locally; pick
+   one ref per character via the gallery UI (B6.2-B6.5).
+3. SCP the updated story.json (now with story.characters populated) back
+   to the box.
+
+For a single-pass on-box run (no eye-pick UX):
+```bash
+# Skip the gate by manually populating story.characters before keyframes:
+#   editor of choice -- write {"Fortunato": "references/Fortunato/candidate_0.png"}
+```
+
+### Step 4c: PoseDepthMapStage
+
+Once character refs are picked, the next gate is pose/depth maps. The
+orchestrator (post-S7.1.B5.5) runs PoseDepthMapStage between
+character_references and keyframe_generator.
+
+```bash
+# On the box:
+python -m platinum keyframes story_2026_04_25_001
+```
+
+This will:
+- Skip CharacterReferenceStage (already complete per is_complete check).
+- Run PoseDepthMapStage: per scene with composition_notes, generate a
+  low-res Flux prerender (8 steps, 512x896, ~5s) then run DWPose +
+  DepthAnythingV2 against it. Total: ~10 min on A6000 for 16 scenes.
+- Then run KeyframeGeneratorStage with face/pose/depth conditioning.
+
+### Step 5: Full keyframe render with multi-ControlNet
+
+Multi-ControlNet (Depth + Pose) + IP-Adapter on each candidate roughly
+doubles per-candidate inference time on A6000:
+  Pre-Phase-B: ~50s/candidate × 3 candidates × 16 scenes = ~40 min
+  Post-Phase-B: ~100s/candidate × 3 candidates × 16 scenes = ~80 min
+
+Budget the rental window accordingly.
+
+### Step 6: SCP back + eye-check via review UI
+
+```bash
+# Local
+scp -r root@$VAST:/workspace/.../keyframes ./data/stories/<id>/
+platinum review keyframes story_2026_04_25_001
+```
+
+### Closure
+
+Phase B verify is successful if ≥14/16 Cask scenes are approveable on
+first eye-check. If <14/16:
+- Iterate thresholds via review UI batch-approve (no re-render).
+- Iterate prompts via `platinum adapt --rerun-rejected` (~$0.30).
+- Escalate to S7.2 (flux_pro_api per-track image_model dispatcher) if
+  gate-tuning + prompt-iteration both fail.
+
+---
+
 ## Reference
 
 - S6.1 design doc: `docs/plans/2026-04-25-session-6.1-keyframe-live-smoke-design.md`
 - S6.1 plan doc: `docs/plans/2026-04-25-session-6.1-keyframe-live-smoke-plan.md`
 - S6.3 design doc: `docs/plans/2026-04-26-session-6.3-flux-workflow-rebuild-design.md`
 - S6.3 plan doc: `docs/plans/2026-04-26-session-6.3-flux-workflow-rebuild-plan.md`
+- S7.1 design doc: `docs/plans/2026-04-28-session-7.1-content-fidelity-design.md`
+- S7.1 plan doc: `docs/plans/2026-04-28-session-7.1-content-fidelity-plan.md`
 - Rebuilt Flux Dev workflow: `config/workflows/flux_dev_keyframe.json`
+- Pose+depth aux workflow: `config/workflows/pose_depth_map.json`
 - score_server source: `scripts/score_server/`
 - Provisioning script: `scripts/vast_setup.sh`
 - Pre-flight script: `scripts/preflight_check.py`
 - Reset script: `scripts/reset_scene_keyframes.py`
-- CLI command: `src/platinum/cli.py` — `keyframes`
+- CLI commands: `src/platinum/cli.py` — `keyframes`, `review keyframes`, `review characters`
