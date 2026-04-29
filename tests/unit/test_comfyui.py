@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -322,3 +323,37 @@ async def test_http_comfy_client_upload_image_form_shape(tmp_path: Path) -> None
     client = HttpComfyClient(host="http://stub:8188", transport=transport)
     name = await client.upload_image(img)
     assert name == "uploaded_ref.png"
+
+
+def test_workflow_signature_shape_post_b1() -> None:
+    """S7.1.B1.5: workflow_signature is a SHA-256 hex digest of canonical JSON.
+
+    Pins the *shape* (64 lowercase hex chars) and the deterministic +
+    sensitive properties (same workflow -> same sig; structural change
+    -> different sig). Does NOT pin the exact hex value of the post-B1
+    workflow because that value rolls every time the JSON is edited and
+    no caller depends on a specific value.
+
+    The B1 layer added 9 new nodes (12-20 IPAdapter + ControlNet
+    Depth/Pose) and 9 new _meta.role tags; this test confirms the
+    shipped JSON's sig is well-formed under the post-B1 graph and that
+    workflow_signature still discriminates structural variants.
+    """
+    from platinum.utils.comfyui import workflow_signature
+    from platinum.utils.workflow import load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    sig = workflow_signature(wf)
+
+    # SHA-256 hex digest -- 64 lowercase hex chars
+    assert len(sig) == 64
+    assert all(c in "0123456789abcdef" for c in sig)
+
+    # Deterministic: same workflow -> same sig
+    assert workflow_signature(wf) == sig
+
+    # Sensitive: adding any node changes the sig
+    wf_modified = copy.deepcopy(wf)
+    wf_modified["999"] = {"class_type": "Test", "inputs": {}}
+    assert workflow_signature(wf_modified) != sig
