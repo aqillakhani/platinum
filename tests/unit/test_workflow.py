@@ -249,10 +249,11 @@ def test_rebuilt_flux_workflow_has_required_roles_and_cfg_1() -> None:
     # pre-S7.1.B1.1; B1.1 inserted IPAdapterFaceIDApply between ModelSamplingFlux
     # and KSampler so face refs can condition the model chain).
     assert wf[sampler_id]["inputs"]["model"] == ["14", 0]
-    # KSampler.positive now sources from ControlNetApplyAdvanced_depth (S7.1.B1.2);
-    # the depth-apply node sits between FluxGuidance and KSampler so a depth map
-    # can condition the positive branch.
-    assert wf[sampler_id]["inputs"]["positive"] == ["17", 0]
+    # KSampler.positive now sources from ControlNetApplyAdvanced_pose (S7.1.B1.3),
+    # which itself receives positive from ControlNetApplyAdvanced_depth (S7.1.B1.2).
+    # The two ControlNet apply nodes chain between FluxGuidance and KSampler so
+    # depth + pose maps can both condition the positive branch.
+    assert wf[sampler_id]["inputs"]["positive"] == ["20", 0]
 
     # Node 10: ModelSamplingFlux exists with proper shifts
     assert wf["10"]["class_type"] == "ModelSamplingFlux"
@@ -391,14 +392,66 @@ def test_workflow_has_controlnet_depth_nodes_after_b1_2() -> None:
     #   negative passes through from CLIPTextEncode neg (node 4)
     #   control_net from ControlNetLoader_depth (node 15)
     #   image from LoadImage_depth (node 16)
+    # These four are durable: node 17 always sits between FluxGuidance and
+    # whatever comes next on the positive branch (later nodes will chain off
+    # 17.slot-0). KSampler.positive endpoint is asserted by the latest layer
+    # test (e.g. B1.3 pins it to node 20) since that endpoint shifts as new
+    # apply nodes land.
     apply_inputs = wf["17"]["inputs"]
     assert apply_inputs["positive"] == ["11", 0]
     assert apply_inputs["negative"] == ["4", 0]
     assert apply_inputs["control_net"] == ["15", 0]
     assert apply_inputs["image"] == ["16", 0]
-
-    # KSampler.positive sources from node 17 (was ["11", 0] pre-B1.2)
+    # KSampler.negative stays direct from CLIPTextEncode neg (durable).
     sampler_id = roles["sampler"]
-    assert wf[sampler_id]["inputs"]["positive"] == ["17", 0]
-    # KSampler.negative untouched -- still direct from CLIPTextEncode neg
+    assert wf[sampler_id]["inputs"]["negative"] == ["4", 0]
+
+
+def test_workflow_has_controlnet_pose_nodes_after_b1_3() -> None:
+    """S7.1.B1.3: shipped JSON gains ControlNet OpenPose nodes 18, 19, 20.
+
+    18: ControlNetLoader (loads Flux-Pose ControlNet weights)
+    19: LoadImage (pose ref; placeholder, swapped per call by inject())
+    20: ControlNetApplyAdvanced (applies pose conditioning to positive)
+
+    Final positive conditioning chain after B1.3:
+      CLIPTextEncode(3) -> FluxGuidance(11) -> ControlNetApplyAdvanced_depth(17)
+                                                  -> ControlNetApplyAdvanced_pose(20)
+                                                  -> KSampler.positive(6)
+
+    KSampler.negative stays direct from CLIPTextEncode(4) per the design's
+    "no negative-side ControlNet" rule -- the apply nodes' slot-1 outputs
+    (modified negative) are unused.
+    """
+    from platinum.utils.workflow import load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    # New nodes exist with expected class types
+    assert wf["18"]["class_type"] == "ControlNetLoader"
+    assert wf["19"]["class_type"] == "LoadImage"
+    assert wf["20"]["class_type"] == "ControlNetApplyAdvanced"
+
+    # _meta.role tags map to the new nodes
+    roles = wf["_meta"]["role"]
+    assert roles["controlnet_pose_loader"] == "18"
+    assert roles["pose_ref_image"] == "19"
+    assert roles["controlnet_pose_apply"] == "20"
+
+    # Wiring into ControlNetApplyAdvanced_pose (node 20):
+    #   positive from ControlNetApplyAdvanced_depth (node 17)
+    #   negative still direct from CLIPTextEncode neg (node 4)
+    #   control_net from ControlNetLoader_pose (node 18)
+    #   image from LoadImage_pose (node 19)
+    apply_inputs = wf["20"]["inputs"]
+    assert apply_inputs["positive"] == ["17", 0]
+    assert apply_inputs["negative"] == ["4", 0]
+    assert apply_inputs["control_net"] == ["18", 0]
+    assert apply_inputs["image"] == ["19", 0]
+
+    # KSampler.positive now sources from node 20 (was ["17", 0] pre-B1.3)
+    sampler_id = roles["sampler"]
+    assert wf[sampler_id]["inputs"]["positive"] == ["20", 0]
+    # KSampler.negative still direct from CLIPTextEncode neg
     assert wf[sampler_id]["inputs"]["negative"] == ["4", 0]
