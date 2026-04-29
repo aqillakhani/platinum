@@ -1450,3 +1450,199 @@ async def test_generate_defaults_to_three_when_image_model_missing(tmp_path: Pat
     assert len(reports[0].candidates) == 3
     assert len(scene.keyframe_candidates) == 3
     assert len(scene.keyframe_scores) == 3
+
+
+@pytest.mark.asyncio
+async def test_generate_passes_width_height_from_track_yaml(tmp_path: Path) -> None:
+    """S7.1.A2.3: generate() reads image_model.width/height from track_cfg
+    and threads them into inject() so FakeComfyClient receives 9:16 portrait
+    workflows when the track YAML carries the new fields.
+
+    The FakeComfyClient is keyed by signatures of inject(width=768, height=1344);
+    if generate() passes the wrong dims, the signature won't match and
+    FakeComfyClient raises KeyError. submitted_workflows[0] makes the
+    successful match assertable explicitly.
+    """
+    from datetime import datetime
+
+    from platinum.models.story import Scene, Source, Story
+    from platinum.pipeline.keyframe_generator import generate
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    candidate_files: list[Path] = []
+    for i in range(3):
+        path = tmp_path / f"src_candidate_{i}.png"
+        make_synthetic_png(path, kind="grey", value=50 + i * 70)
+        candidate_files.append(path)
+
+    seeds = (0, 1, 2)  # _seeds_for_scene(0, 3, regen_count=0)
+    responses: dict[str, list[Path]] = {}
+    for i, seed in enumerate(seeds):
+        wf = inject(
+            wf_template,
+            prompt="a candle",
+            negative_prompt="bright daylight",
+            seed=seed,
+            width=768,
+            height=1344,
+            output_prefix=f"scene_000_candidate_{i}",
+        )
+        responses[workflow_signature(wf)] = [candidate_files[i]]
+
+    fake_comfy = FakeComfyClient(responses=responses)
+
+    scene = Scene(
+        id="scene_000",
+        index=0,
+        narration_text="Once upon a time",
+        narration_duration_seconds=5.0,
+        visual_prompt="a candle",
+        negative_prompt="bright daylight",
+    )
+    story = Story(
+        id="story_test_aspect",
+        track="atmospheric_horror",
+        source=Source(
+            type="gutenberg",
+            url="http://example.test",
+            title="Test Story",
+            author="Test",
+            raw_text="x",
+            fetched_at=datetime(2026, 4, 25),
+            license="PD-US",
+        ),
+        scenes=[scene],
+    )
+
+    class _StubConfig:
+        config_dir = repo_root / "config"
+
+        def track(self, _name: str) -> dict:
+            return {
+                "visual": {
+                    "aesthetic": "cinematic dark",
+                    "negative_prompt": "bright daylight",
+                },
+                "quality_gates": {
+                    "aesthetic_min_score": 0.0,
+                    "brightness_floor_mean_rgb": 0.0,
+                    "subject_min_edge_density": 0.0,
+                },
+                "image_model": {"width": 768, "height": 1344},
+            }
+
+    output_root = tmp_path / "keyframes"
+    await generate(
+        story,
+        config=_StubConfig(),
+        comfy=fake_comfy,
+        scorer=FakeAestheticScorer(fixed_score=7.0),
+        output_root=output_root,
+        mp_hands_factory=None,
+    )
+
+    assert len(fake_comfy.submitted_workflows) == 3
+    for submitted in fake_comfy.submitted_workflows:
+        assert submitted["5"]["inputs"]["width"] == 768
+        assert submitted["5"]["inputs"]["height"] == 1344
+        assert submitted["10"]["inputs"]["width"] == 768
+        assert submitted["10"]["inputs"]["height"] == 1344
+
+
+@pytest.mark.asyncio
+async def test_generate_defaults_width_height_to_1024_when_track_yaml_omits(
+    tmp_path: Path,
+) -> None:
+    """S7.1.A2.3: when image_model omits width/height, generate() falls back
+    to 1024x1024 -- a safety net for legacy YAMLs that haven't migrated."""
+    from datetime import datetime
+
+    from platinum.models.story import Scene, Source, Story
+    from platinum.pipeline.keyframe_generator import generate
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    candidate_files: list[Path] = []
+    for i in range(3):
+        path = tmp_path / f"src_candidate_{i}.png"
+        make_synthetic_png(path, kind="grey", value=50 + i * 70)
+        candidate_files.append(path)
+
+    seeds = (0, 1, 2)
+    responses: dict[str, list[Path]] = {}
+    for i, seed in enumerate(seeds):
+        wf = inject(
+            wf_template,
+            prompt="a candle",
+            negative_prompt="bright daylight",
+            seed=seed,
+            width=1024,
+            height=1024,
+            output_prefix=f"scene_000_candidate_{i}",
+        )
+        responses[workflow_signature(wf)] = [candidate_files[i]]
+
+    fake_comfy = FakeComfyClient(responses=responses)
+
+    scene = Scene(
+        id="scene_000",
+        index=0,
+        narration_text="Once upon a time",
+        narration_duration_seconds=5.0,
+        visual_prompt="a candle",
+        negative_prompt="bright daylight",
+    )
+    story = Story(
+        id="story_test_default_aspect",
+        track="atmospheric_horror",
+        source=Source(
+            type="gutenberg",
+            url="http://example.test",
+            title="Test Story",
+            author="Test",
+            raw_text="x",
+            fetched_at=datetime(2026, 4, 25),
+            license="PD-US",
+        ),
+        scenes=[scene],
+    )
+
+    class _StubConfig:
+        config_dir = repo_root / "config"
+
+        def track(self, _name: str) -> dict:
+            return {
+                "visual": {
+                    "aesthetic": "cinematic dark",
+                    "negative_prompt": "bright daylight",
+                },
+                "quality_gates": {
+                    "aesthetic_min_score": 0.0,
+                    "brightness_floor_mean_rgb": 0.0,
+                    "subject_min_edge_density": 0.0,
+                },
+                "image_model": {},  # no width/height -> default 1024
+            }
+
+    await generate(
+        story,
+        config=_StubConfig(),
+        comfy=fake_comfy,
+        scorer=FakeAestheticScorer(fixed_score=7.0),
+        output_root=tmp_path / "keyframes",
+        mp_hands_factory=None,
+    )
+
+    assert fake_comfy.submitted_workflows[0]["5"]["inputs"]["width"] == 1024
+    assert fake_comfy.submitted_workflows[0]["5"]["inputs"]["height"] == 1024

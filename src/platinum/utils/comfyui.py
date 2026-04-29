@@ -12,6 +12,7 @@ transport (or fake transport).
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -57,13 +58,20 @@ class FakeComfyClient:
     last entry is reused. Unknown signatures raise KeyError.
 
     `calls` records every generate_image call as a dict with
-    {"workflow_signature": str, "output_path": Path} so tests can assert
-    on call count, ordering, and the workflow each candidate received.
+    {"workflow_signature": str, "output_path": Path, "workflow": dict}
+    so tests can assert on call count, ordering, and the workflow each
+    candidate received. The "workflow" entry is a deepcopy snapshot so
+    later mutations cannot retroactively change asserted values.
     """
 
     responses: dict[str, list[Path]] = field(default_factory=dict)
     calls: list[dict[str, Any]] = field(default_factory=list)
     _cursors: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def submitted_workflows(self) -> list[dict[str, Any]]:
+        """Per-call workflow snapshots in submission order."""
+        return [c["workflow"] for c in self.calls]
 
     async def generate_image(
         self,
@@ -84,7 +92,11 @@ class FakeComfyClient:
         self._cursors[sig] = cursor + 1
         output_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, output_path)
-        self.calls.append({"workflow_signature": sig, "output_path": output_path})
+        self.calls.append({
+            "workflow_signature": sig,
+            "output_path": output_path,
+            "workflow": copy.deepcopy(workflow),
+        })
         return output_path
 
     async def upload_image(self, image_path: Path) -> str:

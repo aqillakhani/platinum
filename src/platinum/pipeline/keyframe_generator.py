@@ -304,6 +304,8 @@ async def generate(
     quality_gates = dict(track_cfg.get("quality_gates", {}))
     image_model_cfg = dict(track_cfg.get("image_model", {}))
     n_candidates = int(image_model_cfg.get("candidates_per_scene", 3))
+    width = int(image_model_cfg.get("width", 1024))
+    height = int(image_model_cfg.get("height", 1024))
     workflow_template = load_workflow("flux_dev_keyframe", config_dir=config.config_dir)
 
     reports: list[KeyframeReport] = []
@@ -329,6 +331,8 @@ async def generate(
             workflow_template=workflow_template,
             mp_hands_factory=mp_hands_factory,
             n_candidates=n_candidates,
+            width=width,
+            height=height,
         )
         scene.keyframe_candidates = list(report.candidates)
         scene.keyframe_scores = list(report.scores)

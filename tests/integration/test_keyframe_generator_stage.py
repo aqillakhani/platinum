@@ -86,8 +86,8 @@ def _build_responses_for_story(story: Story, repo_root: Path) -> dict[str, list[
                 prompt=scene.visual_prompt,
                 negative_prompt=negative_text,
                 seed=seed,
-                width=1024,
-                height=1024,
+                width=768,
+                height=1344,
                 output_prefix=f"scene_{scene.index:03d}_candidate_{i}",
             )
             out[workflow_signature(wf)] = [fixtures / f"candidate_{i}.png"]
@@ -193,8 +193,8 @@ async def test_stage_respects_yaml_candidates_per_scene_override(tmp_project, re
             prompt=scene.visual_prompt,
             negative_prompt=scene.negative_prompt or "bright daylight",
             seed=seed,
-            width=1024,
-            height=1024,
+            width=768,
+            height=1344,
             output_prefix=f"scene_{scene.index:03d}_candidate_{i}",
         )
         # Create distinct candidate PNG.
@@ -470,8 +470,8 @@ async def test_stage_brightness_gate_persists_correct_selection(  # noqa: ANN001
                 prompt=scene.visual_prompt,
                 negative_prompt=negative_text,
                 seed=seed,
-                width=1024,
-                height=1024,
+                width=768,
+                height=1344,
                 output_prefix=f"scene_{scene.index:03d}_candidate_{cand_idx}",
             )
             responses[workflow_signature(wf)] = [p]
@@ -553,8 +553,8 @@ async def test_stage_subject_gate_end_to_end_picks_subject_passing_candidate(  #
             prompt=scene.visual_prompt,
             negative_prompt=negative_text,
             seed=seed,
-            width=1024,
-            height=1024,
+            width=768,
+            height=1344,
             output_prefix=f"scene_{scene.index:03d}_candidate_{cand_idx}",
         )
         responses[workflow_signature(wf)] = [p]
