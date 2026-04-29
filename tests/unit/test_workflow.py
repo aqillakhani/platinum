@@ -245,8 +245,10 @@ def test_rebuilt_flux_workflow_has_required_roles_and_cfg_1() -> None:
     # KSampler.cfg = 1.0 (was 3.5 in S6.2)
     sampler_id = roles["sampler"]
     assert wf[sampler_id]["inputs"]["cfg"] == 1.0
-    # KSampler.model now points at ModelSamplingFlux output
-    assert wf[sampler_id]["inputs"]["model"] == ["10", 0]
+    # KSampler.model now points at IPAdapterFaceIDApply output (was ["10", 0]
+    # pre-S7.1.B1.1; B1.1 inserted IPAdapterFaceIDApply between ModelSamplingFlux
+    # and KSampler so face refs can condition the model chain).
+    assert wf[sampler_id]["inputs"]["model"] == ["14", 0]
     # KSampler.positive now points at FluxGuidance output
     assert wf[sampler_id]["inputs"]["positive"] == ["11", 0]
 
@@ -304,3 +306,47 @@ def test_inject_against_rebuilt_workflow_produces_valid_wiring() -> None:
     assert out["8"]["inputs"]["filename_prefix"] == "test"
     # FluxGuidance untouched (guidance is static template constant)
     assert out["11"]["inputs"]["guidance"] == 3.5
+
+
+def test_workflow_has_ipadapter_nodes_after_b1_1() -> None:
+    """S7.1.B1.1: shipped JSON gains IPAdapterFaceID nodes 12, 13, 14.
+
+    Adds three nodes for cross-scene face continuity via IP-Adapter:
+      12: IPAdapterModelLoader (loads FLUX.1-Redux-dev IP-Adapter weights)
+      13: LoadImage (face reference; placeholder, swapped per call by inject())
+      14: IPAdapterFaceIDApply (combines model + ipadapter + face image)
+
+    Rewires the model chain so KSampler.model sources from node 14:
+      UNETLoader(1) -> ModelSamplingFlux(10) -> IPAdapterFaceIDApply(14) -> KSampler(6).model
+
+    _meta.role tags ipadapter_loader/face_ref_image/ipadapter_apply give
+    inject() stable handles regardless of node-id renumbering.
+    """
+    from platinum.utils.workflow import load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    # New nodes exist with expected class types
+    assert wf["12"]["class_type"] == "IPAdapterModelLoader"
+    assert wf["13"]["class_type"] == "LoadImage"
+    assert wf["14"]["class_type"] == "IPAdapterFaceIDApply"
+
+    # _meta.role tags map to the new nodes
+    roles = wf["_meta"]["role"]
+    assert roles["ipadapter_loader"] == "12"
+    assert roles["face_ref_image"] == "13"
+    assert roles["ipadapter_apply"] == "14"
+
+    # Wiring into IPAdapterFaceIDApply (node 14):
+    #   model from ModelSamplingFlux (node 10)
+    #   ipadapter from IPAdapterModelLoader (node 12)
+    #   image from LoadImage (node 13)
+    apply_inputs = wf["14"]["inputs"]
+    assert apply_inputs["model"] == ["10", 0]
+    assert apply_inputs["ipadapter"] == ["12", 0]
+    assert apply_inputs["image"] == ["13", 0]
+
+    # KSampler.model now sources from node 14 (was ["10", 0] pre-B1.1)
+    sampler_id = roles["sampler"]
+    assert wf[sampler_id]["inputs"]["model"] == ["14", 0]
