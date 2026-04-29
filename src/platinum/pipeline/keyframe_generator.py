@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -37,6 +37,9 @@ class KeyframeReport:
     subject_passed: list[bool]
     selected_index: int
     selected_via_fallback: bool
+    # S7.1.A3.3 CLIP image-text similarity gate. Default factory keeps
+    # legacy KeyframeReport(...) callsites valid while new code populates it.
+    clip_passed: list[bool] = field(default_factory=list)
 
 
 class KeyframeGenerationError(RuntimeError):
@@ -87,6 +90,7 @@ async def generate_for_scene(
     seeds: Sequence[int] | None = None,
     width: int = 1024,
     height: int = 1024,
+    clip_min_similarity: float = 0.0,
     mp_hands_factory: Callable[[], Any] | None = None,
 ) -> KeyframeReport:
     """Generate N candidates, score + anatomy-check each, return a KeyframeReport.
@@ -157,6 +161,7 @@ async def generate_for_scene(
     scoring_succeeded: list[bool] = []
     brightness_passed: list[bool] = []
     subject_passed: list[bool] = []
+    clip_passed: list[bool] = []
     for path, candidate_exc in zip(candidate_paths, candidate_exceptions, strict=True):
         if candidate_exc is not None or not path.exists():
             scores.append(0.0)
@@ -164,6 +169,7 @@ async def generate_for_scene(
             scoring_succeeded.append(False)
             brightness_passed.append(False)
             subject_passed.append(False)
+            clip_passed.append(False)
             continue
 
         # NEW: brightness gate runs BEFORE the LAION call (saves the round-trip).
@@ -179,6 +185,7 @@ async def generate_for_scene(
             anatomy_passed.append(False)
             scoring_succeeded.append(False)
             subject_passed.append(False)
+            clip_passed.append(False)
             continue
 
         subject = check_image_subject(path, min_edge_density=subject_floor)
@@ -188,6 +195,38 @@ async def generate_for_scene(
                 "scene %d candidate %s subject gate failed: %s",
                 scene.index, path.name, subject.reason,
             )
+            scores.append(0.0)
+            anatomy_passed.append(False)
+            scoring_succeeded.append(False)
+            clip_passed.append(False)
+            continue
+
+        # S7.1.A3.3 CLIP image-text content fidelity gate. Runs after the
+        # cheap pixel-level checks, before LAION (which is similarly remote
+        # but more expensive). clip_min_similarity=0.0 disables the gate.
+        clip_ok: bool
+        if clip_min_similarity > 0.0:
+            try:
+                sim = await scorer.clip_similarity(path, scene.visual_prompt)
+                clip_ok = (
+                    _is_finite(sim) and float(sim) >= clip_min_similarity
+                )
+                if not clip_ok:
+                    logger.warning(
+                        "scene %d candidate %s clip gate failed: similarity=%.3f < min=%.3f",
+                        scene.index, path.name, float(sim) if _is_finite(sim) else float("nan"),
+                        clip_min_similarity,
+                    )
+            except Exception as clip_exc:  # noqa: BLE001 -- per-candidate isolation
+                logger.warning(
+                    "scene %d candidate %s clip_similarity failed: %r",
+                    scene.index, path.name, clip_exc,
+                )
+                clip_ok = False
+        else:
+            clip_ok = True
+        clip_passed.append(clip_ok)
+        if not clip_ok:
             scores.append(0.0)
             anatomy_passed.append(False)
             scoring_succeeded.append(False)
@@ -226,6 +265,16 @@ async def generate_for_scene(
             ],
         )
 
+    # S7.1.A3.3 CLIP halt: only meaningful when the gate is actually engaged.
+    if clip_min_similarity > 0.0 and not any(clip_passed):
+        raise KeyframeGenerationError(
+            scene_index=scene.index,
+            exceptions=[
+                RuntimeError(f"clip gate failed for candidate {i} (path={p})")
+                for i, p in enumerate(candidate_paths)
+            ],
+        )
+
     if not any(scoring_succeeded):
         raise KeyframeGenerationError(
             scene_index=scene.index,
@@ -237,11 +286,11 @@ async def generate_for_scene(
 
     threshold = float(quality_gates.get("aesthetic_min_score", 0.0))
     eligible = [
-        i for i, (s, a, ok, b, sj) in enumerate(
+        i for i, (s, a, ok, b, sj, cp) in enumerate(
             zip(scores, anatomy_passed, scoring_succeeded, brightness_passed,
-                subject_passed, strict=True)
+                subject_passed, clip_passed, strict=True)
         )
-        if ok and b and sj and s >= threshold and a
+        if ok and b and sj and cp and s >= threshold and a
     ]
     if eligible:
         max_score = max(scores[i] for i in eligible)
@@ -249,17 +298,19 @@ async def generate_for_scene(
         selected_via_fallback = False
     else:
         # Content failure: fall back to highest-scored among candidates that
-        # passed scoring AND brightness AND subject gates. Failing candidates
-        # are NEVER selected, even in fallback (would persist a degenerate
-        # image even though we know it's bad).
+        # passed scoring AND brightness AND subject AND clip gates. Failing
+        # candidates are NEVER selected, even in fallback (would persist a
+        # degenerate image even though we know it's bad).
         fallback_pool = [
-            i for i, (ok, b, sj) in enumerate(
-                zip(scoring_succeeded, brightness_passed, subject_passed, strict=True)
+            i for i, (ok, b, sj, cp) in enumerate(
+                zip(scoring_succeeded, brightness_passed, subject_passed,
+                    clip_passed, strict=True)
             )
-            if ok and b and sj
+            if ok and b and sj and cp
         ]
-        # If empty, the brightness/subject/scoring halt above already raised
-        # KeyframeGenerationError; reaching here guarantees fallback_pool is non-empty.
+        # If empty, the brightness/subject/clip/scoring halt above already
+        # raised KeyframeGenerationError; reaching here guarantees fallback_pool
+        # is non-empty.
         max_score_in_pool = max(scores[i] for i in fallback_pool)
         selected_index = next(
             i for i in fallback_pool if scores[i] == max_score_in_pool
@@ -274,6 +325,7 @@ async def generate_for_scene(
         scoring_succeeded=scoring_succeeded,
         brightness_passed=brightness_passed,
         subject_passed=subject_passed,
+        clip_passed=clip_passed,
         selected_index=selected_index,
         selected_via_fallback=selected_via_fallback,
     )
@@ -306,6 +358,7 @@ async def generate(
     n_candidates = int(image_model_cfg.get("candidates_per_scene", 3))
     width = int(image_model_cfg.get("width", 1024))
     height = int(image_model_cfg.get("height", 1024))
+    clip_min_similarity = float(image_model_cfg.get("clip_min_similarity", 0.0))
     workflow_template = load_workflow("flux_dev_keyframe", config_dir=config.config_dir)
 
     reports: list[KeyframeReport] = []
@@ -333,6 +386,7 @@ async def generate(
             n_candidates=n_candidates,
             width=width,
             height=height,
+            clip_min_similarity=clip_min_similarity,
         )
         scene.keyframe_candidates = list(report.candidates)
         scene.keyframe_scores = list(report.scores)

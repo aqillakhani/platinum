@@ -54,6 +54,29 @@ def test_keyframe_report_carries_brightness_passed_field() -> None:
         r.brightness_passed = [True, True, True]  # type: ignore[misc]
 
 
+def test_keyframe_report_carries_clip_passed_field() -> None:
+    """S7.1.A3.3: clip_passed is an immutable list[bool] aligned to candidates."""
+    import dataclasses
+
+    from platinum.pipeline.keyframe_generator import KeyframeReport
+
+    r = KeyframeReport(
+        scene_index=0,
+        candidates=[Path("/tmp/c0.png"), Path("/tmp/c1.png"), Path("/tmp/c2.png")],
+        scores=[5.0, 6.0, 7.0],
+        anatomy_passed=[True, True, True],
+        scoring_succeeded=[True, True, True],
+        brightness_passed=[True, True, True],
+        subject_passed=[True, True, True],
+        clip_passed=[False, True, True],
+        selected_index=2,
+        selected_via_fallback=False,
+    )
+    assert r.clip_passed == [False, True, True]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        r.clip_passed = [True, True, True]  # type: ignore[misc]
+
+
 def test_keyframe_generation_error_carries_per_candidate_exceptions() -> None:
     from platinum.pipeline.keyframe_generator import KeyframeGenerationError
 
@@ -1646,3 +1669,237 @@ async def test_generate_defaults_width_height_to_1024_when_track_yaml_omits(
 
     assert fake_comfy.submitted_workflows[0]["5"]["inputs"]["width"] == 1024
     assert fake_comfy.submitted_workflows[0]["5"]["inputs"]["height"] == 1024
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_clip_gate_rejects_low_similarity_candidates(
+    tmp_path: Path,
+) -> None:
+    """S7.1.A3.3: CLIP gate runs after subject + before LAION scoring.
+
+    Candidate 0 has clip_similarity=0.05 (below 0.20 threshold) -> rejected.
+    Candidates 1 and 2 have clip_similarity=0.30 -> pass; LAION still scores
+    them. The selected candidate is the highest-scoring among CLIP-passing.
+    """
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(idx=0)
+    output_dir = tmp_path / "scene_000"
+    score_map = {
+        output_dir / "candidate_0.png": 8.0,  # would win on LAION but fails CLIP
+        output_dir / "candidate_1.png": 6.5,
+        output_dir / "candidate_2.png": 7.0,  # winner
+    }
+    clip_map = {
+        output_dir / "candidate_0.png": 0.05,  # below 0.20 threshold
+        output_dir / "candidate_1.png": 0.30,
+        output_dir / "candidate_2.png": 0.30,
+    }
+    scorer = MappedFakeScorer(
+        scores_by_path=score_map,
+        default=0.0,
+        clip_similarities_by_path=clip_map,
+        clip_similarity_default=0.0,
+    )
+    comfy, wf_template = _build_fake_comfy_with_three_candidates()
+    report = await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates={**_GATES, "subject_min_edge_density": 0.0},
+        comfy=comfy,
+        scorer=scorer,
+        output_dir=output_dir,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+        clip_min_similarity=0.20,
+    )
+    assert report.clip_passed == [False, True, True]
+    # candidate 0 had the highest LAION score but should NOT win because CLIP rejected it
+    assert report.selected_index == 2  # 7.0 is the highest LAION among CLIP-passing
+    assert report.scores[0] == 0.0  # CLIP failure zeros out the score
+    assert not report.selected_via_fallback
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_clip_gate_halts_when_all_fail(tmp_path: Path) -> None:
+    """S7.1.A3.3: when no candidate passes CLIP, raise KeyframeGenerationError.
+
+    Mirrors the brightness/subject halt semantics so a CLIP-blanked scene
+    surfaces the failure to the Stage instead of selecting a degenerate
+    image via fallback.
+    """
+    from platinum.pipeline.keyframe_generator import (
+        KeyframeGenerationError,
+        generate_for_scene,
+    )
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(idx=0)
+    output_dir = tmp_path / "scene_000"
+    scorer = MappedFakeScorer(
+        scores_by_path={},
+        default=7.0,
+        clip_similarities_by_path={},
+        clip_similarity_default=0.05,  # all below 0.20 threshold
+    )
+    comfy, wf_template = _build_fake_comfy_with_three_candidates()
+    with pytest.raises(KeyframeGenerationError, match="clip"):
+        await generate_for_scene(
+            scene,
+            track_visual=_TRACK_VISUAL,
+            quality_gates={**_GATES, "subject_min_edge_density": 0.0},
+            comfy=comfy,
+            scorer=scorer,
+            output_dir=output_dir,
+            workflow_template=wf_template,
+            seeds=(0, 1, 2),
+            mp_hands_factory=make_fake_hands_factory(None),
+            clip_min_similarity=0.20,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_clip_gate_disabled_when_threshold_zero(
+    tmp_path: Path,
+) -> None:
+    """S7.1.A3.3: clip_min_similarity=0.0 effectively disables the gate.
+
+    Default behavior pre-S7.1: any clip similarity (or even the
+    FakeAestheticScorer's 0.5 neutral default) passes 0.0; pipeline
+    still works for tracks that haven't migrated to clip_min_similarity.
+    """
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(idx=0)
+    output_dir = tmp_path / "scene_000"
+    score_map = {
+        output_dir / "candidate_0.png": 6.0,
+        output_dir / "candidate_1.png": 7.0,
+        output_dir / "candidate_2.png": 8.0,
+    }
+    scorer = MappedFakeScorer(
+        scores_by_path=score_map,
+        default=0.0,
+        clip_similarities_by_path={},
+        clip_similarity_default=0.05,  # would fail any positive threshold
+    )
+    comfy, wf_template = _build_fake_comfy_with_three_candidates()
+    report = await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates={**_GATES, "subject_min_edge_density": 0.0},
+        comfy=comfy,
+        scorer=scorer,
+        output_dir=output_dir,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+        # clip_min_similarity defaults to 0.0 -> gate is effectively off
+    )
+    assert report.clip_passed == [True, True, True]
+    assert report.selected_index == 2  # highest LAION score wins
+
+
+@pytest.mark.asyncio
+async def test_generate_passes_clip_min_similarity_from_track_yaml(
+    tmp_path: Path,
+) -> None:
+    """S7.1.A3.3: generate() reads image_model.clip_min_similarity from
+    track_cfg and threads it to generate_for_scene's CLIP gate."""
+    from datetime import datetime
+
+    from platinum.models.story import Scene, Source, Story
+    from platinum.pipeline.keyframe_generator import KeyframeGenerationError, generate
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    from tests._fixtures import make_synthetic_png
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf_template = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    candidate_files: list[Path] = []
+    for i in range(3):
+        path = tmp_path / f"src_candidate_{i}.png"
+        make_synthetic_png(path, kind="grey", value=50 + i * 70)
+        candidate_files.append(path)
+
+    seeds = (0, 1, 2)
+    responses: dict[str, list[Path]] = {}
+    for i, seed in enumerate(seeds):
+        wf = inject(
+            wf_template,
+            prompt="a candle",
+            negative_prompt="bright daylight",
+            seed=seed,
+            width=1024,
+            height=1024,
+            output_prefix=f"scene_000_candidate_{i}",
+        )
+        responses[workflow_signature(wf)] = [candidate_files[i]]
+
+    fake_comfy = FakeComfyClient(responses=responses)
+    # All candidates fail the CLIP gate -- generate() should raise.
+    fake_scorer = MappedFakeScorer(
+        scores_by_path={},
+        default=7.0,
+        clip_similarities_by_path={},
+        clip_similarity_default=0.05,
+    )
+
+    scene = Scene(
+        id="scene_000",
+        index=0,
+        narration_text="Once upon a time",
+        narration_duration_seconds=5.0,
+        visual_prompt="a candle",
+        negative_prompt="bright daylight",
+    )
+    story = Story(
+        id="story_test_clip",
+        track="atmospheric_horror",
+        source=Source(
+            type="gutenberg",
+            url="http://example.test",
+            title="Test Story",
+            author="Test",
+            raw_text="x",
+            fetched_at=datetime(2026, 4, 25),
+            license="PD-US",
+        ),
+        scenes=[scene],
+    )
+
+    class _StubConfig:
+        config_dir = repo_root / "config"
+
+        def track(self, _name: str) -> dict:
+            return {
+                "visual": {
+                    "aesthetic": "cinematic dark",
+                    "negative_prompt": "bright daylight",
+                },
+                "quality_gates": {
+                    "aesthetic_min_score": 0.0,
+                    "brightness_floor_mean_rgb": 0.0,
+                    "subject_min_edge_density": 0.0,
+                },
+                "image_model": {"clip_min_similarity": 0.20},
+            }
+
+    output_root = tmp_path / "keyframes"
+    with pytest.raises(KeyframeGenerationError, match="clip"):
+        await generate(
+            story,
+            config=_StubConfig(),
+            comfy=fake_comfy,
+            scorer=fake_scorer,
+            output_root=output_root,
+            mp_hands_factory=None,
+        )
