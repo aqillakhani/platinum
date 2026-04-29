@@ -48,6 +48,79 @@ def _synth_response(n: int) -> dict:
     }
 
 
+PROMPTS_DIR = Path(__file__).resolve().parents[2] / "config" / "prompts"
+
+
+def _render_visual_prompts(
+    *,
+    characters: dict[str, str] | None = None,
+    scenes: list[dict] | None = None,
+    deviation_feedback: list | None = None,
+) -> str:
+    from platinum.utils.prompts import render_template
+
+    track = _track()
+    return render_template(
+        prompts_dir=PROMPTS_DIR,
+        track="atmospheric_horror",
+        name="visual_prompts.j2",
+        context={
+            "aesthetic": track["visual"]["aesthetic"],
+            "palette": track["visual"]["palette"],
+            "default_negative": track["visual"]["negative_prompt"],
+            "scenes": scenes or [{"index": 1, "narration_text": "x"}],
+            "characters": characters or {},
+            "deviation_feedback": deviation_feedback,
+        },
+    )
+
+
+def test_visual_prompts_template_includes_track_characters_section() -> None:
+    rendered = _render_visual_prompts(
+        characters={
+            "Fortunato": "Italian gentleman in motley",
+            "Montresor": "narrator in dark cloak",
+        }
+    )
+    assert "TRACK CHARACTERS" in rendered
+    assert "Fortunato: Italian gentleman in motley" in rendered
+    assert "Montresor: narrator in dark cloak" in rendered
+
+
+def test_visual_prompts_template_omits_track_characters_when_empty() -> None:
+    rendered = _render_visual_prompts(characters={})
+    # The CONVENTIONS prose mentions "TRACK CHARACTERS" by name; the actual
+    # section header has a parenthetical we use as the unique marker.
+    assert "TRACK CHARACTERS (recurring" not in rendered
+
+
+def test_visual_prompts_template_lists_camera_framing_tokens() -> None:
+    rendered = _render_visual_prompts()
+    for token in [
+        "extreme close-up",
+        "close-up",
+        "medium shot",
+        "medium-wide shot",
+        "wide shot",
+        "over-the-shoulder shot",
+        "low-angle shot",
+        "high-angle shot",
+    ]:
+        assert token in rendered
+
+
+def test_visual_prompts_template_states_required_fields() -> None:
+    rendered = _render_visual_prompts()
+    assert "composition_notes" in rendered
+    assert "character_refs" in rendered
+
+
+def test_visual_prompts_template_retains_darkness_density_caps() -> None:
+    rendered = _render_visual_prompts()
+    assert "DARKNESS DENSITY CAPS" in rendered
+    assert "lit edge" in rendered
+
+
 @pytest.mark.asyncio
 async def test_visual_prompts_zips_into_scenes_by_index(tmp_path) -> None:
     from platinum.models.db import create_all
