@@ -42,6 +42,45 @@ def _resolve_role(workflow: dict[str, Any], role: str) -> str:
     return roles[role]
 
 
+def _apply_ref(
+    workflow: dict[str, Any],
+    *,
+    ref_path: str | None,
+    loader_role: str,
+    apply_role: str,
+    bypass_field: str,
+) -> None:
+    """Wire a face/pose/depth reference into the workflow, mutating in place.
+
+    Looks up the LoadImage node id via `loader_role` and the apply node id
+    (IPAdapterFaceIDApply or ControlNetApplyAdvanced) via `apply_role`.
+    If either role is unregistered in `_meta.role`, this is a no-op so
+    pre-S7.1.B workflows still inject cleanly.
+
+    `ref_path is None` -> set apply node's `bypass_field` to 0.0
+        (weight=0 for IP-Adapter; strength=0 for ControlNet) -- the apply
+        node still runs but contributes nothing, equivalent to "skip this
+        conditioning for this candidate."
+    `ref_path is str` -> validate the file exists on disk (raises
+        FileNotFoundError early rather than letting ComfyUI fail
+        mid-sample) and write the path into the LoadImage node's `image`
+        input.
+    """
+    roles = workflow.get("_meta", {}).get("role", {})
+    if loader_role not in roles or apply_role not in roles:
+        return
+    apply_id = roles[apply_role]
+    if ref_path is None:
+        workflow[apply_id]["inputs"][bypass_field] = 0.0
+        return
+    if not Path(ref_path).exists():
+        raise FileNotFoundError(
+            f"{loader_role} path does not exist: {ref_path}"
+        )
+    loader_id = roles[loader_role]
+    workflow[loader_id]["inputs"]["image"] = ref_path
+
+
 def inject(
     workflow: dict[str, Any],
     *,
@@ -51,13 +90,24 @@ def inject(
     width: int = 1024,
     height: int = 1024,
     output_prefix: str = "flux_dev",
+    face_ref_path: str | None = None,
+    depth_ref_path: str | None = None,
+    pose_ref_path: str | None = None,
 ) -> dict[str, Any]:
     """Return a new workflow dict with the variable fields swapped in.
 
     Required _meta.role entries: positive_prompt, negative_prompt,
     empty_latent, sampler, save_image. Raises KeyError if any are missing.
 
-    Optional _meta.role entries: model_sampling_flux.
+    Optional _meta.role entries: model_sampling_flux, ipadapter_apply,
+    controlnet_depth_apply, controlnet_pose_apply (with their
+    corresponding *_loader / *_ref_image entries).
+
+    Reference path kwargs (S7.1.B1.4):
+      face_ref_path, depth_ref_path, pose_ref_path: str | None.
+        None -> bypass the corresponding apply node (weight/strength=0).
+        str  -> validated to exist on disk; written into the LoadImage
+                node's `image` input. Raises FileNotFoundError if missing.
     """
     out = copy.deepcopy(workflow)
     pos_id = _resolve_role(out, "positive_prompt")
@@ -77,4 +127,23 @@ def inject(
         msf_id = msf_roles["model_sampling_flux"]
         out[msf_id]["inputs"]["width"] = width
         out[msf_id]["inputs"]["height"] = height
+    # Reference conditioning: face (IPAdapter) + depth + pose (ControlNet).
+    _apply_ref(
+        out, ref_path=face_ref_path,
+        loader_role="face_ref_image",
+        apply_role="ipadapter_apply",
+        bypass_field="weight",
+    )
+    _apply_ref(
+        out, ref_path=depth_ref_path,
+        loader_role="depth_ref_image",
+        apply_role="controlnet_depth_apply",
+        bypass_field="strength",
+    )
+    _apply_ref(
+        out, ref_path=pose_ref_path,
+        loader_role="pose_ref_image",
+        apply_role="controlnet_pose_apply",
+        bypass_field="strength",
+    )
     return out

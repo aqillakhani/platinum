@@ -455,3 +455,143 @@ def test_workflow_has_controlnet_pose_nodes_after_b1_3() -> None:
     assert wf[sampler_id]["inputs"]["positive"] == ["20", 0]
     # KSampler.negative still direct from CLIPTextEncode neg
     assert wf[sampler_id]["inputs"]["negative"] == ["4", 0]
+
+
+def test_inject_with_face_ref_sets_loadimage_face(tmp_path: Path) -> None:
+    """S7.1.B1.4: inject(face_ref_path=path) writes path into node 13.image."""
+    from platinum.utils.workflow import inject, load_workflow
+
+    face_ref = tmp_path / "fortunato_face.png"
+    face_ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    out = inject(
+        wf, prompt="x", negative_prompt="y", seed=42,
+        face_ref_path=str(face_ref),
+    )
+
+    face_loader_id = wf["_meta"]["role"]["face_ref_image"]
+    assert out[face_loader_id]["inputs"]["image"] == str(face_ref)
+
+
+def test_inject_with_face_ref_none_sets_ipadapter_weight_zero() -> None:
+    """S7.1.B1.4: inject(face_ref_path=None) sets node 14.weight=0 (bypass).
+
+    None means "no face ref for this candidate" -- ComfyUI semantics: the
+    IPAdapterFaceIDApply still runs but with weight 0, so it has no effect
+    on the model. This keeps the workflow valid for unit tests + scenes
+    where Story.characters has no entry yet.
+    """
+    from platinum.utils.workflow import inject, load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    out = inject(
+        wf, prompt="x", negative_prompt="y", seed=42,
+        face_ref_path=None,
+    )
+
+    apply_id = wf["_meta"]["role"]["ipadapter_apply"]
+    assert out[apply_id]["inputs"]["weight"] == 0.0
+
+
+def test_inject_with_depth_ref_sets_loadimage_depth(tmp_path: Path) -> None:
+    """S7.1.B1.4: inject(depth_ref_path=path) writes path into node 16.image."""
+    from platinum.utils.workflow import inject, load_workflow
+
+    depth_ref = tmp_path / "scene_007_depth.png"
+    depth_ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    out = inject(
+        wf, prompt="x", negative_prompt="y", seed=42,
+        depth_ref_path=str(depth_ref),
+    )
+
+    depth_loader_id = wf["_meta"]["role"]["depth_ref_image"]
+    assert out[depth_loader_id]["inputs"]["image"] == str(depth_ref)
+
+
+def test_inject_with_depth_ref_none_sets_controlnet_depth_strength_zero() -> None:
+    """S7.1.B1.4: inject(depth_ref_path=None) sets node 17.strength=0 (bypass)."""
+    from platinum.utils.workflow import inject, load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    out = inject(
+        wf, prompt="x", negative_prompt="y", seed=42,
+        depth_ref_path=None,
+    )
+
+    apply_id = wf["_meta"]["role"]["controlnet_depth_apply"]
+    assert out[apply_id]["inputs"]["strength"] == 0.0
+
+
+def test_inject_with_pose_ref_sets_loadimage_pose(tmp_path: Path) -> None:
+    """S7.1.B1.4: inject(pose_ref_path=path) writes path into node 19.image."""
+    from platinum.utils.workflow import inject, load_workflow
+
+    pose_ref = tmp_path / "scene_007_pose.png"
+    pose_ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    out = inject(
+        wf, prompt="x", negative_prompt="y", seed=42,
+        pose_ref_path=str(pose_ref),
+    )
+
+    pose_loader_id = wf["_meta"]["role"]["pose_ref_image"]
+    assert out[pose_loader_id]["inputs"]["image"] == str(pose_ref)
+
+
+def test_inject_with_pose_ref_none_sets_controlnet_pose_strength_zero() -> None:
+    """S7.1.B1.4: inject(pose_ref_path=None) sets node 20.strength=0 (bypass)."""
+    from platinum.utils.workflow import inject, load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    out = inject(
+        wf, prompt="x", negative_prompt="y", seed=42,
+        pose_ref_path=None,
+    )
+
+    apply_id = wf["_meta"]["role"]["controlnet_pose_apply"]
+    assert out[apply_id]["inputs"]["strength"] == 0.0
+
+
+def test_inject_raises_filenotfounderror_for_nonexistent_face_ref() -> None:
+    """S7.1.B1.4: inject() validates ref paths early and raises FileNotFoundError
+    rather than letting ComfyUI error out mid-sample on a missing file."""
+    from platinum.utils.workflow import inject, load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    with pytest.raises(FileNotFoundError) as exc:
+        inject(
+            wf, prompt="x", negative_prompt="y", seed=42,
+            face_ref_path="/nonexistent/path/to/face.png",
+        )
+    msg = str(exc.value).lower()
+    assert "face_ref" in msg or "exist" in msg
+
+
+def test_inject_default_kwargs_bypass_all_refs() -> None:
+    """S7.1.B1.4: inject() called without ref kwargs (existing call sites)
+    drives all conditioning weights to 0 -- equivalent to pre-Phase-B
+    behavior where IP-Adapter + ControlNet didn't exist. This keeps the
+    keyframe_generator backwards-compatible until Layer B5 wires the refs.
+    """
+    from platinum.utils.workflow import inject, load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    out = inject(wf, prompt="x", negative_prompt="y", seed=42)
+
+    roles = wf["_meta"]["role"]
+    assert out[roles["ipadapter_apply"]]["inputs"]["weight"] == 0.0
+    assert out[roles["controlnet_depth_apply"]]["inputs"]["strength"] == 0.0
+    assert out[roles["controlnet_pose_apply"]]["inputs"]["strength"] == 0.0
