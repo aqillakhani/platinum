@@ -109,7 +109,7 @@ def test_scene_from_dict_backfills_missing_b2_1_fields() -> None:
 # ---- S7.1.B2.2: Story.characters dict --------------------------------------
 
 
-def _build_minimal_story() -> "Story":
+def _build_minimal_story():
     """Tiny Story with one Scene; B2.2 tests the new characters dict only."""
     from datetime import UTC, datetime
 

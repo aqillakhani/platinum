@@ -122,27 +122,37 @@ def test_visual_prompts_template_retains_darkness_density_caps() -> None:
     assert "lit edge" in rendered
 
 
-def test_visual_prompts_tool_schema_unchanged_in_phase_a() -> None:
-    """Phase A keeps the submit_visual_prompts tool schema at its S7 shape.
+def test_visual_prompts_tool_schema_after_b2_4() -> None:
+    """S7.1.B2.4: submit_visual_prompts tool schema now declares
+    composition_notes (string) and character_refs (array of string) as
+    OPTIONAL properties on each scene item -- Claude knows the keys exist
+    and may emit them, but old recorded fixtures (and prompts that don't
+    ask for them) still validate because they remain absent from the
+    `required` list.
 
-    The new template asks the model to emit composition_notes and
-    character_refs, but the schema is not yet expanded to require them
-    -- they are added at Phase B task B3.1 once the Scene model gains
-    those fields. JSON-Schema default `additionalProperties: true` lets
-    the extras pass validation; _zip_into_scenes silently ignores them
-    in Phase A.
+    The Phase A version of this test asserted the keys were missing from
+    `properties` entirely; B2.4 flips that contract now that Scene has
+    fields to receive them and _zip_into_scenes (B2.3) writes them.
     """
     from platinum.pipeline.visual_prompts import VISUAL_PROMPTS_TOOL
 
     schema = VISUAL_PROMPTS_TOOL["input_schema"]
     item_schema = schema["properties"]["scenes"]["items"]
+    # Required set unchanged: still just the three load-bearing strings.
     assert set(item_schema["required"]) == {
         "index",
         "visual_prompt",
         "negative_prompt",
     }
-    assert "composition_notes" not in item_schema["properties"]
-    assert "character_refs" not in item_schema["properties"]
+    # New optional properties present, with the right shape.
+    assert item_schema["properties"]["composition_notes"] == {"type": "string"}
+    assert item_schema["properties"]["character_refs"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+    # ...but neither is required -- old fixtures still parse.
+    assert "composition_notes" not in item_schema["required"]
+    assert "character_refs" not in item_schema["required"]
 
 
 def test_build_request_passes_characters_dict_to_template() -> None:

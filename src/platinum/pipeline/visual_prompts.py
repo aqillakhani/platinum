@@ -42,6 +42,15 @@ VISUAL_PROMPTS_TOOL: dict[str, Any] = {
                         "index": {"type": "integer", "minimum": 1},
                         "visual_prompt": {"type": "string"},
                         "negative_prompt": {"type": "string"},
+                        # S7.1.B2.4 -- optional structural fields. Declaring
+                        # them here gives Claude an explicit contract to emit
+                        # the keys; keeping them out of `required` preserves
+                        # backwards compat with old recorded fixtures.
+                        "composition_notes": {"type": "string"},
+                        "character_refs": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
                     },
                 },
             },
