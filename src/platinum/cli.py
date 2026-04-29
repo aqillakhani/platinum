@@ -373,6 +373,33 @@ def keyframes(
         )
         raise typer.Exit(code=1)
 
+    # S7.1.B4.6: gate keyframe rendering on completed character refs. If the
+    # story has scenes with character_refs but Story.characters has no path
+    # for those names (or the path is missing on disk), IPAdapterFaceID
+    # would silently fall back to weight=0 and produce face-inconsistent
+    # output. Better to block here with a clear pointer at the review UI.
+    from pathlib import Path
+
+    from platinum.pipeline.character_references import CharacterReferenceStage
+
+    char_stage = CharacterReferenceStage()
+    if not char_stage.is_complete(s):
+        discovered = sorted(char_stage._discover_characters(s))
+        missing = [
+            name
+            for name in discovered
+            if not s.characters.get(name) or not Path(s.characters[name]).exists()
+        ]
+        console.print(
+            f"[red]Story {story} has unresolved character references: "
+            f"{missing}.[/red]"
+        )
+        console.print(
+            f"[yellow]Run 'platinum review characters {story}' to pick "
+            f"refs before keyframe generation.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
     # Parse --scenes "1,8,16" -> {1, 8, 16}. Values are matched against
     # `scene.index` (which the scene_breakdown stage emits as 1-indexed),
     # not against the array offset.

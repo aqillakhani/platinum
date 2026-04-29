@@ -188,3 +188,84 @@ def test_keyframes_missing_story_exits_1(
     result = runner.invoke(app, ["keyframes", "DOES_NOT_EXIST"])
     assert result.exit_code == 1
     assert "not found" in result.output.lower()
+
+
+def test_keyframes_blocks_when_character_refs_unresolved(
+    cli_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S7.1.B4.6: a story whose scenes nominate character_refs but
+    Story.characters is empty / has missing-on-disk paths must NOT proceed
+    to keyframe rendering -- IPAdapterFaceID would fall back to weight=0
+    and silently produce face-inconsistent output. Block with a clear
+    pointer at `platinum review characters <story>`.
+    """
+    from platinum.models.story import (
+        Scene,
+        Source,
+        StageRun,
+        StageStatus,
+        Story,
+    )
+
+    monkeypatch.chdir(cli_project)
+    _redirect_config_to(cli_project, monkeypatch)
+
+    story_id = "STORY_WITH_CHARS"
+    s = Story(
+        id=story_id,
+        track="atmospheric_horror",
+        source=Source(
+            type="gutenberg", url="x", title="t", author="a",
+            raw_text="r", fetched_at=datetime(2026, 4, 25), license="PD-US",
+        ),
+        scenes=[
+            Scene(
+                id="scene_001", index=1,
+                narration_text="Fortunato laughed at Montresor.",
+                visual_prompt="x", negative_prompt="y",
+                character_refs=["Fortunato", "Montresor"],
+            ),
+        ],
+        stages=[
+            StageRun(
+                stage="visual_prompts",
+                status=StageStatus.COMPLETE,
+                started_at=datetime(2026, 4, 25),
+                completed_at=datetime(2026, 4, 25),
+            )
+        ],
+    )
+    # NB: s.characters is empty -- the user has not picked refs yet.
+    story_dir = cli_project / "data" / "stories" / story_id
+    story_dir.mkdir(parents=True)
+    s.save(story_dir / "story.json")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["keyframes", story_id])
+    assert result.exit_code == 1
+    output_lower = result.output.lower()
+    assert "character" in output_lower
+    assert "review characters" in output_lower or "platinum review" in output_lower
+    # Specific missing characters surfaced in the message.
+    assert "Fortunato" in result.output or "Montresor" in result.output
+
+
+def test_keyframes_skips_character_check_when_no_refs(
+    cli_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S7.1.B4.6: stories without recurring characters (e.g. documentary
+    tracks) skip the character-refs check entirely. The dry-run path
+    confirms preconditions all pass."""
+    monkeypatch.chdir(cli_project)
+    monkeypatch.setenv("PLATINUM_COMFYUI_HOST", "http://test:8188")
+    monkeypatch.setenv("PLATINUM_AESTHETICS_HOST", "http://test:8189")
+    _redirect_config_to(cli_project, monkeypatch)
+
+    # _seed_adapted_story builds scenes WITHOUT character_refs.
+    _seed_adapted_story(cli_project, "STORY_NO_CHARS", n_scenes=2)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["keyframes", "STORY_NO_CHARS", "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
