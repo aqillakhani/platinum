@@ -116,6 +116,23 @@ def test_visual_prompts_template_states_required_fields() -> None:
     assert "character_refs" in rendered
 
 
+def test_visual_prompts_template_pins_character_refs_assignment_guidance() -> None:
+    """S7.1.B3.4: the CONVENTIONS section must tell Claude how to assign
+    character_refs per scene. Specifically:
+      1. Use names from the TRACK CHARACTERS section (closed vocabulary).
+      2. Empty list is allowed (transitional / dialogue-only scenes).
+
+    These two rules are what prevent Claude from inventing character names
+    on the fly (which would break IP-Adapter face continuity) and from
+    insisting every scene have a character (which would force noise into
+    transitional shots). The template has carried this guidance since
+    Phase A; this test pins it against accidental rewrites.
+    """
+    rendered = _render_visual_prompts()
+    assert "TRACK CHARACTERS section" in rendered
+    assert "Empty list" in rendered
+
+
 def test_visual_prompts_template_retains_darkness_density_caps() -> None:
     rendered = _render_visual_prompts()
     assert "DARKNESS DENSITY CAPS" in rendered
