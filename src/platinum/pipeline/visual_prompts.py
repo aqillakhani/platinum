@@ -123,6 +123,14 @@ def _zip_into_scenes(
             continue
         scene.visual_prompt = item["visual_prompt"]
         scene.negative_prompt = item["negative_prompt"]
+        # S7.1.B2.3 -- optional composition_notes + character_refs from the new
+        # template. Default to leaving Scene fields untouched when the keys are
+        # absent so old recorded fixtures (and tracks that don't ask for these)
+        # keep round-tripping.
+        if "composition_notes" in item:
+            scene.composition_notes = item["composition_notes"]
+        if "character_refs" in item:
+            scene.character_refs = list(item["character_refs"])
         if scene.review_status == ReviewStatus.REJECTED:
             scene.review_status = ReviewStatus.REGENERATE
             scene.review_feedback = None

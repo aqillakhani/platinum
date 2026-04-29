@@ -272,3 +272,75 @@ async def test_visual_prompts_count_must_match_scene_count(tmp_path) -> None:
             prompts_dir=Path(__file__).resolve().parents[2] / "config" / "prompts",
             db_path=db_path, recorder=synth,
         )
+
+
+def test_zip_into_scenes_writes_composition_notes() -> None:
+    """S7.1.B2.3: _zip_into_scenes copies composition_notes from tool_input
+    onto Scene.composition_notes. The new visual_prompts.j2 template asks
+    Claude to emit this field; B2.3 plumbs it onto the Scene dataclass."""
+    from platinum.pipeline.visual_prompts import _zip_into_scenes
+
+    scenes = [
+        Scene(id="scene_001", index=1, narration_text="x"),
+        Scene(id="scene_002", index=2, narration_text="y"),
+    ]
+    tool_input = {
+        "scenes": [
+            {
+                "index": 1, "visual_prompt": "vp1", "negative_prompt": "np1",
+                "composition_notes": "Medium shot. Two men face each other.",
+            },
+            {
+                "index": 2, "visual_prompt": "vp2", "negative_prompt": "np2",
+                "composition_notes": "Close-up of a torch flame.",
+            },
+        ],
+    }
+    out = _zip_into_scenes(scenes, tool_input)
+    assert out[0].composition_notes == "Medium shot. Two men face each other."
+    assert out[1].composition_notes == "Close-up of a torch flame."
+
+
+def test_zip_into_scenes_writes_character_refs() -> None:
+    """S7.1.B2.3: _zip_into_scenes copies character_refs (list[str]) onto
+    Scene.character_refs. Empty list is allowed for transitional shots
+    where no recurring character appears."""
+    from platinum.pipeline.visual_prompts import _zip_into_scenes
+
+    scenes = [
+        Scene(id="scene_001", index=1, narration_text="x"),
+        Scene(id="scene_002", index=2, narration_text="y"),
+    ]
+    tool_input = {
+        "scenes": [
+            {
+                "index": 1, "visual_prompt": "vp1", "negative_prompt": "np1",
+                "character_refs": ["Fortunato", "Montresor"],
+            },
+            {
+                "index": 2, "visual_prompt": "vp2", "negative_prompt": "np2",
+                "character_refs": [],  # transitional shot
+            },
+        ],
+    }
+    out = _zip_into_scenes(scenes, tool_input)
+    assert out[0].character_refs == ["Fortunato", "Montresor"]
+    assert out[1].character_refs == []
+
+
+def test_zip_into_scenes_handles_missing_b2_3_fields() -> None:
+    """S7.1.B2.3: backwards compat -- old tool fixtures (recorded before the
+    new fields were emitted) lack composition_notes / character_refs.
+    _zip_into_scenes must leave Scene defaults intact: composition_notes=None
+    and character_refs=[]."""
+    from platinum.pipeline.visual_prompts import _zip_into_scenes
+
+    scenes = [Scene(id="scene_001", index=1, narration_text="x")]
+    tool_input = {
+        "scenes": [
+            {"index": 1, "visual_prompt": "vp1", "negative_prompt": "np1"},
+        ],
+    }
+    out = _zip_into_scenes(scenes, tool_input)
+    assert out[0].composition_notes is None
+    assert out[0].character_refs == []
