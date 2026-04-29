@@ -22,8 +22,16 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def _setup_config(tmp_project: Path, repo_root: Path) -> Config:
-    """Copy track YAML and workflow configs to tmp_project; return fresh Config."""
+def _setup_config(
+    tmp_project: Path, repo_root: Path, *, content_gate: str = "off"
+) -> Config:
+    """Copy track YAML and workflow configs to tmp_project; return fresh Config.
+
+    By default forces atmospheric_horror.quality_gates.content_gate to "off"
+    so integration tests don't make live Anthropic vision calls. Stage-layer
+    tests that exercise the gate pass content_gate="claude" + inject a
+    FakeContentChecker via test_overrides.
+    """
     (tmp_project / "config" / "tracks").mkdir(parents=True, exist_ok=True)
     shutil.copy(
         repo_root / "config" / "tracks" / "atmospheric_horror.yaml",
@@ -34,7 +42,10 @@ def _setup_config(tmp_project: Path, repo_root: Path) -> Config:
         tmp_project / "config" / "workflows",
         dirs_exist_ok=True,
     )
-    return Config(root=tmp_project)
+    config = Config(root=tmp_project)
+    track = config.track("atmospheric_horror")
+    track.setdefault("quality_gates", {})["content_gate"] = content_gate
+    return config
 
 
 def _build_story(n: int = 2) -> Story:
@@ -172,6 +183,7 @@ async def test_stage_respects_yaml_candidates_per_scene_override(tmp_project, re
         "aesthetic_min_score": 0.0,
         "brightness_floor_mean_rgb": 0.0,
         "subject_min_edge_density": 0.0,
+        "content_gate": "off",  # S7.1.A4.5: skip live Anthropic call
     })
     yaml_output = yaml.dump({"track": track_cfg}, default_flow_style=False)
     track_cfg_path.write_text(yaml_output, encoding="utf-8")
@@ -709,3 +721,97 @@ async def test_stage_clip_gate_halts_when_all_candidates_fail(  # noqa: ANN001
     stage = KeyframeGeneratorStage()
     with pytest.raises(KeyframeGenerationError, match="clip"):
         await stage.run(story, ctx)
+
+
+async def test_stage_content_gate_uses_injected_fake_checker(  # noqa: ANN001
+    tmp_project, repo_root,
+) -> None:
+    """S7.1.A4.6: when content_gate="claude" + content_checker is injected,
+    the Stage routes through it (no live Anthropic call) and uses the score
+    to filter candidates."""
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from platinum.utils.content_check import FakeContentChecker
+    from tests._fixtures import make_fake_hands_factory
+
+    config = _setup_config(tmp_project, repo_root, content_gate="claude")
+    # Relax subject gate so all 3 fixtures reach the content gate.
+    config.track("atmospheric_horror")["quality_gates"]["subject_min_edge_density"] = 0.0
+    story = _build_story(n=1)
+    scene = story.scenes[0]
+    story_dir = tmp_project / "data" / "stories" / story.id
+    story_dir.mkdir(parents=True, exist_ok=True)
+    story_path = story_dir / "story.json"
+    story.save(story_path)
+    responses = _build_responses_for_story(story, repo_root)
+
+    output_dir = story_dir / "keyframes" / f"scene_{scene.index:03d}"
+    score_map = {
+        output_dir / "candidate_0.png": 8.0,  # would-be winner on LAION
+        output_dir / "candidate_1.png": 7.5,
+        output_dir / "candidate_2.png": 7.0,
+    }
+    content_score_map = {
+        output_dir / "candidate_0.png": 3,  # below 6 threshold (default in atmospheric_horror)
+        output_dir / "candidate_1.png": 8,
+        output_dir / "candidate_2.png": 7,
+    }
+    fake_checker = FakeContentChecker(scores=content_score_map)
+
+    config.settings["test"] = {
+        "comfy_client": FakeComfyClient(responses=responses),
+        "aesthetic_scorer": MappedFakeScorer(scores_by_path=score_map, default=0.0),
+        "mp_hands_factory": make_fake_hands_factory(None),
+        "content_checker": fake_checker,
+    }
+    ctx = PipelineContext(config=config, logger=__import__("logging").getLogger("test"))
+
+    stage = KeyframeGeneratorStage()
+    artifacts = await stage.run(story, ctx)
+
+    assert artifacts["scenes_succeeded"] == 1
+    assert fake_checker.call_count == 3
+    # candidate_0 had highest LAION but failed content gate -> winner is c1.
+    assert "candidate_1.png" in str(scene.keyframe_path)
+
+
+async def test_stage_no_content_gate_runtime_override_disables_gate(  # noqa: ANN001
+    tmp_project, repo_root,
+) -> None:
+    """S7.1.A4.6: settings.runtime.no_content_gate=True flips
+    content_gate to 'off' for the run, even when YAML says 'claude'.
+
+    Validates the wiring the --no-content-gate CLI flag depends on."""
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from platinum.utils.content_check import FakeContentChecker
+    from tests._fixtures import make_fake_hands_factory
+
+    config = _setup_config(tmp_project, repo_root, content_gate="claude")
+    config.settings.setdefault("runtime", {})["no_content_gate"] = True
+    story = _build_story(n=1)
+    story_dir = tmp_project / "data" / "stories" / story.id
+    story_dir.mkdir(parents=True, exist_ok=True)
+    story_path = story_dir / "story.json"
+    story.save(story_path)
+    responses = _build_responses_for_story(story, repo_root)
+
+    fake_checker = FakeContentChecker(default_score=1)  # would fail every candidate
+
+    config.settings["test"] = {
+        "comfy_client": FakeComfyClient(responses=responses),
+        "aesthetic_scorer": FakeAestheticScorer(fixed_score=8.0),
+        "mp_hands_factory": make_fake_hands_factory(None),
+        "content_checker": fake_checker,
+    }
+    ctx = PipelineContext(config=config, logger=__import__("logging").getLogger("test"))
+
+    stage = KeyframeGeneratorStage()
+    artifacts = await stage.run(story, ctx)
+
+    # Gate was off -> ContentChecker never called, scene succeeded with the
+    # would-have-been-rejected score=1 fake.
+    assert artifacts["scenes_succeeded"] == 1
+    assert fake_checker.call_count == 0

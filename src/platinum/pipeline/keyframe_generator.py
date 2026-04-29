@@ -494,6 +494,7 @@ class KeyframeGeneratorStage(Stage):
         test_overrides = ctx.config.settings.get("test", {})
         injected_comfy = test_overrides.get("comfy_client")
         injected_scorer = test_overrides.get("aesthetic_scorer")
+        injected_content_checker = test_overrides.get("content_checker")
         comfy = injected_comfy or HttpComfyClient(
             host=ctx.config.settings.get("comfyui", {}).get(
                 "host", "http://localhost:8188"
@@ -503,6 +504,23 @@ class KeyframeGeneratorStage(Stage):
             host=ctx.config.settings.get("aesthetics", {}).get("host", "")
         )
         mp_hands_factory = test_overrides.get("mp_hands_factory")
+
+        # S7.1.A4.6 content gate: optionally inject a runtime override
+        # (--no-content-gate flag) to flip "claude" -> "off" for this run.
+        track_cfg = ctx.config.track(story.track)
+        quality_gates = dict(track_cfg.get("quality_gates", {}))
+        runtime_no_content_gate = (
+            ctx.config.settings.get("runtime", {}).get("no_content_gate", False)
+        )
+        if runtime_no_content_gate:
+            quality_gates["content_gate"] = "off"
+            track_cfg["quality_gates"] = quality_gates  # threads back to generate()
+        content_gate_mode = quality_gates.get("content_gate", "off")
+
+        content_checker = injected_content_checker
+        if content_checker is None and content_gate_mode != "off":
+            from platinum.utils.content_check import ClaudeContentChecker
+            content_checker = ClaudeContentChecker(db_path=ctx.db_path)
 
         # Compute output_root: prefer the story_path-derived dir if ctx supports it,
         # else fall back to data/stories/<id>/keyframes/.
@@ -533,6 +551,7 @@ class KeyframeGeneratorStage(Stage):
                     output_root=output_root,
                     mp_hands_factory=mp_hands_factory,
                     scene_filter=scene_filter,
+                    content_checker=content_checker,
                 )
             except KeyframeGenerationError:
                 # Save what we have so far before re-raising.

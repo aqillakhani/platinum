@@ -338,6 +338,10 @@ def keyframes(
         False, "--rerun-regen-requested",
         help="Auto-build --scenes filter from REGENERATE-status scenes (S7 review loop).",
     ),
+    no_content_gate: bool = typer.Option(
+        False, "--no-content-gate",
+        help="Disable Claude vision content gate for this run (S7.1.A4.6).",
+    ),
 ) -> None:
     """Generate keyframes for a curator-approved + adapted story.
 
@@ -422,6 +426,8 @@ def keyframes(
         raise typer.Exit(code=0)
 
     cfg.settings.setdefault("runtime", {})["scene_filter"] = scene_filter
+    if no_content_gate:
+        cfg.settings.setdefault("runtime", {})["no_content_gate"] = True
     ctx = PipelineContext(config=cfg, logger=logging.getLogger("platinum.keyframes"))
     orchestrator = Orchestrator(stages=[KeyframeGeneratorStage()])
 
