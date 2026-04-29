@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, ClassVar
@@ -49,9 +50,24 @@ VISUAL_PROMPTS_TOOL: dict[str, Any] = {
 }
 
 
+def _load_characters(story_id: str, stories_dir: Path) -> dict[str, str]:
+    """Load per-story characters dict from stories_dir/<story_id>/characters.json.
+
+    Returns {} when the file does not exist. Phase A ships this file as
+    optional and gitignored; Phase B B3.3 auto-extracts characters from
+    the breakdown stage. The returned dict is fed to visual_prompts.j2's
+    TRACK CHARACTERS section.
+    """
+    path = stories_dir / story_id / "characters.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def _build_request(
     *, story: Story, track_cfg: dict, prompts_dir: Path,
     deviation_feedback: list | None = None,
+    characters: dict[str, str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     system = [
         {"type": "text", "text": render_template(
@@ -70,6 +86,7 @@ def _build_request(
                     {"index": s.index, "narration_text": s.narration_text}
                     for s in story.scenes
                 ],
+                "characters": characters or {},
                 "deviation_feedback": deviation_feedback,
             },
         )}
@@ -119,20 +136,27 @@ async def visual_prompts(
     db_path: Path, recorder: Recorder | None = None,
     scene_filter: set[int] | None = None,
     deviation_feedback: list | None = None,
+    stories_dir: Path | None = None,
 ) -> tuple[list[Scene], ClaudeResult]:
     """Run the visual_prompts call. Mutates story.scenes in place
     (sets visual_prompt and negative_prompt per scene) and returns it
     alongside the ClaudeResult. Raises if story.scenes is empty or
     if the response count/indexes don't match story.scenes.
+
+    When stories_dir is provided, the per-story characters dict is loaded
+    from stories_dir/<story.id>/characters.json (empty if missing) and
+    threaded into the visual_prompts.j2 TRACK CHARACTERS section.
     """
     if not story.scenes:
         raise RuntimeError(
             f"visual_prompts requires scene_breakdown to have populated story.scenes "
             f"first (story={story.id})."
         )
+    characters = _load_characters(story.id, stories_dir) if stories_dir else {}
     system, messages = _build_request(
         story=story, track_cfg=track_cfg, prompts_dir=prompts_dir,
         deviation_feedback=deviation_feedback,
+        characters=characters,
     )
     result = await claude_call(
         model=MODEL, system=system, messages=messages, tool=VISUAL_PROMPTS_TOOL,
@@ -163,6 +187,7 @@ class VisualPromptsStage(Stage):
             db_path=ctx.db_path, recorder=recorder,
             scene_filter=scene_filter,
             deviation_feedback=deviation_feedback,
+            stories_dir=ctx.config.stories_dir,
         )
         return {
             "model": claude_result.usage.model,

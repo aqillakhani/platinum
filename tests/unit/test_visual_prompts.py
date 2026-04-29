@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -119,6 +120,89 @@ def test_visual_prompts_template_retains_darkness_density_caps() -> None:
     rendered = _render_visual_prompts()
     assert "DARKNESS DENSITY CAPS" in rendered
     assert "lit edge" in rendered
+
+
+def test_build_request_passes_characters_dict_to_template() -> None:
+    from platinum.pipeline.visual_prompts import _build_request
+
+    story = _story_with_scenes(2)
+    _, messages = _build_request(
+        story=story,
+        track_cfg=_track(),
+        prompts_dir=PROMPTS_DIR,
+        characters={"Fortunato": "Italian gentleman in motley"},
+    )
+    user_text = messages[0]["content"]
+    assert "TRACK CHARACTERS (recurring" in user_text
+    assert "Fortunato: Italian gentleman in motley" in user_text
+
+
+def test_build_request_omits_characters_section_when_unset() -> None:
+    from platinum.pipeline.visual_prompts import _build_request
+
+    story = _story_with_scenes(2)
+    _, messages = _build_request(
+        story=story,
+        track_cfg=_track(),
+        prompts_dir=PROMPTS_DIR,
+    )
+    user_text = messages[0]["content"]
+    assert "TRACK CHARACTERS (recurring" not in user_text
+
+
+def test_load_characters_returns_empty_dict_when_file_missing(tmp_path: Path) -> None:
+    from platinum.pipeline.visual_prompts import _load_characters
+
+    assert _load_characters("nonexistent_story", tmp_path) == {}
+
+
+def test_load_characters_reads_json_when_file_exists(tmp_path: Path) -> None:
+    from platinum.pipeline.visual_prompts import _load_characters
+
+    (tmp_path / "story_x").mkdir()
+    (tmp_path / "story_x" / "characters.json").write_text(
+        json.dumps({"Fortunato": "Italian gentleman", "Montresor": "narrator"}),
+        encoding="utf-8",
+    )
+    assert _load_characters("story_x", tmp_path) == {
+        "Fortunato": "Italian gentleman",
+        "Montresor": "narrator",
+    }
+
+
+@pytest.mark.asyncio
+async def test_visual_prompts_uses_stories_dir_to_load_characters(tmp_path: Path) -> None:
+    """When stories_dir is provided, visual_prompts() loads characters and threads them through."""
+    from platinum.models.db import create_all
+    from platinum.pipeline.visual_prompts import visual_prompts
+
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+    story = _story_with_scenes(2)
+
+    stories_dir = tmp_path / "stories"
+    (stories_dir / story.id).mkdir(parents=True)
+    (stories_dir / story.id / "characters.json").write_text(
+        json.dumps({"Fortunato": "Italian gentleman in motley"}), encoding="utf-8"
+    )
+
+    captured_request: dict = {}
+
+    async def synth(req):
+        captured_request["request"] = req
+        return _synth_response(2)
+
+    await visual_prompts(
+        story=story,
+        track_cfg=_track(),
+        prompts_dir=PROMPTS_DIR,
+        db_path=db_path,
+        recorder=synth,
+        stories_dir=stories_dir,
+    )
+    user_text = captured_request["request"]["messages"][0]["content"]
+    assert "TRACK CHARACTERS (recurring" in user_text
+    assert "Fortunato: Italian gentleman in motley" in user_text
 
 
 @pytest.mark.asyncio
