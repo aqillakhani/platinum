@@ -99,11 +99,20 @@ async def generate_for_scene(
     clip_min_similarity: float = 0.0,
     content_checker: Any = None,
     mp_hands_factory: Callable[[], Any] | None = None,
+    face_ref_path: str | None = None,
+    pose_ref_path: str | None = None,
+    depth_ref_path: str | None = None,
 ) -> KeyframeReport:
     """Generate N candidates, score + anatomy-check each, return a KeyframeReport.
 
     `workflow_template` is loaded from `config_dir/workflows/flux_dev_keyframe.json`
     if None. `seeds` defaults to `_seeds_for_scene(scene.index, n_candidates)`.
+
+    `face_ref_path`, `pose_ref_path`, `depth_ref_path` (S7.1.B): paths to the
+    reference images injected into the workflow's IPAdapter / ControlNet
+    Pose / ControlNet Depth conditioning nodes. None bypasses the
+    corresponding apply node (weight/strength=0). All candidates for a
+    given scene share the same refs.
     """
     from platinum.utils.validate import check_hand_anomalies
     from platinum.utils.workflow import inject, load_workflow
@@ -140,6 +149,9 @@ async def generate_for_scene(
             width=width,
             height=height,
             output_prefix=f"scene_{scene.index:03d}_candidate_{i}",
+            face_ref_path=face_ref_path,
+            pose_ref_path=pose_ref_path,
+            depth_ref_path=depth_ref_path,
         )
         path = output_dir / f"candidate_{i}.png"
         try:
@@ -449,6 +461,15 @@ async def generate(
             logger.info("scene %d not in scene_filter; skipping", scene.index)
             continue
         scene_dir = output_root / f"scene_{scene.index:03d}"
+        # S7.1.B Resolve per-scene refs from Story/Scene state.
+        #   face_ref: first character_refs entry -> story.characters lookup.
+        #     Missing/unknown character -> None (apply node bypassed).
+        #   pose/depth: written by PoseDepthMapStage onto the Scene.
+        face_ref: str | None = None
+        if scene.character_refs:
+            face_ref = (story.characters or {}).get(scene.character_refs[0])
+        pose_ref: str | None = scene.pose_ref_path
+        depth_ref: str | None = scene.depth_ref_path
         report = await generate_for_scene(
             scene,
             track_visual=track_visual,
@@ -463,6 +484,9 @@ async def generate(
             height=height,
             clip_min_similarity=clip_min_similarity,
             content_checker=content_checker,
+            face_ref_path=face_ref,
+            pose_ref_path=pose_ref,
+            depth_ref_path=depth_ref,
         )
         scene.keyframe_candidates = list(report.candidates)
         scene.keyframe_scores = list(report.scores)

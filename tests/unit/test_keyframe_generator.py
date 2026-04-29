@@ -2101,3 +2101,277 @@ async def test_generate_for_scene_content_gate_skips_candidates_failing_earlier(
     )
     # All 3 candidates passed earlier gates -> content checked 3 times.
     assert content_checker.call_count == 3
+
+
+# ---- S7.1.B keyframe ref wiring (face / pose / depth) ----------------------
+#
+# The 9 ref-related nodes are pinned in flux_dev_keyframe.json:
+#   13 = LoadImage face_ref         14 = IPAdapterFaceIDApply
+#   16 = LoadImage depth_ref        17 = ControlNetApplyAdvanced (depth)
+#   19 = LoadImage pose_ref         20 = ControlNetApplyAdvanced (pose)
+# These tests pin the data flow from Story/Scene -> generate -> generate_for_scene
+# -> inject() into those LoadImage nodes.
+
+
+def _build_responses_for_ref_test(
+    *,
+    wf_template: dict,
+    seeds: tuple[int, ...],
+    fixtures: Path,
+    prompt: str = "a candle",
+    negative_prompt: str = "bright daylight",
+    output_prefix_fmt: str = "scene_000_candidate_{i}",
+    face_ref_path: str | None = None,
+    pose_ref_path: str | None = None,
+    depth_ref_path: str | None = None,
+) -> dict[str, list[Path]]:
+    """Build FakeComfyClient response map keyed by the inject() signature
+    that generate_for_scene will produce. Mirrors the kwargs the runtime
+    will pass so signatures align."""
+    from platinum.utils.comfyui import workflow_signature
+    from platinum.utils.workflow import inject
+
+    responses: dict[str, list[Path]] = {}
+    for i, seed in enumerate(seeds):
+        wf = inject(
+            wf_template,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            width=1024, height=1024,
+            output_prefix=output_prefix_fmt.format(i=i),
+            face_ref_path=face_ref_path,
+            pose_ref_path=pose_ref_path,
+            depth_ref_path=depth_ref_path,
+        )
+        responses[workflow_signature(wf)] = [fixtures / f"candidate_{i}.png"]
+    return responses
+
+
+async def test_generate_for_scene_passes_face_ref_path_to_inject(
+    tmp_path: Path,
+) -> None:
+    """S7.1.B: face_ref_path kwarg threads into LoadImage node 13."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    fixtures = _fixture_dir()
+    face_ref = str(fixtures / "candidate_0.png")
+    seeds = (0, 1, 2)
+    wf_template = _get_workflow_template()
+    comfy = FakeComfyClient(
+        responses=_build_responses_for_ref_test(
+            wf_template=wf_template,
+            seeds=seeds,
+            fixtures=fixtures,
+            face_ref_path=face_ref,
+        )
+    )
+
+    scene = _scene(idx=0)
+    await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates={"aesthetic_min_score": 0.0, "subject_min_edge_density": 0.0},
+        comfy=comfy,
+        scorer=FakeAestheticScorer(fixed_score=7.5),
+        output_dir=tmp_path / "scene_000",
+        workflow_template=wf_template,
+        seeds=seeds,
+        mp_hands_factory=make_fake_hands_factory(None),
+        face_ref_path=face_ref,
+    )
+    assert len(comfy.calls) == 3
+    for call in comfy.calls:
+        assert call["workflow"]["13"]["inputs"]["image"] == face_ref
+
+
+async def test_generate_for_scene_passes_depth_ref_path_to_inject(
+    tmp_path: Path,
+) -> None:
+    """S7.1.B: depth_ref_path kwarg threads into LoadImage node 16."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    fixtures = _fixture_dir()
+    depth_ref = str(fixtures / "candidate_1.png")
+    seeds = (0, 1, 2)
+    wf_template = _get_workflow_template()
+    comfy = FakeComfyClient(
+        responses=_build_responses_for_ref_test(
+            wf_template=wf_template,
+            seeds=seeds,
+            fixtures=fixtures,
+            depth_ref_path=depth_ref,
+        )
+    )
+
+    scene = _scene(idx=0)
+    await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates={"aesthetic_min_score": 0.0, "subject_min_edge_density": 0.0},
+        comfy=comfy,
+        scorer=FakeAestheticScorer(fixed_score=7.5),
+        output_dir=tmp_path / "scene_000",
+        workflow_template=wf_template,
+        seeds=seeds,
+        mp_hands_factory=make_fake_hands_factory(None),
+        depth_ref_path=depth_ref,
+    )
+    assert len(comfy.calls) == 3
+    for call in comfy.calls:
+        assert call["workflow"]["16"]["inputs"]["image"] == depth_ref
+
+
+async def test_generate_for_scene_passes_pose_ref_path_to_inject(
+    tmp_path: Path,
+) -> None:
+    """S7.1.B: pose_ref_path kwarg threads into LoadImage node 19."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    fixtures = _fixture_dir()
+    pose_ref = str(fixtures / "candidate_2.png")
+    seeds = (0, 1, 2)
+    wf_template = _get_workflow_template()
+    comfy = FakeComfyClient(
+        responses=_build_responses_for_ref_test(
+            wf_template=wf_template,
+            seeds=seeds,
+            fixtures=fixtures,
+            pose_ref_path=pose_ref,
+        )
+    )
+
+    scene = _scene(idx=0)
+    await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates={"aesthetic_min_score": 0.0, "subject_min_edge_density": 0.0},
+        comfy=comfy,
+        scorer=FakeAestheticScorer(fixed_score=7.5),
+        output_dir=tmp_path / "scene_000",
+        workflow_template=wf_template,
+        seeds=seeds,
+        mp_hands_factory=make_fake_hands_factory(None),
+        pose_ref_path=pose_ref,
+    )
+    assert len(comfy.calls) == 3
+    for call in comfy.calls:
+        assert call["workflow"]["19"]["inputs"]["image"] == pose_ref
+
+
+async def test_generate_resolves_face_ref_from_story_characters(
+    tmp_path: Path,
+) -> None:
+    """S7.1.B: generate(story) looks up scene.character_refs[0] in
+    story.characters and passes the resulting path as face_ref_path."""
+    from platinum.pipeline.keyframe_generator import generate
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    fixtures = _fixture_dir()
+    alice_ref = str(fixtures / "candidate_0.png")
+
+    story = _build_story_with_n_scenes(1)
+    story.characters = {"Alice": alice_ref}
+    story.scenes[0].character_refs = ["Alice"]
+
+    wf_template = _get_workflow_template()
+    seeds = (0, 1, 2)
+    comfy = FakeComfyClient(
+        responses=_build_responses_for_ref_test(
+            wf_template=wf_template,
+            seeds=seeds,
+            fixtures=fixtures,
+            prompt="a candle in dark hallway scene 0",
+            face_ref_path=alice_ref,
+        )
+    )
+
+    track_dict = {
+        "visual": _TRACK_VISUAL,
+        "quality_gates": {"aesthetic_min_score": 0.0, "subject_min_edge_density": 0.0},
+    }
+
+    class _Cfg:
+        config_dir = Path(__file__).resolve().parents[2] / "config"
+
+        def track(self, _id: str) -> dict:
+            return track_dict
+
+    await generate(
+        story,
+        config=_Cfg(),
+        comfy=comfy,
+        scorer=FakeAestheticScorer(fixed_score=7.5),
+        output_root=tmp_path,
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+    assert len(comfy.calls) == 3
+    for call in comfy.calls:
+        assert call["workflow"]["13"]["inputs"]["image"] == alice_ref
+
+
+async def test_generate_passes_scene_pose_and_depth_paths_through(
+    tmp_path: Path,
+) -> None:
+    """S7.1.B: generate(story) reads scene.pose_ref_path /
+    scene.depth_ref_path and threads them into nodes 19 and 16."""
+    from platinum.pipeline.keyframe_generator import generate
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    fixtures = _fixture_dir()
+    pose_ref = str(fixtures / "candidate_1.png")
+    depth_ref = str(fixtures / "candidate_2.png")
+
+    story = _build_story_with_n_scenes(1)
+    story.scenes[0].pose_ref_path = pose_ref
+    story.scenes[0].depth_ref_path = depth_ref
+
+    wf_template = _get_workflow_template()
+    seeds = (0, 1, 2)
+    comfy = FakeComfyClient(
+        responses=_build_responses_for_ref_test(
+            wf_template=wf_template,
+            seeds=seeds,
+            fixtures=fixtures,
+            prompt="a candle in dark hallway scene 0",
+            pose_ref_path=pose_ref,
+            depth_ref_path=depth_ref,
+        )
+    )
+
+    track_dict = {
+        "visual": _TRACK_VISUAL,
+        "quality_gates": {"aesthetic_min_score": 0.0, "subject_min_edge_density": 0.0},
+    }
+
+    class _Cfg:
+        config_dir = Path(__file__).resolve().parents[2] / "config"
+
+        def track(self, _id: str) -> dict:
+            return track_dict
+
+    await generate(
+        story,
+        config=_Cfg(),
+        comfy=comfy,
+        scorer=FakeAestheticScorer(fixed_score=7.5),
+        output_root=tmp_path,
+        mp_hands_factory=make_fake_hands_factory(None),
+    )
+    assert len(comfy.calls) == 3
+    for call in comfy.calls:
+        assert call["workflow"]["19"]["inputs"]["image"] == pose_ref
+        assert call["workflow"]["16"]["inputs"]["image"] == depth_ref
