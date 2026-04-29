@@ -122,6 +122,29 @@ def test_visual_prompts_template_retains_darkness_density_caps() -> None:
     assert "lit edge" in rendered
 
 
+def test_visual_prompts_tool_schema_unchanged_in_phase_a() -> None:
+    """Phase A keeps the submit_visual_prompts tool schema at its S7 shape.
+
+    The new template asks the model to emit composition_notes and
+    character_refs, but the schema is not yet expanded to require them
+    -- they are added at Phase B task B3.1 once the Scene model gains
+    those fields. JSON-Schema default `additionalProperties: true` lets
+    the extras pass validation; _zip_into_scenes silently ignores them
+    in Phase A.
+    """
+    from platinum.pipeline.visual_prompts import VISUAL_PROMPTS_TOOL
+
+    schema = VISUAL_PROMPTS_TOOL["input_schema"]
+    item_schema = schema["properties"]["scenes"]["items"]
+    assert set(item_schema["required"]) == {
+        "index",
+        "visual_prompt",
+        "negative_prompt",
+    }
+    assert "composition_notes" not in item_schema["properties"]
+    assert "character_refs" not in item_schema["properties"]
+
+
 def test_build_request_passes_characters_dict_to_template() -> None:
     from platinum.pipeline.visual_prompts import _build_request
 
