@@ -95,6 +95,12 @@ pip install -r "$COMFYUI_DIR/requirements.txt"
 pip install --index-url https://download.pytorch.org/whl/cu121 \
     xformers
 pip install triton                     # triton has no cu-tagged wheels
+# S7.1.B7.2: clear the pip cache between major install steps. The S7
+# Phase 2 verify run hit 97% disk because each venv (ComfyUI, score_server,
+# chatterbox, whisper) accumulated wheel downloads in /root/.cache/pip
+# without ever evicting them. Purging after each step caps the cache
+# delta at one venv's worth.
+pip cache purge
 
 # Manager (custom node manager — useful for IP-Adapter & ControlNet nodes)
 mkdir -p "$COMFYUI_DIR/custom_nodes"
@@ -234,36 +240,56 @@ if [ ! -d "$MODELS_DIR/realesrgan-ncnn-vulkan" ]; then
     rm realesrgan-ncnn-vulkan-20220424-ubuntu.zip
 fi
 
-# ---- Chatterbox-Turbo -----------------------------------------------------
+# ---- Chatterbox-Turbo (gated -- S11 voice generation) ---------------------
+#
+# S7.1.B7.2: chatterbox is only used by the S11 voice stage. S7.1's
+# verify run hits 97% disk during install when chatterbox + whisper +
+# Flux all land at once. Skip by default; opt-in with
+# PLATINUM_INSTALL_CHATTERBOX=1 when running an S11+ provisioning pass.
 
-CHATTERBOX_DIR="/workspace/chatterbox"
-if [ ! -d "$CHATTERBOX_DIR" ]; then
-    log "Installing Chatterbox-Turbo"
-    git clone https://github.com/resemble-ai/chatterbox.git "$CHATTERBOX_DIR"
+if [ "${PLATINUM_INSTALL_CHATTERBOX:-0}" = "1" ]; then
+    CHATTERBOX_DIR="/workspace/chatterbox"
+    if [ ! -d "$CHATTERBOX_DIR" ]; then
+        log "Installing Chatterbox-Turbo"
+        git clone https://github.com/resemble-ai/chatterbox.git "$CHATTERBOX_DIR"
+    fi
+    python3 -m venv "$CHATTERBOX_DIR/venv"
+    # shellcheck source=/dev/null
+    source "$CHATTERBOX_DIR/venv/bin/activate"
+    pip install --upgrade pip
+    pip install -r "$CHATTERBOX_DIR/requirements.txt" || pip install chatterbox-tts
+    pip cache purge
+    deactivate
+else
+    log "Skipping Chatterbox-Turbo (set PLATINUM_INSTALL_CHATTERBOX=1 for S11)"
 fi
-python3 -m venv "$CHATTERBOX_DIR/venv"
-# shellcheck source=/dev/null
-source "$CHATTERBOX_DIR/venv/bin/activate"
-pip install --upgrade pip
-pip install -r "$CHATTERBOX_DIR/requirements.txt" || pip install chatterbox-tts
-deactivate
 
-# ---- Whisper large-v3 -----------------------------------------------------
+# ---- Whisper large-v3 (gated -- S13 transcription) ------------------------
+#
+# S7.1.B7.2: whisper is only used by the S13 subtitle stage. The
+# large-v3 weights (~3GB) push disk usage over the safety floor on
+# default-sized vast.ai volumes. Skip by default; opt-in with
+# PLATINUM_INSTALL_WHISPER=1 when running an S13+ provisioning pass.
 
-WHISPER_DIR="/workspace/whisper"
-mkdir -p "$WHISPER_DIR"
-python3 -m venv "$WHISPER_DIR/venv"
-# shellcheck source=/dev/null
-source "$WHISPER_DIR/venv/bin/activate"
-pip install --upgrade pip
-pip install openai-whisper
-# Pre-download the large-v3 weights (~3GB)
-python3 - <<'PY'
+if [ "${PLATINUM_INSTALL_WHISPER:-0}" = "1" ]; then
+    WHISPER_DIR="/workspace/whisper"
+    mkdir -p "$WHISPER_DIR"
+    python3 -m venv "$WHISPER_DIR/venv"
+    # shellcheck source=/dev/null
+    source "$WHISPER_DIR/venv/bin/activate"
+    pip install --upgrade pip
+    pip install openai-whisper
+    # Pre-download the large-v3 weights (~3GB)
+    python3 - <<'PY'
 import whisper
 whisper.load_model("large-v3", download_root="/workspace/models/whisper")
 print("Whisper large-v3 cached.")
 PY
-deactivate
+    pip cache purge
+    deactivate
+else
+    log "Skipping Whisper large-v3 (set PLATINUM_INSTALL_WHISPER=1 for S13)"
+fi
 
 # ---- LAION-Aesthetics v2 score server (Session 6.1) -----------------------
 
@@ -284,6 +310,7 @@ if [ -f "$SCORE_DIR/requirements.txt" ]; then
     source "$SCORE_DIR/venv/bin/activate"
     pip install --upgrade pip
     pip install -r "$SCORE_DIR/requirements.txt"
+    pip cache purge
     deactivate
 fi
 
