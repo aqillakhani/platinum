@@ -141,3 +141,163 @@ def test_is_complete_false_when_one_scene_has_only_pose_no_depth(tmp_path: Path)
     ])
     stage = PoseDepthMapStage()
     assert stage.is_complete(story) is False
+
+
+# ---- B5.3: prerender + preprocessor pass -----------------------------------
+
+
+def _build_test_ctx(tmp_path: Path):
+    """Set up a tmp project + ctx wired to a FakeComfyClient (responses
+    will be added by the caller)."""
+    import shutil
+
+    from platinum.config import Config
+    from platinum.pipeline.context import PipelineContext
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+
+    repo_root = Path(__file__).resolve().parents[2]
+
+    (tmp_path / "config" / "tracks").mkdir(parents=True, exist_ok=True)
+    shutil.copy(
+        repo_root / "config" / "tracks" / "atmospheric_horror.yaml",
+        tmp_path / "config" / "tracks" / "atmospheric_horror.yaml",
+    )
+    shutil.copytree(
+        repo_root / "config" / "workflows",
+        tmp_path / "config" / "workflows",
+        dirs_exist_ok=True,
+    )
+
+    config = Config(root=tmp_path)
+    config.settings["test"] = {
+        "comfy_client": FakeComfyClient(responses={}),
+        "aesthetic_scorer": FakeAestheticScorer(fixed_score=8.0),
+    }
+    return PipelineContext(
+        config=config,
+        logger=__import__("logging").getLogger("test"),
+    )
+
+
+def _build_prerender_response(
+    *, scene_index: int, repo_root: Path, fixture: Path
+) -> dict[str, list[Path]]:
+    """Build a {sig: [fixture]} response for the prerender call.
+
+    Mirrors PoseDepthMapStage._prerender's workflow construction so the
+    FakeComfyClient is keyed by the exact signature the Stage will compute.
+    """
+    from platinum.utils.comfyui import workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+
+    wf_template = load_workflow(
+        "flux_dev_keyframe", config_dir=repo_root / "config"
+    )
+    # Default negative prompt -- mirror Stage's choice exactly.
+    wf = inject(
+        wf_template,
+        prompt="Medium shot. Two men face each other across a vault arch.",
+        negative_prompt="cartoon, anime, plastic, blurry, low quality",
+        seed=scene_index * 1000 + 999,
+        width=512,
+        height=896,
+        output_prefix=f"scene_{scene_index:03d}_prerender",
+    )
+    sampler_id = wf["_meta"]["role"]["sampler"]
+    wf[sampler_id]["inputs"]["steps"] = 8
+    return {workflow_signature(wf): [fixture]}
+
+
+def _build_preprocessor_responses(
+    *, prerender_path: Path, repo_root: Path,
+    pose_fixture: Path, depth_fixture: Path,
+) -> dict[str, list[Path]]:
+    """Build responses for the pose_depth_map preprocessor calls.
+
+    The Stage submits the same workflow twice (once for pose, once for
+    depth); FakeComfyClient.responses[sig] rotates through the list so
+    [pose_fixture, depth_fixture] yields each in order.
+    """
+    import copy
+
+    from platinum.utils.comfyui import workflow_signature
+    from platinum.utils.workflow import load_workflow
+
+    wf_template = load_workflow(
+        "pose_depth_map", config_dir=repo_root / "config"
+    )
+    wf = copy.deepcopy(wf_template)
+    image_id = wf["_meta"]["role"]["image_input"]
+    wf[image_id]["inputs"]["image"] = str(prerender_path)
+    return {workflow_signature(wf): [pose_fixture, depth_fixture]}
+
+
+async def test_run_generates_pose_and_depth_for_each_composition_scene(
+    tmp_path: Path,
+) -> None:
+    """S7.1.B5.3: run() walks scenes with composition_notes, prerenders
+    via Flux, runs DWPose + DepthAnythingV2 preprocessors, and writes
+    scene.pose_ref_path + scene.depth_ref_path."""
+    from platinum.pipeline.pose_depth_maps import PoseDepthMapStage
+
+    fixtures = Path(__file__).resolve().parents[1] / "fixtures" / "keyframes"
+    ctx = _build_test_ctx(tmp_path)
+    story = _story([
+        _scene(
+            1,
+            composition_notes=(
+                "Medium shot. Two men face each other across a vault arch."
+            ),
+        ),
+        _scene(2),  # no composition_notes -- skipped
+    ])
+    ctx.config.story_dir(story.id).mkdir(parents=True, exist_ok=True)
+
+    # Wire FakeComfyClient responses for the prerender + preprocessor pass.
+    prerender_responses = _build_prerender_response(
+        scene_index=1, repo_root=tmp_path,
+        fixture=fixtures / "candidate_0.png",
+    )
+    out_dir = (
+        ctx.config.story_dir(story.id) / "keyframes" / "scene_001"
+    )
+    expected_prerender = out_dir / "_prerender.png"
+    preproc_responses = _build_preprocessor_responses(
+        prerender_path=expected_prerender, repo_root=tmp_path,
+        pose_fixture=fixtures / "candidate_1.png",
+        depth_fixture=fixtures / "candidate_2.png",
+    )
+    ctx.config.settings["test"]["comfy_client"].responses = {
+        **prerender_responses,
+        **preproc_responses,
+    }
+
+    stage = PoseDepthMapStage()
+    artifacts = await stage.run(story, ctx)
+
+    # Only scene 1 had composition_notes -> only it appears in prepared.
+    assert artifacts["prepared_scenes"] == [1]
+    # Scene fields populated
+    assert story.scenes[0].pose_ref_path is not None
+    assert story.scenes[0].depth_ref_path is not None
+    assert Path(story.scenes[0].pose_ref_path).exists()
+    assert Path(story.scenes[0].depth_ref_path).exists()
+    # Scene 2 (no composition_notes) untouched.
+    assert story.scenes[1].pose_ref_path is None
+    assert story.scenes[1].depth_ref_path is None
+
+
+async def test_run_returns_empty_prepared_when_no_composition_scenes(
+    tmp_path: Path,
+) -> None:
+    """S7.1.B5.3: stories with no composition_notes are a no-op."""
+    from platinum.pipeline.pose_depth_maps import PoseDepthMapStage
+
+    ctx = _build_test_ctx(tmp_path)
+    story = _story([_scene(1), _scene(2)])  # no composition_notes
+    ctx.config.story_dir(story.id).mkdir(parents=True, exist_ok=True)
+
+    stage = PoseDepthMapStage()
+    artifacts = await stage.run(story, ctx)
+    assert artifacts["prepared_scenes"] == []
