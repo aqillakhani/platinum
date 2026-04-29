@@ -7,11 +7,47 @@ PALETTE: {{ palette }}
 DEFAULT NEGATIVE PROMPT: {{ default_negative }}
 
 CONVENTIONS
-- Visual prompts target Flux 1.0 Dev. Roughly 60-140 tokens, comma-separated descriptors.
-- Lead with the subject and setting, then lighting, then mood and texture, then a quality clause (e.g. "oil painting quality, fine film grain").
-- Include the palette terms only when they fit -- do not force.
-- Negative prompt may extend the default with scene-specific exclusions (e.g. "no clear daylight" if the narration places the action in a sunlit field that the track aesthetic forbids).
-- Output exactly one entry per scene; preserve the input scene index.
+
+Visual prompts target Flux 1.0 Dev at 9:16 portrait aspect ratio (768x1344).
+
+Each prompt MUST open with one of these camera-framing tokens (no exceptions):
+- "extreme close-up", "close-up", "medium shot", "medium-wide shot", "wide shot",
+  "over-the-shoulder shot", "low-angle shot", "high-angle shot"
+
+Each prompt MUST state the main subject's pose in active verb form:
+- GOOD: "kneeling, holding a candle"
+- GOOD: "chained to a stone wall"
+- GOOD: "bricking up a niche with a trowel"
+- BAD:  "torchlit man at wall" (no active verb; vague pose)
+- BAD:  "in the catacombs" (no subject pose at all)
+
+Each prompt MUST state spatial layout when 2+ subjects are present:
+- GOOD: "Foreground: Montresor in dark cloak. Background: Fortunato in motley leaning against the wall."
+- BAD:  "two men in the catacombs"
+
+Each prompt MUST state the dominant lighting source and direction in lit-pixel
+terms (S6.4 darkness-density caps remain load-bearing):
+- GOOD: "amber torchlight from upper-left catching their faces and the wet stone wall"
+- BAD:  "low-key chiaroscuro lighting" (atmospheric-only; no lit pixels named)
+
+End with at most ONE styling clause:
+- "painterly cinematography, dim mood" -- yes
+- "oil painting quality, fine film grain, Caravaggio palette, deep crimson highlights" -- no
+
+Track styling is appended automatically as a tail tag: [atmospheric horror style].
+Do NOT expand this tag in the prompt body.
+
+Output exactly one entry per scene; preserve the input scene index.
+
+NEW REQUIRED FIELDS PER SCENE (in addition to visual_prompt + negative_prompt):
+- composition_notes: 1-2 sentence stage direction in plain prose. Example:
+  "Medium shot. Two men face each other across a vault arch. Foreground:
+   Montresor in dark cloak holding a torch. Background: Fortunato in jester
+   motley, leaning against the wall."
+  Used downstream by the pose+depth map stage; does NOT go directly to Flux.
+- character_refs: list of recurring character names appearing in this scene.
+  Use names from the TRACK CHARACTERS section below. Empty list if no named
+  recurring character is in this scene.
 
 DARKNESS DENSITY CAPS (atmospheric horror -- Flux fades to black on
 over-loaded dark prompts; mean RGB hits 0-3 and the keyframe is unviewable):
@@ -34,6 +70,14 @@ SCENES
 {% for scene in scenes %}{{ scene.index }}. {{ scene.narration_text }}
 
 {% endfor %}
+{% if characters is defined and characters %}
+TRACK CHARACTERS (recurring named characters across scenes -- assign per scene
+in `character_refs` to enable cross-scene face continuity via IP-Adapter):
+
+{% for name, description in characters.items() -%}
+- {{ name }}: {{ description }}
+{% endfor %}
+{% endif %}
 {% if deviation_feedback %}
 
 DEVIATION FEEDBACK (reviewer flagged the following scenes for rewrite):
