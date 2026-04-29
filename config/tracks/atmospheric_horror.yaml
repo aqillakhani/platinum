@@ -126,6 +126,8 @@ track:
     audio_target_lufs: -16.0          # YouTube narration standard
     audio_lufs_tolerance_db: 1.5      # +/- around target
     duration_tolerance_seconds: 0.5   # narration audio vs. scene target
+    content_gate: "claude"            # S7.1.A4: "off" | "claude" | "claude_strict"
+    content_gate_min_score: 6         # S7.1.A4: 1-10 Claude-vision fidelity score
 
   # Publish metadata defaults
   publish:

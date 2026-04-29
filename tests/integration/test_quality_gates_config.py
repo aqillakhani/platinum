@@ -118,6 +118,38 @@ def test_track_yaml_image_model_clip_min_similarity(track_id: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "track_id, expected_gate, expected_min_score",
+    [
+        ("atmospheric_horror", "claude", 6),  # S7 Phase 2 the offending track; gate ON
+        ("folktales_world_myths", "off", 7),  # other tracks default off until tuned
+        ("childrens_fables", "off", 7),
+        ("scifi_concept", "off", 7),
+        ("slice_of_life", "off", 7),
+    ],
+)
+def test_track_yaml_content_gate_fields(
+    track_id: str, expected_gate: str, expected_min_score: int
+) -> None:
+    """S7.1.A4.4: each track declares its Claude vision content_gate config.
+
+    atmospheric_horror is the only track currently turning the gate ON
+    (it's the track whose 4/16 approval rate motivated S7.1). The other
+    four tracks ship "off" until we have empirical data to tune them;
+    keeping the keys present (rather than absent) avoids None/missing
+    branches in keyframe_generator.
+    """
+    cfg = Config(root=REPO_ROOT)
+    track = cfg.track(track_id)
+    gates = track.get("quality_gates", {})
+    assert gates.get("content_gate") == expected_gate, (
+        f"{track_id}.quality_gates.content_gate must be {expected_gate!r}"
+    )
+    assert gates.get("content_gate_min_score") == expected_min_score, (
+        f"{track_id}.quality_gates.content_gate_min_score must be {expected_min_score}"
+    )
+
+
+@pytest.mark.parametrize(
     "track,expected_subject",
     [
         ("atmospheric_horror", 0.005),
