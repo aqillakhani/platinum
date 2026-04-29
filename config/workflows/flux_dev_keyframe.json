@@ -44,8 +44,8 @@
   "5": {
     "class_type": "EmptyLatentImage",
     "inputs": {
-      "width": 1024,
-      "height": 1024,
+      "width": 768,
+      "height": 1344,
       "batch_size": 1
     }
   },
@@ -89,8 +89,8 @@
     "inputs": {
       "max_shift": 1.15,
       "base_shift": 0.5,
-      "width": 1024,
-      "height": 1024,
+      "width": 768,
+      "height": 1344,
       "model": ["1", 0]
     }
   },

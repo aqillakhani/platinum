@@ -262,6 +262,24 @@ def test_rebuilt_flux_workflow_has_required_roles_and_cfg_1() -> None:
     assert wf["11"]["inputs"]["conditioning"] == ["3", 0]
 
 
+def test_flux_dev_keyframe_workflow_default_aspect_is_9_16() -> None:
+    """S7.1.A2: shipped JSON defaults to 768x1344 (9:16 portrait).
+
+    The S7 retro showed Cask 16-scene approval gap correlated with the
+    1024x1024 square losing cinematic context on Instagram reels / YouTube
+    Shorts. The default aspect now matches the target distribution surface;
+    callers can still pass width/height to inject() to override.
+    """
+    from platinum.utils.workflow import load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+    assert wf["5"]["inputs"]["width"] == 768
+    assert wf["5"]["inputs"]["height"] == 1344
+    assert wf["10"]["inputs"]["width"] == 768
+    assert wf["10"]["inputs"]["height"] == 1344
+
+
 def test_inject_against_rebuilt_workflow_produces_valid_wiring() -> None:
     """End-to-end inject on the actual config/workflows JSON: width/height
     flow into both EmptyLatentImage AND ModelSamplingFlux."""
