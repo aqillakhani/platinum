@@ -50,3 +50,41 @@ class ContentChecker(Protocol):
     async def check(
         self, *, prompt: str, image_path: Path
     ) -> ContentCheckResult: ...
+
+
+class FakeContentChecker:
+    """Deterministic ContentChecker for tests.
+
+    Configurable per-path scores + missing element lists; falls back to
+    `default_score` (8 = neutral pass against a typical >=6 threshold)
+    for unmapped paths.
+
+    `call_count` tracks invocations so tests can assert the gate skipped
+    candidates that failed earlier checks (used by A4.5's "content_gate=off
+    skips check" test).
+    """
+
+    def __init__(
+        self,
+        *,
+        scores: dict[Path, int] | None = None,
+        missing_by_path: dict[Path, list[str]] | None = None,
+        default_score: int = 8,
+    ) -> None:
+        self._scores: dict[Path, int] = dict(scores or {})
+        self._missing: dict[Path, list[str]] = dict(missing_by_path or {})
+        self._default = int(default_score)
+        self.call_count = 0
+
+    async def check(
+        self, *, prompt: str, image_path: Path
+    ) -> ContentCheckResult:
+        self.call_count += 1
+        score = self._scores.get(image_path, self._default)
+        missing = list(self._missing.get(image_path, []))
+        return ContentCheckResult(
+            score=score,
+            missing=missing,
+            rationale=f"fake check for {image_path.name}",
+            raw_response='{"score": ' + str(score) + "}",
+        )
