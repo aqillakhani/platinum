@@ -89,6 +89,28 @@ def apply_swap_candidate(story: Story, scene_id: str, *, candidate_index: int) -
     return story
 
 
+def apply_select_character_reference(
+    story: Story, *, character: str, path: str
+) -> Story:
+    """S7.1.B6.1: pick a reference portrait for a recurring character.
+
+    Mutates `story.characters[character] = path`. The character must
+    appear in some scene's `character_refs` (defensive against typos in
+    the URL); otherwise raises ValueError.
+
+    Idempotent over re-picks: subsequent calls overwrite the prior path,
+    so the user can change their mind after looking at all candidates.
+    """
+    valid = {n for s in story.scenes for n in (s.character_refs or [])}
+    if character not in valid:
+        raise ValueError(
+            f"character {character!r} not present in any scene's "
+            f"character_refs"
+        )
+    story.characters[character] = path
+    return story
+
+
 def apply_batch_approve_above(story: Story, *, threshold: float) -> Story:
     """Approve all PENDING scenes whose selected candidate's score >= threshold.
 

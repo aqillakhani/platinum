@@ -264,6 +264,52 @@ def test_apply_reject_bumps_reject_count() -> None:
     assert story.scenes[0].reject_count == 2
 
 
+def test_apply_select_character_reference_writes_path() -> None:
+    """S7.1.B6.1: picking a ref for a known character mutates
+    story.characters[name] to the picked path."""
+    story = _make_story()
+    story.scenes[0].character_refs = ["Fortunato"]
+    story.scenes[1].character_refs = ["Fortunato", "Montresor"]
+
+    decisions.apply_select_character_reference(
+        story, character="Fortunato",
+        path="data/stories/story_test/references/Fortunato/candidate_2.png",
+    )
+    assert story.characters["Fortunato"] == (
+        "data/stories/story_test/references/Fortunato/candidate_2.png"
+    )
+
+
+def test_apply_select_character_reference_unknown_character_raises() -> None:
+    """S7.1.B6.1: defensive against typos -- character must appear in some
+    scene's character_refs. Otherwise ValueError, no mutation."""
+    story = _make_story()
+    story.scenes[0].character_refs = ["Fortunato"]
+
+    with pytest.raises(ValueError, match="character"):
+        decisions.apply_select_character_reference(
+            story, character="Lord Verres",  # not in any scene
+            path="data/stories/story_test/references/Lord Verres/candidate_0.png",
+        )
+    assert "Lord Verres" not in story.characters
+
+
+def test_apply_select_character_reference_idempotent_repick() -> None:
+    """S7.1.B6.1: re-picking a different ref for the same character
+    overwrites cleanly. Used when the user changes their mind after
+    looking at all 3 candidates."""
+    story = _make_story()
+    story.scenes[0].character_refs = ["Fortunato"]
+
+    decisions.apply_select_character_reference(
+        story, character="Fortunato", path="references/Fortunato/candidate_0.png",
+    )
+    decisions.apply_select_character_reference(
+        story, character="Fortunato", path="references/Fortunato/candidate_2.png",
+    )
+    assert story.characters["Fortunato"] == "references/Fortunato/candidate_2.png"
+
+
 def test_finalize_records_rejected_total_in_artifacts() -> None:
     """rejected_total = sum of reject_count across all scenes (S7 §4.4)."""
     story = _make_story(n_scenes=3)
