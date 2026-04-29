@@ -98,6 +98,25 @@ def test_track_yaml_image_model_aspect_fields(track_id: str) -> None:
         f"{track_id}.image_model.aspect_ratio must be '9:16'"
 
 
+@pytest.mark.parametrize("track_id", ALL_TRACKS)
+def test_track_yaml_image_model_clip_min_similarity(track_id: str) -> None:
+    """S7.1.A3.4: each track ships clip_min_similarity for the content gate.
+
+    0.20 is the post-S7-retro baseline for the LAION ViT-L-14 backbone:
+    high enough to reject the "moody-but-wrong-content" failure mode that
+    dominated the Cask 4/16 approval rate, low enough to keep first-shot
+    yield viable on a 3-candidate budget. Per-track tuning can move once
+    we have more empirical data; for now we ship one threshold.
+    """
+    cfg = Config(root=REPO_ROOT)
+    track = cfg.track(track_id)
+    image_model = track.get("image_model", {})
+    threshold = image_model.get("clip_min_similarity")
+    assert threshold == 0.20, (
+        f"{track_id}.image_model.clip_min_similarity must be 0.20 (got {threshold!r})"
+    )
+
+
 @pytest.mark.parametrize(
     "track,expected_subject",
     [

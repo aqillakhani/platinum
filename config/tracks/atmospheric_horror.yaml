@@ -32,6 +32,7 @@ track:
     width: 768                     # S7.1: 9:16 portrait keyframes (Instagram reels target)
     height: 1344                   # S7.1: 9:16 portrait keyframes (Instagram reels target)
     aspect_ratio: "9:16"           # S7.1: informational; consumed by S8+ video pipeline
+    clip_min_similarity: 0.20      # S7.1: CLIP ViT-L-14 image-text content gate
 
   # Video generation
   video_model:

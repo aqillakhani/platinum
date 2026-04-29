@@ -23,6 +23,7 @@ track:
     width: 768                     # S7.1: 9:16 portrait
     height: 1344                   # S7.1: 9:16 portrait
     aspect_ratio: "9:16"           # S7.1
+    clip_min_similarity: 0.20      # S7.1: CLIP content gate
   video_model:
     backend: wan22_i2v
     base_resolution: [1280, 720]

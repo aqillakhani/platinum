@@ -336,7 +336,9 @@ async def test_keyframe_stage_closes_stage_constructed_remote_scorer(  # noqa: A
     responses = _build_responses_for_story(story, repo_root)
 
     async def _handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"score": 7.5})
+        # /score and /clip-sim share this handler; the scorer reads
+        # different keys per endpoint, so return both with neutral values.
+        return httpx.Response(200, json={"score": 7.5, "similarity": 0.5})
 
     aclose_calls: list[int] = []
     real_init = RemoteAestheticScorer.__init__
