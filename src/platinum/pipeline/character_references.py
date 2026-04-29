@@ -46,10 +46,35 @@ class CharacterReferenceStage(Stage):
     name: ClassVar[str] = "character_references"
 
     async def run(self, story: Story, ctx: PipelineContext) -> dict[str, Any]:
-        # B4.3 / B4.4 implement candidate generation. Skeleton stub for now.
-        raise NotImplementedError(
-            "CharacterReferenceStage.run is wired in S7.1.B4.3 / B4.4"
-        )
+        """Generate 3 candidate refs per recurring character; return artifacts.
+
+        Resume-aware: characters with an existing picked ref in
+        Story.characters that points at a file on disk are skipped (their
+        refs are already materialised; the user has already chosen).
+        Discovered characters with no pick or a missing-on-disk pick get
+        fresh candidates.
+
+        Returns:
+            characters_discovered: sorted list of all character names
+                that appear in any scene's character_refs.
+            candidates_per_character: dict of name -> list of POSIX
+                candidate paths. Only contains entries for characters
+                that actually had candidates generated this run; resumed
+                characters are absent (their picked refs are already in
+                Story.characters).
+        """
+        discovered = sorted(self._discover_characters(story))
+        candidates_per_character: dict[str, list[str]] = {}
+        for name in discovered:
+            picked = story.characters.get(name)
+            if picked and Path(picked).exists():
+                continue
+            paths = await self._generate_character_refs(name, story, ctx)
+            candidates_per_character[name] = [str(p) for p in paths]
+        return {
+            "characters_discovered": discovered,
+            "candidates_per_character": candidates_per_character,
+        }
 
     def _discover_characters(self, story: Story) -> set[str]:
         """Union of all scene.character_refs across the story.

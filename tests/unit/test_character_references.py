@@ -181,6 +181,49 @@ def _build_ref_responses(
     return out
 
 
+def _build_test_ctx(tmp_path: Path, *, character_responses: dict[str, list[Path]]):
+    """Set up a tmp project + ctx wired to FakeComfyClient.
+
+    `character_responses` maps signature -> fixture-path list. Caller
+    builds it via _build_ref_responses for each character expected to
+    generate refs in the test.
+    """
+    import shutil
+
+    from platinum.config import Config
+    from platinum.pipeline.context import PipelineContext
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    repo_root = Path(__file__).resolve().parents[2]
+
+    (tmp_path / "config" / "tracks").mkdir(parents=True, exist_ok=True)
+    shutil.copy(
+        repo_root / "config" / "tracks" / "atmospheric_horror.yaml",
+        tmp_path / "config" / "tracks" / "atmospheric_horror.yaml",
+    )
+    shutil.copytree(
+        repo_root / "config" / "workflows",
+        tmp_path / "config" / "workflows",
+        dirs_exist_ok=True,
+    )
+
+    config = Config(root=tmp_path)
+    config.track("atmospheric_horror").setdefault(
+        "quality_gates", {}
+    )["content_gate"] = "off"
+    config.settings["test"] = {
+        "comfy_client": FakeComfyClient(responses=character_responses),
+        "aesthetic_scorer": FakeAestheticScorer(fixed_score=8.0),
+        "mp_hands_factory": make_fake_hands_factory(None),
+    }
+    return PipelineContext(
+        config=config,
+        logger=__import__("logging").getLogger("test"),
+    )
+
+
 async def test_generate_character_refs_returns_three_paths(tmp_path: Path) -> None:
     """S7.1.B4.3: _generate_character_refs produces 3 candidate PNGs per
     character via FakeComfyClient and returns their paths."""
@@ -249,3 +292,90 @@ async def test_generate_character_refs_returns_three_paths(tmp_path: Path) -> No
     # Output dir is <story>/references/<character>/.
     out_dir = config.story_dir(story.id) / "references" / "Fortunato"
     assert all(p.parent == out_dir for p in paths)
+
+
+# ---- B4.4: run() end-to-end ------------------------------------------------
+
+
+async def test_run_returns_artifacts_for_two_characters(tmp_path: Path) -> None:
+    """S7.1.B4.4: run() walks discovered characters, generates 3 refs each,
+    and returns an artifacts dict listing both."""
+    from platinum.pipeline.character_references import CharacterReferenceStage
+
+    fixtures = Path(__file__).resolve().parents[1] / "fixtures" / "keyframes"
+    # Build ctx first so tmp_path has the workflow JSON copied into it; then
+    # build per-character responses keyed by the post-copy workflow signature.
+    ctx = _build_test_ctx(tmp_path, character_responses={})
+    fortunato_responses = _build_ref_responses(
+        character="Fortunato", repo_root=tmp_path,
+        fixture_paths=[fixtures / f"candidate_{i}.png" for i in range(3)],
+    )
+    montresor_responses = _build_ref_responses(
+        character="Montresor", repo_root=tmp_path,
+        fixture_paths=[fixtures / f"candidate_{i}.png" for i in range(3)],
+    )
+    ctx.config.settings["test"]["comfy_client"].responses = {
+        **fortunato_responses,
+        **montresor_responses,
+    }
+
+    story = _story(
+        [
+            _scene(1, character_refs=["Fortunato", "Montresor"]),
+            _scene(2, character_refs=["Fortunato"]),
+        ],
+        characters={},
+    )
+    ctx.config.story_dir(story.id).mkdir(parents=True, exist_ok=True)
+
+    stage = CharacterReferenceStage()
+    artifacts = await stage.run(story, ctx)
+
+    assert sorted(artifacts["characters_discovered"]) == ["Fortunato", "Montresor"]
+    cands = artifacts["candidates_per_character"]
+    assert set(cands.keys()) == {"Fortunato", "Montresor"}
+    for name, paths in cands.items():
+        assert len(paths) == 3, f"{name}: got {len(paths)} candidates"
+        for p in paths:
+            assert Path(p).exists()
+
+
+async def test_run_skips_characters_already_picked(tmp_path: Path) -> None:
+    """S7.1.B4.4: resume semantics -- characters with an existing picked ref
+    on disk are not re-generated. Only the missing characters get new refs."""
+    from platinum.pipeline.character_references import CharacterReferenceStage
+
+    fixtures = Path(__file__).resolve().parents[1] / "fixtures" / "keyframes"
+
+    # Pre-populate Fortunato's pick on disk so it counts as "already picked".
+    ctx = _build_test_ctx(tmp_path, character_responses={})
+    story_id = "story_test_001"
+    fortunato_pick_dir = (
+        ctx.config.story_dir(story_id) / "references" / "Fortunato"
+    )
+    fortunato_pick_dir.mkdir(parents=True, exist_ok=True)
+    fortunato_pick = fortunato_pick_dir / "candidate_2.png"
+    fortunato_pick.write_bytes(b"\x89PNG_existing")
+
+    # Only Montresor needs generation; only build responses for Montresor.
+    montresor_responses = _build_ref_responses(
+        character="Montresor", repo_root=tmp_path,
+        fixture_paths=[fixtures / f"candidate_{i}.png" for i in range(3)],
+    )
+    ctx.config.settings["test"]["comfy_client"].responses = montresor_responses
+
+    story = _story(
+        [
+            _scene(1, character_refs=["Fortunato", "Montresor"]),
+        ],
+        characters={"Fortunato": str(fortunato_pick)},
+    )
+
+    stage = CharacterReferenceStage()
+    artifacts = await stage.run(story, ctx)
+
+    # Both characters discovered, but only Montresor got new candidates.
+    assert sorted(artifacts["characters_discovered"]) == ["Fortunato", "Montresor"]
+    assert "Fortunato" not in artifacts["candidates_per_character"]
+    assert "Montresor" in artifacts["candidates_per_character"]
+    assert len(artifacts["candidates_per_character"]["Montresor"]) == 3
