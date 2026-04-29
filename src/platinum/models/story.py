@@ -282,6 +282,11 @@ class Story:
     publish: dict[str, Any] = field(default_factory=dict)
     review_gates: dict[str, Any] = field(default_factory=dict)
     stages: list[StageRun] = field(default_factory=list)
+    # S7.1.B2.2: per-Story character ref paths. Maps character name (e.g.
+    # "Fortunato") -> path to the user-picked reference portrait
+    # produced by CharacterReferenceStage. Resolved at render time when
+    # a Scene's character_refs[0] needs an IPAdapterFaceID input.
+    characters: dict[str, str] = field(default_factory=dict)
 
     # --- Serialization ---------------------------------------------------
 
@@ -297,6 +302,7 @@ class Story:
             "publish": dict(self.publish),
             "review_gates": dict(self.review_gates),
             "stages": [r.to_dict() for r in self.stages],
+            "characters": dict(self.characters),
         }
 
     @classmethod
@@ -312,6 +318,7 @@ class Story:
             publish=dict(d.get("publish", {})),
             review_gates=dict(d.get("review_gates", {})),
             stages=[StageRun.from_dict(r) for r in d.get("stages", [])],
+            characters=dict(d.get("characters", {})),
         )
 
     # --- File I/O --------------------------------------------------------

@@ -104,3 +104,69 @@ def test_scene_from_dict_backfills_missing_b2_1_fields() -> None:
     assert scene.pose_ref_path is None
     assert scene.depth_ref_path is None
     assert scene.composition_notes is None
+
+
+# ---- S7.1.B2.2: Story.characters dict --------------------------------------
+
+
+def _build_minimal_story() -> "Story":
+    """Tiny Story with one Scene; B2.2 tests the new characters dict only."""
+    from datetime import UTC, datetime
+
+    from platinum.models.story import Source, Story
+    return Story(
+        id="story_test_001",
+        track="atmospheric_horror",
+        source=Source(
+            type="gutenberg",
+            url="https://example.test/source",
+            title="t",
+            author="a",
+            raw_text="rt",
+            fetched_at=datetime(2026, 4, 29, tzinfo=UTC),
+            license="PD-US",
+        ),
+        scenes=[_build_minimal_scene()],
+    )
+
+
+def test_story_characters_defaults_to_empty_dict() -> None:
+    """S7.1.B2.2: Story.characters defaults to {} so older Stories work."""
+    story = _build_minimal_story()
+    assert story.characters == {}
+
+
+def test_story_round_trip_preserves_characters() -> None:
+    """S7.1.B2.2: characters dict round-trips through to_dict / from_dict."""
+    from platinum.models.story import Story
+
+    story = _build_minimal_story()
+    story.characters = {
+        "Fortunato": "data/stories/x/references/Fortunato/candidate_2.png",
+        "Montresor": "data/stories/x/references/Montresor/candidate_0.png",
+    }
+    rt = Story.from_dict(story.to_dict())
+    assert rt.characters == {
+        "Fortunato": "data/stories/x/references/Fortunato/candidate_2.png",
+        "Montresor": "data/stories/x/references/Montresor/candidate_0.png",
+    }
+
+
+def test_story_from_dict_backfills_missing_characters_field() -> None:
+    """S7.1.B2.2: pre-S7.1 story.json files (no `characters` key) load with {}."""
+    from datetime import UTC, datetime
+
+    from platinum.models.story import Source, Story
+
+    raw = {
+        "id": "story_x",
+        "track": "atmospheric_horror",
+        "source": Source(
+            type="gutenberg", url="u", title="t", author="a", raw_text="rt",
+            fetched_at=datetime(2026, 4, 29, tzinfo=UTC), license="PD-US",
+        ).to_dict(),
+        "scenes": [],
+        # NB: no `characters` key -- pre-S7.1 layout
+    }
+    story = Story.from_dict(raw)
+    assert story.characters == {}
