@@ -73,3 +73,45 @@ def test_review_keyframes_no_browser_skips_open(cask_story_factory) -> None:
     assert result.exit_code == 0, result.output
     mock_open.assert_not_called()
     mock_run.assert_called_once()
+
+
+def test_review_characters_missing_story_exit_1(tmp_path: Path, monkeypatch) -> None:
+    """S7.1.B6.5: nonexistent story id -> exit 1 with 'not found' message."""
+    monkeypatch.setattr(
+        "platinum.cli.Config",
+        lambda: Config(root=tmp_path),
+    )
+    (tmp_path / "data" / "stories").mkdir(parents=True)
+    runner = CliRunner()
+    result = runner.invoke(app, ["review", "characters", "story_does_not_exist"])
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()
+
+
+def test_review_characters_opens_browser_at_characters_url(cask_story_factory) -> None:
+    """S7.1.B6.5: webbrowser.open is called with the /story/<id>/characters
+    URL (not the keyframe / index)."""
+    story_id = cask_story_factory()
+    runner = CliRunner()
+    with patch("webbrowser.open") as mock_open, \
+         patch("flask.Flask.run") as mock_run:
+        result = runner.invoke(app, ["review", "characters", story_id])
+    assert result.exit_code == 0, result.output
+    mock_run.assert_called_once()
+    mock_open.assert_called_once()
+    opened_url = mock_open.call_args[0][0]
+    assert f"/story/{story_id}/characters" in opened_url
+
+
+def test_review_characters_no_browser_skips_open(cask_story_factory) -> None:
+    """S7.1.B6.5: --no-browser skips webbrowser.open but still starts the server."""
+    story_id = cask_story_factory()
+    runner = CliRunner()
+    with patch("webbrowser.open") as mock_open, \
+         patch("flask.Flask.run") as mock_run:
+        result = runner.invoke(
+            app, ["review", "characters", story_id, "--no-browser"],
+        )
+    assert result.exit_code == 0, result.output
+    mock_open.assert_not_called()
+    mock_run.assert_called_once()

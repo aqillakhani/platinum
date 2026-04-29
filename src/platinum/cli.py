@@ -534,6 +534,47 @@ def review_keyframes(
     flask_app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
 
 
+@review_app.command("characters")
+def review_characters(
+    story: str = typer.Argument(..., help="Story id."),
+    port: int = typer.Option(5001, "--port", "-p", help="Flask binding port."),
+    no_browser: bool = typer.Option(
+        False, "--no-browser", help="Skip webbrowser.open()."
+    ),
+) -> None:
+    """Launch the character-reference review UI for a story.
+
+    Opens at /story/<id>/characters where the user picks one ref portrait
+    per recurring character. Selections persist to story.characters[name];
+    keyframe rendering then resolves face refs from that dict.
+
+    Same Flask app as `platinum review keyframes` -- routes coexist; this
+    command just opens the browser at the character page.
+    """
+    import webbrowser
+
+    from platinum.review_ui.app import create_app
+
+    cfg = Config()
+    story_path = cfg.stories_dir / story / "story.json"
+    if not story_path.exists():
+        console.print(
+            f"[red]Story not found:[/red] {story} (looked in {story_path})"
+        )
+        raise typer.Exit(code=1)
+
+    flask_app = create_app(story_id=story, data_root=cfg.stories_dir)
+
+    url = f"http://127.0.0.1:{port}/story/{story}/characters"
+    if not no_browser:
+        webbrowser.open(url)
+
+    console.print(
+        f"[green]Character review UI listening on {url}[/green] (Ctrl+C to stop)"
+    )
+    flask_app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+
+
 @app.command()
 def publish(
     story: str = typer.Argument(..., help="Story id to publish."),
