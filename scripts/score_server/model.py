@@ -58,6 +58,7 @@ clip_model, _, preprocess = open_clip.create_model_and_transforms(
     "ViT-L-14", pretrained="openai", device=DEVICE
 )
 clip_model.eval()
+clip_tokenizer = open_clip.get_tokenizer("ViT-L-14")
 
 print(f"[score_server.model] loading MLP weights from {MLP_WEIGHTS}...")  # noqa: T201
 _mlp = AestheticMLP(input_size=768)
@@ -74,3 +75,21 @@ def score_image_bytes(image_bytes: bytes) -> float:
         feats = clip_model.encode_image(tensor)
         feats = feats / feats.norm(dim=-1, keepdim=True)
         return float(_mlp(feats).cpu().item())
+
+
+def clip_similarity_image_text(image_bytes: bytes, text: str) -> float:
+    """Cosine similarity between image and text in CLIP ViT-L-14 space (-1..1).
+
+    Reuses the already-loaded LAION CLIP backbone (deviates from the S7.1 plan
+    which named ViT-B/32 -- avoiding a second model load saves ~600 MB GPU
+    memory). Text is encoded with the matching tokenizer.
+    """
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    with torch.no_grad():
+        img_tensor = preprocess(img).unsqueeze(0).to(DEVICE)
+        img_feats = clip_model.encode_image(img_tensor)
+        img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
+        text_tokens = clip_tokenizer([text]).to(DEVICE)
+        text_feats = clip_model.encode_text(text_tokens)
+        text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
+        return float((img_feats @ text_feats.T).cpu().item())
