@@ -455,3 +455,88 @@ def test_reference_image_404_on_missing(story_factory, tmp_path: Path) -> None:
             f"/reference_image/{story.id}/Ghost/missing.png"
         )
     assert resp.status_code == 404
+
+
+# ---- B6.3: POST /api/story/<id>/select_character_reference -----------------
+
+
+def test_post_select_character_reference_updates_story(
+    story_factory, tmp_path: Path
+) -> None:
+    """S7.1.B6.3: POST happy path -- writes story.characters[name] and persists."""
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=1)
+    story.scenes[0].character_refs = ["Fortunato"]
+    story.save(story_dir / "story.json")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.post(
+            f"/api/story/{story.id}/select_character_reference",
+            json={
+                "character": "Fortunato",
+                "path": "references/Fortunato/candidate_2.png",
+            },
+        )
+    assert resp.status_code == 200, resp.data
+    body = resp.get_json()
+    assert body["characters"]["Fortunato"] == "references/Fortunato/candidate_2.png"
+
+    # Persisted on disk -- reload story.json and verify.
+    reloaded = Story.load(story_dir / "story.json")
+    assert reloaded.characters["Fortunato"] == (
+        "references/Fortunato/candidate_2.png"
+    )
+
+
+def test_post_select_character_reference_unknown_character_returns_400(
+    story_factory, tmp_path: Path
+) -> None:
+    """S7.1.B6.3: ValueError -> HTTP 400 with message; story unchanged."""
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=1)
+    story.scenes[0].character_refs = ["Fortunato"]
+    story.save(story_dir / "story.json")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.post(
+            f"/api/story/{story.id}/select_character_reference",
+            json={
+                "character": "Lord Verres",  # not in any scene
+                "path": "references/Lord Verres/candidate_0.png",
+            },
+        )
+    assert resp.status_code == 400
+
+    # No persistence side effects.
+    reloaded = Story.load(story_dir / "story.json")
+    assert "Lord Verres" not in reloaded.characters
+
+
+def test_post_select_character_reference_missing_fields_returns_400(
+    story_factory, tmp_path: Path
+) -> None:
+    """S7.1.B6.3: missing 'character' or 'path' fields -> 400."""
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=1)
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.post(
+            f"/api/story/{story.id}/select_character_reference",
+            json={"character": "Fortunato"},  # no 'path'
+        )
+    assert resp.status_code == 400

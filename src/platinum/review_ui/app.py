@@ -239,4 +239,28 @@ def create_app(*, story_id: str, data_root: Path) -> Flask:
         )
         return _save_and_respond(story)
 
+    @app.post("/api/story/<story_id>/select_character_reference")
+    def post_select_character_reference(story_id: str):
+        """S7.1.B6.3: pick a reference portrait for one character.
+
+        Body: {"character": "Fortunato", "path": "references/Fortunato/candidate_2.png"}
+        - Missing keys -> 400.
+        - Unknown character (not in any scene's character_refs) -> 400.
+        - Otherwise mutates Story.characters[name] = path, atomic save,
+          returns the updated characters dict for client rerender.
+        """
+        from flask import request
+        body = request.get_json(silent=True) or {}
+        if "character" not in body or "path" not in body:
+            abort(400, description="'character' and 'path' fields required")
+        story = _load_story_or_404(app.config["DATA_ROOT"], story_id)
+        try:
+            decisions.apply_select_character_reference(
+                story, character=body["character"], path=body["path"]
+            )
+        except ValueError as exc:
+            abort(400, description=str(exc))
+        story.save(_story_path(app.config["DATA_ROOT"], story.id))
+        return jsonify({"characters": dict(story.characters)})
+
     return app
