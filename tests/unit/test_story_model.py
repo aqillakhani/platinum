@@ -58,3 +58,49 @@ def test_scene_round_trip_preserves_reject_count() -> None:
     scene = _build_minimal_scene(reject_count=2)
     rt = Scene.from_dict(scene.to_dict())
     assert rt.reject_count == 2
+
+
+def test_scene_b2_1_fields_default_to_empty_or_none() -> None:
+    """S7.1.B2.1: Scene gains four reference-conditioning fields with
+    benign defaults so older Stories work without changes:
+
+      character_refs: list[str]   default []     (no recurring characters)
+      pose_ref_path: str | None   default None   (no pose preprocessor output)
+      depth_ref_path: str | None  default None   (no depth preprocessor output)
+      composition_notes: str | None default None (no scene blocking notes)
+    """
+    scene = _build_minimal_scene()
+    assert scene.character_refs == []
+    assert scene.pose_ref_path is None
+    assert scene.depth_ref_path is None
+    assert scene.composition_notes is None
+
+
+def test_scene_round_trip_preserves_b2_1_fields() -> None:
+    """S7.1.B2.1: to_dict / from_dict preserves all four new fields."""
+    scene = _build_minimal_scene(
+        character_refs=["Fortunato", "Montresor"],
+        pose_ref_path="data/stories/x/keyframes/scene_007/_pose.png",
+        depth_ref_path="data/stories/x/keyframes/scene_007/_depth.png",
+        composition_notes=(
+            "Medium shot. Two men face each other across a vault arch. "
+            "Foreground: Montresor in dark cloak holding a torch."
+        ),
+    )
+    rt = Scene.from_dict(scene.to_dict())
+    assert rt.character_refs == ["Fortunato", "Montresor"]
+    assert rt.pose_ref_path == "data/stories/x/keyframes/scene_007/_pose.png"
+    assert rt.depth_ref_path == "data/stories/x/keyframes/scene_007/_depth.png"
+    assert rt.composition_notes is not None
+    assert "vault arch" in rt.composition_notes
+
+
+def test_scene_from_dict_backfills_missing_b2_1_fields() -> None:
+    """S7.1.B2.1: pre-S7.1 story.json files (no character_refs / pose_ref_path /
+    depth_ref_path / composition_notes keys) must still load with defaults."""
+    raw = {"id": "s1", "index": 1, "narration_text": "x"}
+    scene = Scene.from_dict(raw)
+    assert scene.character_refs == []
+    assert scene.pose_ref_path is None
+    assert scene.depth_ref_path is None
+    assert scene.composition_notes is None

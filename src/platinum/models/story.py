@@ -162,6 +162,15 @@ class Scene:
     review_feedback: str | None = None
     regen_count: int = 0
     reject_count: int = 0
+    # S7.1.B2 reference-conditioning fields. character_refs lists names of
+    # recurring characters present in this scene (resolved against
+    # Story.characters at render time); pose/depth_ref_path point at
+    # preprocessor outputs from PoseDepthMapStage; composition_notes is
+    # the natural-language scene blocking that drives the prerender pass.
+    character_refs: list[str] = field(default_factory=list)
+    pose_ref_path: str | None = None
+    depth_ref_path: str | None = None
+    composition_notes: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -188,6 +197,10 @@ class Scene:
             "review_feedback": self.review_feedback,
             "regen_count": self.regen_count,
             "reject_count": self.reject_count,
+            "character_refs": list(self.character_refs),
+            "pose_ref_path": self.pose_ref_path,
+            "depth_ref_path": self.depth_ref_path,
+            "composition_notes": self.composition_notes,
         }
 
     @classmethod
@@ -216,6 +229,10 @@ class Scene:
             review_feedback=d.get("review_feedback"),
             regen_count=int(d.get("regen_count", 0)),
             reject_count=int(d.get("reject_count", 0)),
+            character_refs=list(d.get("character_refs", [])),
+            pose_ref_path=d.get("pose_ref_path"),
+            depth_ref_path=d.get("depth_ref_path"),
+            composition_notes=d.get("composition_notes"),
         )
 
 
