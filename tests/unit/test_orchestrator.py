@@ -41,11 +41,24 @@ class _StageC(Stage):
         return {"c": 3}
 
 
-def test_canonical_has_eighteen_stages() -> None:
-    assert len(CANONICAL_STAGE_NAMES) == 18
-    # PRD stages 1 and 18 as sanity anchors.
+def test_canonical_has_nineteen_stages() -> None:
+    """S7.1.B4.5: pipeline grew by one stage (character_references) inserted
+    between visual_prompts and keyframe_generator."""
+    assert len(CANONICAL_STAGE_NAMES) == 19
+    # PRD stages 1 and 19 as sanity anchors.
     assert CANONICAL_STAGE_NAMES[0] == "source_fetcher"
     assert CANONICAL_STAGE_NAMES[-1] == "publisher"
+
+
+def test_canonical_orders_character_references_between_visual_prompts_and_keyframes() -> None:
+    """S7.1.B4.5: character_references must run AFTER visual_prompts (which
+    populates scene.character_refs) and BEFORE keyframe_generator (which
+    consumes story.characters[name] via inject's face_ref_path).
+    """
+    idx_visual = CANONICAL_STAGE_NAMES.index("visual_prompts")
+    idx_chars = CANONICAL_STAGE_NAMES.index("character_references")
+    idx_keyframe = CANONICAL_STAGE_NAMES.index("keyframe_generator")
+    assert idx_visual < idx_chars < idx_keyframe
 
 
 def test_stage_without_name_rejected() -> None:

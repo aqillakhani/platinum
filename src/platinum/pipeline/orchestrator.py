@@ -26,6 +26,7 @@ CANONICAL_STAGE_NAMES: list[str] = [
     "story_adapter",
     "scene_breakdown",
     "visual_prompts",
+    "character_references",
     "keyframe_generator",
     "keyframe_review",
     "video_generator",
