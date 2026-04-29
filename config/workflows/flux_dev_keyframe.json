@@ -12,7 +12,10 @@
       "flux_guidance": "11",
       "ipadapter_loader": "12",
       "face_ref_image": "13",
-      "ipadapter_apply": "14"
+      "ipadapter_apply": "14",
+      "controlnet_depth_loader": "15",
+      "depth_ref_image": "16",
+      "controlnet_depth_apply": "17"
     }
   },
   "1": {
@@ -62,7 +65,7 @@
       "scheduler": "karras",
       "denoise": 1.0,
       "model": ["14", 0],
-      "positive": ["11", 0],
+      "positive": ["17", 0],
       "negative": ["4", 0],
       "latent_image": ["5", 0]
     }
@@ -126,6 +129,30 @@
       "model": ["10", 0],
       "ipadapter": ["12", 0],
       "image": ["13", 0]
+    }
+  },
+  "15": {
+    "class_type": "ControlNetLoader",
+    "inputs": {
+      "control_net_name": "flux-controlnet-depth-v3.safetensors"
+    }
+  },
+  "16": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "placeholder_depth.png"
+    }
+  },
+  "17": {
+    "class_type": "ControlNetApplyAdvanced",
+    "inputs": {
+      "strength": 1.0,
+      "start_percent": 0.0,
+      "end_percent": 1.0,
+      "positive": ["11", 0],
+      "negative": ["4", 0],
+      "control_net": ["15", 0],
+      "image": ["16", 0]
     }
   }
 }

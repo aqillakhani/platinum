@@ -249,8 +249,10 @@ def test_rebuilt_flux_workflow_has_required_roles_and_cfg_1() -> None:
     # pre-S7.1.B1.1; B1.1 inserted IPAdapterFaceIDApply between ModelSamplingFlux
     # and KSampler so face refs can condition the model chain).
     assert wf[sampler_id]["inputs"]["model"] == ["14", 0]
-    # KSampler.positive now points at FluxGuidance output
-    assert wf[sampler_id]["inputs"]["positive"] == ["11", 0]
+    # KSampler.positive now sources from ControlNetApplyAdvanced_depth (S7.1.B1.2);
+    # the depth-apply node sits between FluxGuidance and KSampler so a depth map
+    # can condition the positive branch.
+    assert wf[sampler_id]["inputs"]["positive"] == ["17", 0]
 
     # Node 10: ModelSamplingFlux exists with proper shifts
     assert wf["10"]["class_type"] == "ModelSamplingFlux"
@@ -350,3 +352,53 @@ def test_workflow_has_ipadapter_nodes_after_b1_1() -> None:
     # KSampler.model now sources from node 14 (was ["10", 0] pre-B1.1)
     sampler_id = roles["sampler"]
     assert wf[sampler_id]["inputs"]["model"] == ["14", 0]
+
+
+def test_workflow_has_controlnet_depth_nodes_after_b1_2() -> None:
+    """S7.1.B1.2: shipped JSON gains ControlNet Depth nodes 15, 16, 17.
+
+    15: ControlNetLoader (loads Flux-Depth ControlNet weights)
+    16: LoadImage (depth ref; placeholder, swapped per call by inject())
+    17: ControlNetApplyAdvanced (applies depth conditioning to positive)
+
+    Rewires the positive conditioning chain so KSampler.positive flows
+    through the depth-apply node:
+      CLIPTextEncode(3) -> FluxGuidance(11) -> ControlNetApplyAdvanced_depth(17)
+                                                    -> KSampler.positive(6)
+
+    The Advanced variant takes positive + negative and returns both, but we
+    only consume slot 0 (positive). KSampler.negative stays direct to
+    CLIPTextEncode(4) -- the ControlNet conditioning shapes positive only.
+    """
+    from platinum.utils.workflow import load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
+
+    # New nodes exist with expected class types
+    assert wf["15"]["class_type"] == "ControlNetLoader"
+    assert wf["16"]["class_type"] == "LoadImage"
+    assert wf["17"]["class_type"] == "ControlNetApplyAdvanced"
+
+    # _meta.role tags map to the new nodes
+    roles = wf["_meta"]["role"]
+    assert roles["controlnet_depth_loader"] == "15"
+    assert roles["depth_ref_image"] == "16"
+    assert roles["controlnet_depth_apply"] == "17"
+
+    # Wiring into ControlNetApplyAdvanced_depth (node 17):
+    #   positive from FluxGuidance (node 11)
+    #   negative passes through from CLIPTextEncode neg (node 4)
+    #   control_net from ControlNetLoader_depth (node 15)
+    #   image from LoadImage_depth (node 16)
+    apply_inputs = wf["17"]["inputs"]
+    assert apply_inputs["positive"] == ["11", 0]
+    assert apply_inputs["negative"] == ["4", 0]
+    assert apply_inputs["control_net"] == ["15", 0]
+    assert apply_inputs["image"] == ["16", 0]
+
+    # KSampler.positive sources from node 17 (was ["11", 0] pre-B1.2)
+    sampler_id = roles["sampler"]
+    assert wf[sampler_id]["inputs"]["positive"] == ["17", 0]
+    # KSampler.negative untouched -- still direct from CLIPTextEncode neg
+    assert wf[sampler_id]["inputs"]["negative"] == ["4", 0]
