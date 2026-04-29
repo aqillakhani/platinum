@@ -77,6 +77,23 @@ def create_app(*, story_id: str, data_root: Path) -> Flask:
             abort(404)
         return send_file(full_path)
 
+    @app.get("/reference_image/<story_id>/<path:relpath>")
+    def reference_image(story_id: str, relpath: str):
+        """S7.1.B6.2: serves files under <story>/references/<character>/.
+
+        Mirrors /image/ but rooted at the references subtree so the
+        character gallery template can reach candidate PNGs without
+        leaking the project layout to the client.
+        """
+        refs_root = app.config["DATA_ROOT"] / story_id / "references"
+        full = safe_join(str(refs_root), relpath)
+        if full is None:
+            abort(404)
+        full_path = Path(full)
+        if not full_path.exists() or not full_path.is_file():
+            abort(404)
+        return send_file(full_path)
+
     def _save_and_respond(story: Story, *, scene_id: str | None = None):
         """Common tail: finalize -> save -> return JSON of touched scene + rollup."""
         decisions.finalize_review_if_complete(story)
@@ -125,6 +142,40 @@ def create_app(*, story_id: str, data_root: Path) -> Flask:
             scene_relpath=_scene_relpath,
             candidate_relpath=_candidate_relpath,
             selected_score_for=_selected_score,
+        )
+
+    @app.get("/story/<story_id>/characters")
+    def character_gallery(story_id: str):
+        """S7.1.B6.2: per-character ref-image gallery.
+
+        Discovers character names from scene.character_refs union and lists
+        every candidate PNG under <story>/references/<character>/. Each
+        candidate gets a Pick button which (B6.4) POSTs to
+        /api/story/<id>/select_character_reference.
+        """
+        story_obj = _load_story_or_404(app.config["DATA_ROOT"], story_id)
+        # Discover character names that appear in any scene.
+        discovered = sorted({
+            n for s in story_obj.scenes for n in (s.character_refs or [])
+        })
+        # For each character with a refs/<name>/ dir, list candidate PNGs.
+        chars_with_candidates: dict[str, list[str]] = {}
+        for name in discovered:
+            refs_dir = (
+                app.config["DATA_ROOT"] / story_id / "references" / name
+            )
+            if not refs_dir.exists():
+                continue
+            paths = sorted(
+                str(p) for p in refs_dir.iterdir()
+                if p.is_file() and p.suffix.lower() == ".png"
+            )
+            if paths:
+                chars_with_candidates[name] = paths
+        return render_template(
+            "character_gallery.html",
+            story=story_obj,
+            characters_with_candidates=chars_with_candidates,
         )
 
     @app.post("/api/story/<story_id>/scene/<scene_id>/approve")

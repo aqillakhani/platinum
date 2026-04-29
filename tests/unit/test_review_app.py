@@ -340,3 +340,118 @@ def test_get_root_redirects_to_story(story_factory, tmp_path: Path) -> None:
         resp = client.get("/")
     assert resp.status_code == 302
     assert f"/story/{story.id}" in resp.location
+
+
+# ---- B6.2: GET /story/<id>/characters --------------------------------------
+
+
+def _seed_character_refs(
+    story: Story, story_dir: Path, *,
+    character: str, n_candidates: int = 3,
+) -> list[Path]:
+    """Drop n_candidates fake PNGs at <story>/references/<character>/.
+
+    Returns the candidate paths in deterministic order (candidate_0..N-1).
+    """
+    refs_dir = story_dir / "references" / character
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i in range(n_candidates):
+        p = refs_dir / f"candidate_{i}.png"
+        p.write_bytes(b"\x89PNG_test_" + str(i).encode())
+        paths.append(p)
+    return paths
+
+
+def test_get_character_gallery_renders_row_per_character(
+    story_factory, tmp_path: Path
+) -> None:
+    """S7.1.B6.2: GET /story/<id>/characters returns 200 with one section
+    per character that has candidates on disk."""
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=2)
+    story.scenes[0].character_refs = ["Fortunato", "Montresor"]
+    story.scenes[1].character_refs = ["Fortunato"]
+    story.save(story_dir / "story.json")
+
+    _seed_character_refs(story, story_dir, character="Fortunato")
+    _seed_character_refs(story, story_dir, character="Montresor")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(f"/story/{story.id}/characters")
+    assert resp.status_code == 200, resp.data
+    # Both characters appear as section headers.
+    assert b"Fortunato" in resp.data
+    assert b"Montresor" in resp.data
+    # Pick buttons rendered (3 per character).
+    pick_count = resp.data.count(b"data-character=")
+    assert pick_count >= 6  # 3 buttons * 2 characters
+
+
+def test_get_character_gallery_shows_picked_marker_for_already_picked(
+    story_factory, tmp_path: Path
+) -> None:
+    """S7.1.B6.2: when story.characters[name] is set, the Pick button for
+    that ref is disabled / shows 'Picked'."""
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=1)
+    story.scenes[0].character_refs = ["Fortunato"]
+    paths = _seed_character_refs(story, story_dir, character="Fortunato")
+    story.characters["Fortunato"] = str(paths[1])  # picked candidate_1
+    story.save(story_dir / "story.json")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(f"/story/{story.id}/characters")
+    assert resp.status_code == 200
+    assert b"Picked" in resp.data
+
+
+def test_reference_image_serves_candidate_png(
+    story_factory, tmp_path: Path
+) -> None:
+    """S7.1.B6.2: /reference_image/<story>/<character>/<file> serves the
+    candidate PNG from the references directory."""
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=1)
+    story.scenes[0].character_refs = ["Fortunato"]
+    story.save(story_dir / "story.json")
+    paths = _seed_character_refs(story, story_dir, character="Fortunato")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(
+            f"/reference_image/{story.id}/Fortunato/candidate_0.png"
+        )
+    assert resp.status_code == 200
+    assert resp.data == paths[0].read_bytes()
+
+
+def test_reference_image_404_on_missing(story_factory, tmp_path: Path) -> None:
+    """S7.1.B6.2: nonexistent reference path returns 404."""
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=1)
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(
+            f"/reference_image/{story.id}/Ghost/missing.png"
+        )
+    assert resp.status_code == 404

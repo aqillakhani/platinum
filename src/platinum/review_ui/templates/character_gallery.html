@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Character References — {{ story.id }}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>Character References — {{ story.id }}</h1>
+  <p class="char-subhead">Pick one reference portrait per character. The
+    selection is fed into IP-Adapter FaceID to keep faces consistent across
+    keyframes.</p>
+</header>
+<main id="character-grid" data-story-id="{{ story.id }}">
+{% if characters_with_candidates %}
+{% for character_name, candidate_paths in characters_with_candidates.items() %}
+<article class="character-row" data-character="{{ character_name }}">
+  <header class="character-header">
+    <h2>{{ character_name }}</h2>
+    {% set picked = story.characters.get(character_name) %}
+    {% if picked %}
+    <span class="picked-pill" data-picked-path="{{ picked }}">
+      Picked: {{ picked | truncate(80) }}
+    </span>
+    {% else %}
+    <span class="unpicked-pill">No ref picked yet</span>
+    {% endif %}
+  </header>
+  <div class="ref-grid">
+    {% for path in candidate_paths %}
+    {% set ci = loop.index0 %}
+    <button class="ref-thumb pick-button"
+            data-character="{{ character_name }}"
+            data-path="{{ path }}"
+            {% if picked == path %}disabled{% endif %}>
+      <img alt="{{ character_name }} candidate {{ ci }}"
+           src="{{ url_for('reference_image', story_id=story.id,
+                           relpath=character_name + '/candidate_' ~ ci ~ '.png') }}">
+      <span class="pick-label">
+        {% if picked == path %}Picked{% else %}Pick this one{% endif %}
+      </span>
+    </button>
+    {% endfor %}
+  </div>
+</article>
+{% endfor %}
+{% else %}
+<p class="empty-state">No characters discovered with candidates on disk. Run
+<code>platinum keyframes &lt;story&gt;</code> after visual_prompts completes
+to trigger CharacterReferenceStage.</p>
+{% endif %}
+</main>
+<script>
+{% include 'character_gallery.js' %}
+</script>
+</body>
+</html>
