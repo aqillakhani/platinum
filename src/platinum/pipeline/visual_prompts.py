@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from platinum.models.story import ReviewStatus, Scene, Story
+from platinum.pipeline.character_extraction import extract_character_names
 from platinum.pipeline.context import PipelineContext
 from platinum.pipeline.stage import Stage
 from platinum.utils.claude import (
@@ -154,22 +155,40 @@ async def visual_prompts(
     scene_filter: set[int] | None = None,
     deviation_feedback: list | None = None,
     stories_dir: Path | None = None,
+    characters: dict[str, str] | None = None,
 ) -> tuple[list[Scene], ClaudeResult]:
     """Run the visual_prompts call. Mutates story.scenes in place
     (sets visual_prompt and negative_prompt per scene) and returns it
     alongside the ClaudeResult. Raises if story.scenes is empty or
     if the response count/indexes don't match story.scenes.
 
-    When stories_dir is provided, the per-story characters dict is loaded
-    from stories_dir/<story.id>/characters.json (empty if missing) and
-    threaded into the visual_prompts.j2 TRACK CHARACTERS section.
+    Characters resolution (S7.1.B3.3) -- precedence:
+      1. Explicit `characters` kwarg (highest). Tests and CLI overrides
+         use this to pin a specific cast.
+      2. stories_dir/<story.id>/characters.json on disk. User-authored
+         overrides; empty dict if file missing.
+      3. Auto-extracted from scene narration via
+         extract_character_names(); names paired with placeholder
+         description "(reference pending)".
+
+    The resulting dict is threaded into visual_prompts.j2's TRACK
+    CHARACTERS section so Claude has a closed vocabulary when assigning
+    each scene's character_refs list.
     """
     if not story.scenes:
         raise RuntimeError(
             f"visual_prompts requires scene_breakdown to have populated story.scenes "
             f"first (story={story.id})."
         )
-    characters = _load_characters(story.id, stories_dir) if stories_dir else {}
+    if characters is None:
+        from_disk = (
+            _load_characters(story.id, stories_dir) if stories_dir else {}
+        )
+        if from_disk:
+            characters = from_disk
+        else:
+            names = extract_character_names(story.scenes)
+            characters = {name: "(reference pending)" for name in names}
     system, messages = _build_request(
         story=story, track_cfg=track_cfg, prompts_dir=prompts_dir,
         deviation_feedback=deviation_feedback,
@@ -198,6 +217,9 @@ class VisualPromptsStage(Stage):
         scene_filter_raw = runtime.get("scene_filter")
         scene_filter = set(scene_filter_raw) if scene_filter_raw is not None else None
         deviation_feedback = runtime.get("deviation_feedback")
+        # B3.3: tests / CLI can pin a specific cast via runtime config; None
+        # falls through to disk -> auto-extract precedence in visual_prompts().
+        characters_override = runtime.get("characters")
         _, claude_result = await visual_prompts(
             story=story, track_cfg=track_cfg,
             prompts_dir=ctx.config.prompts_dir,
@@ -205,6 +227,7 @@ class VisualPromptsStage(Stage):
             scene_filter=scene_filter,
             deviation_feedback=deviation_feedback,
             stories_dir=ctx.config.stories_dir,
+            characters=characters_override,
         )
         return {
             "model": claude_result.usage.model,

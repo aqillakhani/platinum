@@ -338,6 +338,91 @@ def test_zip_into_scenes_writes_character_refs() -> None:
     assert out[1].character_refs == []
 
 
+@pytest.mark.asyncio
+async def test_visual_prompts_auto_extracts_characters_from_narration_when_no_override(
+    tmp_path: Path,
+) -> None:
+    """S7.1.B3.3: when neither an explicit characters kwarg nor a
+    characters.json on disk is provided, visual_prompts auto-extracts
+    recurring proper nouns from narration_text and threads them as
+    'placeholder' descriptions. The TRACK CHARACTERS section in the
+    rendered prompt should list the extracted names so Claude has a
+    discrete vocabulary to draw from when assigning character_refs.
+    """
+    from platinum.models.db import create_all
+    from platinum.pipeline.visual_prompts import visual_prompts
+
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+    story = _story_with_scenes(0)
+    story.scenes = [
+        Scene(id="scene_001", index=1,
+              narration_text="Fortunato laughed at Montresor."),
+        Scene(id="scene_002", index=2,
+              narration_text="Montresor smiled. Fortunato did not."),
+    ]
+
+    captured_request: dict = {}
+
+    async def synth(req):
+        captured_request["request"] = req
+        return _synth_response(2)
+
+    await visual_prompts(
+        story=story, track_cfg=_track(),
+        prompts_dir=PROMPTS_DIR,
+        db_path=db_path, recorder=synth,
+    )
+    user_text = captured_request["request"]["messages"][0]["content"]
+    assert "TRACK CHARACTERS (recurring" in user_text
+    assert "Fortunato" in user_text
+    assert "Montresor" in user_text
+    # Description is a placeholder until user reviews via review UI.
+    assert "(reference pending)" in user_text
+
+
+@pytest.mark.asyncio
+async def test_visual_prompts_explicit_characters_kwarg_overrides_auto_extract(
+    tmp_path: Path,
+) -> None:
+    """S7.1.B3.3: when the caller passes an explicit characters dict, the
+    auto-extraction is skipped entirely (even if the narration would
+    have surfaced different names). This is the override path used by
+    tests and CLI commands that want a specific cast.
+    """
+    from platinum.models.db import create_all
+    from platinum.pipeline.visual_prompts import visual_prompts
+
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+    story = _story_with_scenes(0)
+    story.scenes = [
+        Scene(id="scene_001", index=1,
+              narration_text="Fortunato laughed at Montresor."),
+        Scene(id="scene_002", index=2,
+              narration_text="Montresor smiled. Fortunato did not."),
+    ]
+
+    captured_request: dict = {}
+
+    async def synth(req):
+        captured_request["request"] = req
+        return _synth_response(2)
+
+    await visual_prompts(
+        story=story, track_cfg=_track(),
+        prompts_dir=PROMPTS_DIR,
+        db_path=db_path, recorder=synth,
+        characters={"Lord Verres": "minor noble in dark velvet"},
+    )
+    user_text = captured_request["request"]["messages"][0]["content"]
+    # Override casts a name that doesn't appear in narration:
+    assert "Lord Verres: minor noble in dark velvet" in user_text
+    # Auto-extracted names are NOT present (override won):
+    assert "Fortunato:" not in user_text
+    assert "Montresor:" not in user_text
+
+
 def test_zip_into_scenes_handles_missing_b2_3_fields() -> None:
     """S7.1.B2.3: backwards compat -- old tool fixtures (recorded before the
     new fields were emitted) lack composition_notes / character_refs.
