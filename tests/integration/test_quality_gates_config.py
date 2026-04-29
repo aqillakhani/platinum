@@ -80,6 +80,24 @@ def test_track_yaml_carries_brightness_floor(track_name: str, expected_floor: fl
     assert qg.get("brightness_floor_mean_rgb") == expected_floor
 
 
+@pytest.mark.parametrize("track_id", ALL_TRACKS)
+def test_track_yaml_image_model_aspect_fields(track_id: str) -> None:
+    """S7.1.A2: each track ships 9:16 portrait dimensions for keyframe gen.
+
+    Cinematic aspect drives the keyframe latent (768x1344) and downstream
+    video crop (Wan 2.2 inherits the dimensions from the keyframe). The
+    aspect_ratio string is informational and consumed by the S8 video
+    pipeline.
+    """
+    cfg = Config(root=REPO_ROOT)
+    track = cfg.track(track_id)
+    image_model = track.get("image_model", {})
+    assert image_model.get("width") == 768, f"{track_id}.image_model.width must be 768"
+    assert image_model.get("height") == 1344, f"{track_id}.image_model.height must be 1344"
+    assert image_model.get("aspect_ratio") == "9:16", \
+        f"{track_id}.image_model.aspect_ratio must be '9:16'"
+
+
 @pytest.mark.parametrize(
     "track,expected_subject",
     [

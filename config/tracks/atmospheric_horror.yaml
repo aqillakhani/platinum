@@ -29,6 +29,9 @@ track:
     candidates_per_scene: 3
     use_ip_adapter_faceid: true    # lock recurring character identity across scenes
     use_controlnet_depth: false    # opt-in per scene via the visual_prompts stage
+    width: 768                     # S7.1: 9:16 portrait keyframes (Instagram reels target)
+    height: 1344                   # S7.1: 9:16 portrait keyframes (Instagram reels target)
+    aspect_ratio: "9:16"           # S7.1: informational; consumed by S8+ video pipeline
 
   # Video generation
   video_model:

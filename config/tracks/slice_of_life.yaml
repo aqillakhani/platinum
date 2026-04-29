@@ -20,6 +20,9 @@ track:
     candidates_per_scene: 3
     use_ip_adapter_faceid: false
     use_controlnet_depth: false
+    width: 768                     # S7.1: 9:16 portrait
+    height: 1344                   # S7.1: 9:16 portrait
+    aspect_ratio: "9:16"           # S7.1
   video_model:
     backend: wan22_i2v
     base_resolution: [1280, 720]
