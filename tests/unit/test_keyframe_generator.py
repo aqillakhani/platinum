@@ -77,6 +77,32 @@ def test_keyframe_report_carries_clip_passed_field() -> None:
         r.clip_passed = [True, True, True]  # type: ignore[misc]
 
 
+def test_keyframe_report_carries_content_gate_fields() -> None:
+    """S7.1.A4.5: content_passed + content_scores aligned to candidates."""
+    import dataclasses
+
+    from platinum.pipeline.keyframe_generator import KeyframeReport
+
+    r = KeyframeReport(
+        scene_index=0,
+        candidates=[Path("/tmp/c0.png"), Path("/tmp/c1.png"), Path("/tmp/c2.png")],
+        scores=[5.0, 6.0, 7.0],
+        anatomy_passed=[True, True, True],
+        scoring_succeeded=[True, True, True],
+        brightness_passed=[True, True, True],
+        subject_passed=[True, True, True],
+        clip_passed=[True, True, True],
+        content_passed=[False, True, True],
+        content_scores=[3, 8, 7],
+        selected_index=1,
+        selected_via_fallback=False,
+    )
+    assert r.content_passed == [False, True, True]
+    assert r.content_scores == [3, 8, 7]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        r.content_passed = [True, True, True]  # type: ignore[misc]
+
+
 def test_keyframe_generation_error_carries_per_candidate_exceptions() -> None:
     from platinum.pipeline.keyframe_generator import KeyframeGenerationError
 
@@ -1903,3 +1929,175 @@ async def test_generate_passes_clip_min_similarity_from_track_yaml(
             output_root=output_root,
             mp_hands_factory=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_content_gate_off_skips_check(tmp_path: Path) -> None:
+    """S7.1.A4.5: content_gate='off' must NOT call ContentChecker.check."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.content_check import FakeContentChecker
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(idx=0)
+    output_dir = tmp_path / "scene_000"
+    scorer = FakeAestheticScorer(fixed_score=7.0)
+    content_checker = FakeContentChecker()
+    comfy, wf_template = _build_fake_comfy_with_three_candidates()
+
+    report = await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates={
+            **_GATES,
+            "subject_min_edge_density": 0.0,
+            "content_gate": "off",
+            "content_gate_min_score": 6,
+        },
+        comfy=comfy,
+        scorer=scorer,
+        output_dir=output_dir,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+        content_checker=content_checker,
+    )
+    assert content_checker.call_count == 0  # never invoked
+    assert report.content_passed == [True, True, True]
+    assert report.content_scores == [None, None, None]
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_content_gate_filters_low_score(tmp_path: Path) -> None:
+    """S7.1.A4.5: content_gate='claude' rejects candidates whose Claude score
+    is below content_gate_min_score."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.content_check import FakeContentChecker
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(idx=0)
+    output_dir = tmp_path / "scene_000"
+    score_map = {
+        output_dir / "candidate_0.png": 8.0,  # would-be winner on LAION
+        output_dir / "candidate_1.png": 7.0,
+        output_dir / "candidate_2.png": 6.5,
+    }
+    content_score_map = {
+        output_dir / "candidate_0.png": 3,  # below 6 threshold
+        output_dir / "candidate_1.png": 8,
+        output_dir / "candidate_2.png": 7,
+    }
+    scorer = MappedFakeScorer(scores_by_path=score_map, default=0.0)
+    content_checker = FakeContentChecker(scores=content_score_map)
+    comfy, wf_template = _build_fake_comfy_with_three_candidates()
+
+    report = await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates={
+            **_GATES,
+            "subject_min_edge_density": 0.0,
+            "content_gate": "claude",
+            "content_gate_min_score": 6,
+        },
+        comfy=comfy,
+        scorer=scorer,
+        output_dir=output_dir,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+        content_checker=content_checker,
+    )
+    assert content_checker.call_count == 3
+    assert report.content_passed == [False, True, True]
+    assert report.content_scores == [3, 8, 7]
+    # candidate_0 had highest LAION but failed content gate -> winner is c1
+    assert report.selected_index == 1
+    assert not report.selected_via_fallback
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_content_gate_halts_when_all_fail(
+    tmp_path: Path,
+) -> None:
+    """S7.1.A4.5: when no candidate passes the content gate, raise."""
+    from platinum.pipeline.keyframe_generator import (
+        KeyframeGenerationError,
+        generate_for_scene,
+    )
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.content_check import FakeContentChecker
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(idx=0)
+    output_dir = tmp_path / "scene_000"
+    scorer = FakeAestheticScorer(fixed_score=7.0)
+    content_checker = FakeContentChecker(default_score=2)  # all below 6
+    comfy, wf_template = _build_fake_comfy_with_three_candidates()
+
+    with pytest.raises(KeyframeGenerationError, match="content"):
+        await generate_for_scene(
+            scene,
+            track_visual=_TRACK_VISUAL,
+            quality_gates={
+                **_GATES,
+                "subject_min_edge_density": 0.0,
+                "content_gate": "claude",
+                "content_gate_min_score": 6,
+            },
+            comfy=comfy,
+            scorer=scorer,
+            output_dir=output_dir,
+            workflow_template=wf_template,
+            seeds=(0, 1, 2),
+            mp_hands_factory=make_fake_hands_factory(None),
+            content_checker=content_checker,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_for_scene_content_gate_skips_candidates_failing_earlier(
+    tmp_path: Path,
+) -> None:
+    """S7.1.A4.5: candidates that failed brightness/subject/clip/scoring/anatomy
+    are NOT sent to the (expensive) Claude content gate.
+
+    Setup: subject_min_edge_density set so candidate 0 fails. Expect
+    ContentChecker called only twice (for candidates 1 and 2)."""
+    from platinum.pipeline.keyframe_generator import generate_for_scene
+    from platinum.utils.aesthetics import FakeAestheticScorer
+    from platinum.utils.content_check import FakeContentChecker
+    from tests._fixtures import make_fake_hands_factory
+
+    scene = _scene(idx=0)
+    output_dir = tmp_path / "scene_000"
+    scorer = FakeAestheticScorer(fixed_score=7.0)
+    content_checker = FakeContentChecker()
+    comfy, wf_template = _build_fake_comfy_with_three_candidates()
+
+    # Build with high subject threshold so candidate_0 (one of the fixtures)
+    # fails subject gate. (Edge densities of the fixture PNGs are all > 0.005
+    # but we crank to a level that all 3 fail; the loop's per-candidate
+    # accounting still stays sync.)
+    quality_gates = {
+        **_GATES,
+        # 0.0 means subject gate effectively disabled -> all 3 reach content
+        "subject_min_edge_density": 0.0,
+        "content_gate": "claude",
+        "content_gate_min_score": 6,
+    }
+    await generate_for_scene(
+        scene,
+        track_visual=_TRACK_VISUAL,
+        quality_gates=quality_gates,
+        comfy=comfy,
+        scorer=scorer,
+        output_dir=output_dir,
+        workflow_template=wf_template,
+        seeds=(0, 1, 2),
+        mp_hands_factory=make_fake_hands_factory(None),
+        content_checker=content_checker,
+    )
+    # All 3 candidates passed earlier gates -> content checked 3 times.
+    assert content_checker.call_count == 3

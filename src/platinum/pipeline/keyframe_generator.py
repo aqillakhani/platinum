@@ -40,6 +40,12 @@ class KeyframeReport:
     # S7.1.A3.3 CLIP image-text similarity gate. Default factory keeps
     # legacy KeyframeReport(...) callsites valid while new code populates it.
     clip_passed: list[bool] = field(default_factory=list)
+    # S7.1.A4.5 Claude vision content fidelity gate. content_passed is True
+    # when the gate is "off" (gate disabled = always pass) OR when the
+    # candidate's score >= content_gate_min_score. content_scores is the raw
+    # 1-10 score from Claude or None when the gate didn't run.
+    content_passed: list[bool] = field(default_factory=list)
+    content_scores: list[int | None] = field(default_factory=list)
 
 
 class KeyframeGenerationError(RuntimeError):
@@ -91,6 +97,7 @@ async def generate_for_scene(
     width: int = 1024,
     height: int = 1024,
     clip_min_similarity: float = 0.0,
+    content_checker: Any = None,
     mp_hands_factory: Callable[[], Any] | None = None,
 ) -> KeyframeReport:
     """Generate N candidates, score + anatomy-check each, return a KeyframeReport.
@@ -162,6 +169,15 @@ async def generate_for_scene(
     brightness_passed: list[bool] = []
     subject_passed: list[bool] = []
     clip_passed: list[bool] = []
+    content_passed: list[bool] = []
+    content_scores: list[int | None] = []
+    # S7.1.A4.5 content gate config (Claude vision over the rendered candidate).
+    # "off" disables; "claude" / "claude_strict" route through ContentChecker.
+    content_gate_mode = str(quality_gates.get("content_gate", "off"))
+    content_gate_floor = int(quality_gates.get("content_gate_min_score", 0))
+    content_gate_active = (
+        content_gate_mode != "off" and content_checker is not None
+    )
     for path, candidate_exc in zip(candidate_paths, candidate_exceptions, strict=True):
         if candidate_exc is not None or not path.exists():
             scores.append(0.0)
@@ -170,6 +186,8 @@ async def generate_for_scene(
             brightness_passed.append(False)
             subject_passed.append(False)
             clip_passed.append(False)
+            content_passed.append(not content_gate_active)
+            content_scores.append(None)
             continue
 
         # NEW: brightness gate runs BEFORE the LAION call (saves the round-trip).
@@ -186,6 +204,8 @@ async def generate_for_scene(
             scoring_succeeded.append(False)
             subject_passed.append(False)
             clip_passed.append(False)
+            content_passed.append(not content_gate_active)
+            content_scores.append(None)
             continue
 
         subject = check_image_subject(path, min_edge_density=subject_floor)
@@ -199,6 +219,8 @@ async def generate_for_scene(
             anatomy_passed.append(False)
             scoring_succeeded.append(False)
             clip_passed.append(False)
+            content_passed.append(not content_gate_active)
+            content_scores.append(None)
             continue
 
         # S7.1.A3.3 CLIP image-text content fidelity gate. Runs after the
@@ -230,6 +252,8 @@ async def generate_for_scene(
             scores.append(0.0)
             anatomy_passed.append(False)
             scoring_succeeded.append(False)
+            content_passed.append(not content_gate_active)
+            content_scores.append(None)
             continue
 
         try:
@@ -246,6 +270,39 @@ async def generate_for_scene(
         scoring_succeeded.append(scoring_ok)
         result = check_hand_anomalies(path, mp_hands_factory=mp_hands_factory)
         anatomy_passed.append(result.passed)
+
+        # S7.1.A4.5 content gate -- runs LAST in the per-candidate pass so
+        # the cheap pixel-level gates eliminate failures before the
+        # (~1s, ~$0.005) Anthropic vision call.
+        if not content_gate_active:
+            content_passed.append(True)  # gate disabled -> always pass
+            content_scores.append(None)
+        elif scoring_ok and result.passed:
+            try:
+                cresult = await content_checker.check(
+                    prompt=scene.visual_prompt, image_path=path
+                )
+                content_scores.append(int(cresult.score))
+                content_ok = int(cresult.score) >= content_gate_floor
+                content_passed.append(content_ok)
+                if not content_ok:
+                    logger.warning(
+                        "scene %d candidate %s content gate failed "
+                        "(score=%d < min=%d, missing=%s)",
+                        scene.index, path.name, cresult.score,
+                        content_gate_floor, cresult.missing,
+                    )
+            except Exception as content_exc:  # noqa: BLE001 -- per-candidate isolation
+                logger.warning(
+                    "scene %d candidate %s content_checker failed: %r",
+                    scene.index, path.name, content_exc,
+                )
+                content_passed.append(False)
+                content_scores.append(None)
+        else:
+            # Candidate failed scoring or anatomy; don't waste a Claude call on it.
+            content_passed.append(False)
+            content_scores.append(None)
 
     if not any(brightness_passed):
         raise KeyframeGenerationError(
@@ -284,13 +341,28 @@ async def generate_for_scene(
             ],
         )
 
+    # S7.1.A4.5 content gate halt -- only fires when the gate is actively
+    # engaged. With "off" mode, content_passed is True for every
+    # success-path candidate so any() returns True and this is a no-op.
+    if content_gate_active and not any(content_passed):
+        raise KeyframeGenerationError(
+            scene_index=scene.index,
+            exceptions=[
+                RuntimeError(
+                    f"content gate failed for candidate {i} "
+                    f"(score={content_scores[i]}, path={p})"
+                )
+                for i, p in enumerate(candidate_paths)
+            ],
+        )
+
     threshold = float(quality_gates.get("aesthetic_min_score", 0.0))
     eligible = [
-        i for i, (s, a, ok, b, sj, cp) in enumerate(
+        i for i, (s, a, ok, b, sj, cp, contentp) in enumerate(
             zip(scores, anatomy_passed, scoring_succeeded, brightness_passed,
-                subject_passed, clip_passed, strict=True)
+                subject_passed, clip_passed, content_passed, strict=True)
         )
-        if ok and b and sj and cp and s >= threshold and a
+        if ok and b and sj and cp and contentp and s >= threshold and a
     ]
     if eligible:
         max_score = max(scores[i] for i in eligible)
@@ -298,19 +370,19 @@ async def generate_for_scene(
         selected_via_fallback = False
     else:
         # Content failure: fall back to highest-scored among candidates that
-        # passed scoring AND brightness AND subject AND clip gates. Failing
-        # candidates are NEVER selected, even in fallback (would persist a
-        # degenerate image even though we know it's bad).
+        # passed scoring AND brightness AND subject AND clip AND content gates.
+        # Failing candidates are NEVER selected, even in fallback (would persist
+        # a degenerate image even though we know it's bad).
         fallback_pool = [
-            i for i, (ok, b, sj, cp) in enumerate(
+            i for i, (ok, b, sj, cp, contentp) in enumerate(
                 zip(scoring_succeeded, brightness_passed, subject_passed,
-                    clip_passed, strict=True)
+                    clip_passed, content_passed, strict=True)
             )
-            if ok and b and sj and cp
+            if ok and b and sj and cp and contentp
         ]
-        # If empty, the brightness/subject/clip/scoring halt above already
-        # raised KeyframeGenerationError; reaching here guarantees fallback_pool
-        # is non-empty.
+        # If empty, the brightness/subject/clip/scoring/content halts above
+        # already raised KeyframeGenerationError; reaching here guarantees
+        # fallback_pool is non-empty.
         max_score_in_pool = max(scores[i] for i in fallback_pool)
         selected_index = next(
             i for i in fallback_pool if scores[i] == max_score_in_pool
@@ -326,6 +398,8 @@ async def generate_for_scene(
         brightness_passed=brightness_passed,
         subject_passed=subject_passed,
         clip_passed=clip_passed,
+        content_passed=content_passed,
+        content_scores=content_scores,
         selected_index=selected_index,
         selected_via_fallback=selected_via_fallback,
     )
@@ -340,6 +414,7 @@ async def generate(
     output_root: Path,
     mp_hands_factory: Callable[[], Any] | None = None,
     scene_filter: set[int] | None = None,
+    content_checker: Any = None,
 ) -> list[KeyframeReport]:
     """Run keyframe generation for every scene whose keyframe_path is None.
 
@@ -387,6 +462,7 @@ async def generate(
             width=width,
             height=height,
             clip_min_similarity=clip_min_similarity,
+            content_checker=content_checker,
         )
         scene.keyframe_candidates = list(report.candidates)
         scene.keyframe_scores = list(report.scores)
