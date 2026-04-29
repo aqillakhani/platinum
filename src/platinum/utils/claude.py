@@ -69,6 +69,8 @@ class Recorder(Protocol):
 # Cache reads bill at 10% of input rate; cache creation at 125%.
 _PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-opus-4-7": (15.0, 75.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+    "claude-haiku-4-5-20251001": (1.0, 5.0),
 }
 
 

@@ -127,3 +127,153 @@ async def test_fake_content_checker_records_call_count(tmp_path: Path) -> None:
     await fake.check(prompt="x", image_path=img)
     await fake.check(prompt="x", image_path=img)
     assert fake.call_count == 2
+
+
+def _content_check_fixture_path() -> Path:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "anthropic"
+        / "content_check"
+        / "test_records_and_replays__1.json"
+    )
+
+
+async def test_claude_content_checker_records_and_replays(tmp_path: Path) -> None:
+    """S7.1.A4.3: ClaudeContentChecker hits Anthropic vision and round-trips
+    through the project FixtureRecorder.
+
+    Replay mode (default): reads the saved fixture and asserts the parsed
+    ContentCheckResult shape.
+
+    Record mode (PLATINUM_RECORD_FIXTURES=1): hits the live Anthropic API,
+    saves the response to tests/fixtures/anthropic/content_check/. ~$0.005
+    per record. Use a synthetic checkerboard PNG so we never commit any PII.
+    """
+    import os
+
+    from platinum.models.db import create_all
+    from platinum.utils.claude import _live_call
+    from platinum.utils.content_check import ClaudeContentChecker
+    from tests._fixtures import FixtureRecorder, make_synthetic_png
+
+    fixture_path = _content_check_fixture_path()
+    record = os.environ.get("PLATINUM_RECORD_FIXTURES") == "1"
+
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+
+    img_path = tmp_path / "candidate.png"
+    make_synthetic_png(img_path, kind="checkerboard", size=(256, 256), block=32)
+
+    if record:
+        # Trigger secrets/.env load so ANTHROPIC_API_KEY reaches resolve_api_key().
+        from platinum.config import Config
+        Config()
+
+        async def live(request: dict) -> dict:
+            return await _live_call(request, client_factory=None)
+        recorder = FixtureRecorder(path=fixture_path, mode="record", live=live)
+    else:
+        recorder = FixtureRecorder(path=fixture_path, mode="replay")
+
+    checker = ClaudeContentChecker(recorder=recorder, db_path=db_path)
+    result = await checker.check(
+        prompt="a wide checkerboard pattern of black and white squares",
+        image_path=img_path,
+    )
+
+    assert isinstance(result.score, int)
+    assert 1 <= result.score <= 10
+    assert isinstance(result.missing, list)
+    assert isinstance(result.rationale, str)
+    assert result.raw_response  # non-empty JSON
+
+
+async def test_claude_content_checker_satisfies_protocol() -> None:
+    from platinum.utils.content_check import ClaudeContentChecker, ContentChecker
+
+    checker = ClaudeContentChecker()
+    assert isinstance(checker, ContentChecker)
+
+
+async def test_claude_content_checker_parses_tool_input(tmp_path: Path) -> None:
+    """ClaudeContentChecker.check maps the submit_content_check tool_input
+    into ContentCheckResult fields verbatim."""
+    import json as _json
+
+    from platinum.models.db import create_all
+    from platinum.utils.content_check import ClaudeContentChecker
+    from tests._fixtures import make_synthetic_png
+
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+
+    img = tmp_path / "x.png"
+    make_synthetic_png(img, kind="grey", value=128)
+
+    async def synth(request: dict) -> dict:
+        return {
+            "id": "msg_synth",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "submit_content_check",
+                    "input": {
+                        "score": 7,
+                        "missing": ["fog", "chains"],
+                        "rationale": "atmospheric but specific elements absent",
+                    },
+                }
+            ],
+            "stop_reason": "tool_use",
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        }
+
+    checker = ClaudeContentChecker(recorder=synth, db_path=db_path)
+    result = await checker.check(prompt="a chained man in fog", image_path=img)
+    assert result.score == 7
+    assert result.missing == ["fog", "chains"]
+    assert "atmospheric" in result.rationale
+    assert _json.loads(result.raw_response)["score"] == 7
+
+
+async def test_claude_content_checker_haiku_pricing_resolves(tmp_path: Path) -> None:
+    """Haiku 4.5 cost calculation must not raise -- wire-check for
+    _PRICING_USD_PER_MTOK entry added alongside ClaudeContentChecker."""
+    from platinum.models.db import create_all
+    from platinum.utils.content_check import ClaudeContentChecker
+    from tests._fixtures import make_synthetic_png
+
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+    img = tmp_path / "x.png"
+    make_synthetic_png(img, kind="grey", value=64)
+
+    async def synth(_: dict) -> dict:
+        return {
+            "id": "msg",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "submit_content_check",
+                    "input": {"score": 9, "missing": [], "rationale": "good"},
+                }
+            ],
+            "stop_reason": "tool_use",
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        }
+
+    checker = ClaudeContentChecker(recorder=synth, db_path=db_path)
+    result = await checker.check(prompt="x", image_path=img)
+    assert result.score == 9

@@ -1,0 +1,109 @@
+{
+  "request": {
+    "model": "claude-haiku-4-5",
+    "max_tokens": 8192,
+    "system": [
+      {
+        "type": "text",
+        "text": "You are a content fidelity reviewer for an AI image-generation pipeline. Given an image and the prompt that produced it, rate 1-10 how specifically the image depicts the prompt's named subjects, actions, spatial layout, and atmospheric details. 10 = depicts every named element specifically; 5 = mostly atmospheric only, generic match; 1 = nothing matches. List specific elements MISSING from the image (named subjects, actions, or props the prompt asked for that aren't visible). Submit your evaluation via the submit_content_check tool.",
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "image",
+            "source": {
+              "type": "base64",
+              "media_type": "image/png",
+              "data": "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAADFElEQVR4nO3dMQ6DMBAAQZz//9n5gSmQZcHO9ImQYXXdecw5r53GGFv/3/M7/yd+j34NLycA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKTtXd5vf//9C3B/wtH7H0wA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgLSxe/+6/fdrzv/s92MCkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKTtXb5u//3x/ffuH1gzAUgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDShv3xNwdkf//S278fE4A0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgbe/y9Q/sj/f83z5/E4A0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgbdh//+39955/zQQgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASNu7/N7++/sX4P6Bo/cnmACkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAV9kfXXBh7UV+2fkAAAAASUVORK5CYII="
+            }
+          },
+          {
+            "type": "text",
+            "text": "Prompt: a wide checkerboard pattern of black and white squares"
+          }
+        ]
+      }
+    ],
+    "tools": [
+      {
+        "name": "submit_content_check",
+        "description": "Score how well the image depicts the prompt.",
+        "input_schema": {
+          "type": "object",
+          "required": [
+            "score",
+            "missing",
+            "rationale"
+          ],
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "description": "1-10 rating of how specifically the image depicts the prompt. 10 = depicts everything; 5 = mostly atmospheric only; 1 = nothing matches."
+            },
+            "missing": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Specific named elements from the prompt that are NOT depicted. Empty list when the image hits everything."
+            },
+            "rationale": {
+              "type": "string",
+              "description": "1-2 sentences justifying the score."
+            }
+          }
+        }
+      }
+    ],
+    "tool_choice": {
+      "type": "tool",
+      "name": "submit_content_check"
+    }
+  },
+  "response": {
+    "id": "msg_01JREEQ6vm28A6LpAPAqjQsF",
+    "container": null,
+    "content": [
+      {
+        "id": "toolu_0183r6zytWsg3YXXcGv7Gy6c",
+        "caller": {
+          "type": "direct"
+        },
+        "input": {
+          "score": 9,
+          "missing": [],
+          "rationale": "The image depicts a clear checkerboard pattern with alternating black and white squares arranged in a grid format. The pattern is wide and matches the prompt's request precisely, with well-defined contrast between the two colors."
+        },
+        "name": "submit_content_check",
+        "type": "tool_use"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "role": "assistant",
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "type": "message",
+    "usage": {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "not_available",
+      "input_tokens": 1024,
+      "output_tokens": 110,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    "stop_details": null
+  }
+}

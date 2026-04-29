@@ -3,8 +3,8 @@ depicts the prompt's specific content (S7.1.A4).
 
 Three layers mirror utils/aesthetics.py:
 - ContentChecker Protocol -- the contract.
-- FakeContentChecker -- deterministic stub for tests (lands in A4.2).
-- ClaudeContentChecker -- live Anthropic vision call (lands in A4.3).
+- FakeContentChecker -- deterministic stub for tests.
+- ClaudeContentChecker -- live Anthropic vision call.
 
 Used by keyframe_generator after the LAION aesthetic gate to filter out
 candidates that look great but don't depict the requested narrative beat
@@ -14,9 +14,14 @@ candidates that look great but don't depict the requested narrative beat
 
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
+
+from platinum.utils.claude import Recorder
+from platinum.utils.claude import call as claude_call
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,4 +92,120 @@ class FakeContentChecker:
             missing=missing,
             rationale=f"fake check for {image_path.name}",
             raw_response='{"score": ' + str(score) + "}",
+        )
+
+
+CONTENT_CHECK_TOOL: dict[str, Any] = {
+    "name": "submit_content_check",
+    "description": "Score how well the image depicts the prompt.",
+    "input_schema": {
+        "type": "object",
+        "required": ["score", "missing", "rationale"],
+        "properties": {
+            "score": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10,
+                "description": (
+                    "1-10 rating of how specifically the image depicts the prompt. "
+                    "10 = depicts everything; 5 = mostly atmospheric only; "
+                    "1 = nothing matches."
+                ),
+            },
+            "missing": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Specific named elements from the prompt that are NOT depicted. "
+                    "Empty list when the image hits everything."
+                ),
+            },
+            "rationale": {
+                "type": "string",
+                "description": "1-2 sentences justifying the score.",
+            },
+        },
+    },
+}
+
+
+CONTENT_CHECK_SYSTEM = (
+    "You are a content fidelity reviewer for an AI image-generation pipeline. "
+    "Given an image and the prompt that produced it, rate 1-10 how specifically "
+    "the image depicts the prompt's named subjects, actions, spatial layout, "
+    "and atmospheric details. 10 = depicts every named element specifically; "
+    "5 = mostly atmospheric only, generic match; 1 = nothing matches. "
+    "List specific elements MISSING from the image (named subjects, actions, "
+    "or props the prompt asked for that aren't visible). "
+    "Submit your evaluation via the submit_content_check tool."
+)
+
+
+class ClaudeContentChecker:
+    """Live Anthropic-vision implementation of ContentChecker.
+
+    Defaults to Haiku 4.5 -- a vision-capable, low-cost model well-suited
+    to the per-candidate gating workload (3 candidates per scene * 16 scenes
+    = ~48 calls per Cask render at ~$0.005 each = ~$0.24/render).
+
+    Uses the project Claude wrapper (utils/claude.call) so all calls
+    participate in the existing fixture recorder, retry, and cost-tracking
+    infrastructure.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str = "claude-haiku-4-5",
+        recorder: Recorder | None = None,
+        db_path: Path | None = None,
+        story_id: str = "content_check",
+    ) -> None:
+        self._model = model
+        self._recorder = recorder
+        self._db_path = db_path or Path("data/platinum.db")
+        self._story_id = story_id
+
+    async def check(
+        self, *, prompt: str, image_path: Path
+    ) -> ContentCheckResult:
+        with image_path.open("rb") as fh:
+            image_b64 = base64.b64encode(fh.read()).decode("ascii")
+        media_type = (
+            "image/jpeg" if image_path.suffix.lower() in {".jpg", ".jpeg"}
+            else "image/png"
+        )
+        system = [{"type": "text", "text": CONTENT_CHECK_SYSTEM}]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": image_b64,
+                        },
+                    },
+                    {"type": "text", "text": f"Prompt: {prompt}"},
+                ],
+            }
+        ]
+        result = await claude_call(
+            model=self._model,
+            system=system,
+            messages=messages,
+            tool=CONTENT_CHECK_TOOL,
+            story_id=self._story_id,
+            stage="content_check",
+            db_path=self._db_path,
+            recorder=self._recorder,
+        )
+        ti = result.tool_input
+        return ContentCheckResult(
+            score=int(ti["score"]),
+            missing=list(ti.get("missing", [])),
+            rationale=str(ti.get("rationale", "")),
+            raw_response=json.dumps(ti),
         )
