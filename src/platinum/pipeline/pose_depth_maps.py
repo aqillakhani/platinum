@@ -74,6 +74,17 @@ class PoseDepthMapStage(Stage):
 
         prepared: list[int] = []
         for scene in targets:
+            # B5.4 resume: skip scenes whose pose+depth refs are both set
+            # AND point at files that exist on disk. The whole stage is
+            # idempotent over re-runs as long as the prior outputs are
+            # still on disk; any missing or unset ref triggers a re-pass.
+            if (
+                scene.pose_ref_path
+                and scene.depth_ref_path
+                and Path(scene.pose_ref_path).exists()
+                and Path(scene.depth_ref_path).exists()
+            ):
+                continue
             prerender_path = await self._prerender(scene, story, ctx)
             pose_path, depth_path = await self._preprocess(
                 prerender_path, scene, story, ctx

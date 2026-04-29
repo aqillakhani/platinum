@@ -301,3 +301,102 @@ async def test_run_returns_empty_prepared_when_no_composition_scenes(
     stage = PoseDepthMapStage()
     artifacts = await stage.run(story, ctx)
     assert artifacts["prepared_scenes"] == []
+
+
+# ---- B5.4: resume semantics ------------------------------------------------
+
+
+async def test_run_skips_scenes_with_existing_refs_on_disk(
+    tmp_path: Path,
+) -> None:
+    """S7.1.B5.4: idempotent re-run -- a scene whose pose_ref_path AND
+    depth_ref_path are both set AND point at existing files is skipped.
+    Only scenes still missing refs trigger the preprocessor pass.
+    """
+    from platinum.pipeline.pose_depth_maps import PoseDepthMapStage
+
+    fixtures = Path(__file__).resolve().parents[1] / "fixtures" / "keyframes"
+    ctx = _build_test_ctx(tmp_path)
+
+    # Pre-create on-disk refs for scene 1 -- simulates a prior successful run.
+    scene1_dir = (
+        ctx.config.story_dir("story_test_001")
+        / "keyframes"
+        / "scene_001"
+    )
+    scene1_dir.mkdir(parents=True, exist_ok=True)
+    pose_existing = scene1_dir / "_pose.png"
+    depth_existing = scene1_dir / "_depth.png"
+    pose_existing.write_bytes(b"\x89PNG_existing_pose")
+    depth_existing.write_bytes(b"\x89PNG_existing_depth")
+
+    story = _story([
+        _scene(
+            1,
+            composition_notes="Medium shot. Two men face off.",
+            pose_ref_path=str(pose_existing),
+            depth_ref_path=str(depth_existing),
+        ),
+        _scene(
+            2,
+            composition_notes="Close-up of a torch.",
+            pose_ref_path=None,
+            depth_ref_path=None,
+        ),
+    ])
+    ctx.config.story_dir(story.id).mkdir(parents=True, exist_ok=True)
+
+    # Only scene 2 needs preprocessor responses.
+    expected_prerender_2 = (
+        ctx.config.story_dir(story.id)
+        / "keyframes" / "scene_002" / "_prerender.png"
+    )
+    prerender_responses = _build_prerender_response(
+        scene_index=2, repo_root=tmp_path,
+        fixture=fixtures / "candidate_0.png",
+    )
+    # _build_prerender_response uses prompt "Medium shot..." by default --
+    # patch the call to use scene 2's prompt by re-running with the right text.
+    from platinum.utils.comfyui import workflow_signature
+    from platinum.utils.workflow import inject, load_workflow
+    wf_template = load_workflow(
+        "flux_dev_keyframe", config_dir=tmp_path / "config"
+    )
+    wf2 = inject(
+        wf_template,
+        prompt="Close-up of a torch.",
+        negative_prompt="cartoon, anime, plastic, blurry, low quality",
+        seed=2 * 1000 + 999,
+        width=512, height=896,
+        output_prefix="scene_002_prerender",
+    )
+    wf2[wf2["_meta"]["role"]["sampler"]]["inputs"]["steps"] = 8
+    prerender_responses = {workflow_signature(wf2): [fixtures / "candidate_0.png"]}
+
+    preproc_responses = _build_preprocessor_responses(
+        prerender_path=expected_prerender_2, repo_root=tmp_path,
+        pose_fixture=fixtures / "candidate_1.png",
+        depth_fixture=fixtures / "candidate_2.png",
+    )
+    ctx.config.settings["test"]["comfy_client"].responses = {
+        **prerender_responses,
+        **preproc_responses,
+    }
+
+    stage = PoseDepthMapStage()
+    artifacts = await stage.run(story, ctx)
+
+    # Scene 1 was skipped (resume); scene 2 was prepared.
+    assert artifacts["prepared_scenes"] == [2]
+    # Scene 1's existing refs are unchanged.
+    assert story.scenes[0].pose_ref_path == str(pose_existing)
+    assert story.scenes[0].depth_ref_path == str(depth_existing)
+    assert pose_existing.read_bytes() == b"\x89PNG_existing_pose"
+    # Scene 2 got fresh refs.
+    assert story.scenes[1].pose_ref_path is not None
+    assert story.scenes[1].depth_ref_path is not None
+    assert Path(story.scenes[1].pose_ref_path).exists()
+    assert Path(story.scenes[1].depth_ref_path).exists()
+    # The Stage made exactly 3 comfy calls (1 prerender + 2 preprocessor for
+    # scene 2). Scene 1 was skipped so no calls for it.
+    assert len(ctx.config.settings["test"]["comfy_client"].calls) == 3
