@@ -606,3 +606,106 @@ async def test_stage_subject_gate_end_to_end_picks_subject_passing_candidate(  #
     # Verify all 3 candidates were generated and persisted
     assert len(scene.keyframe_candidates) == 3
     assert len(scene.keyframe_scores) == 3
+
+
+async def test_stage_clip_gate_filters_low_similarity_end_to_end(  # noqa: ANN001
+    tmp_project, repo_root,
+) -> None:
+    """S7.1.A3.5: Stage-layer CLIP gate -- low-similarity candidate is dropped,
+    the LAION-best CLIP-passing candidate wins.
+
+    All 3 candidates render fine (real fixture PNGs), but candidate_0 returns
+    clip_similarity=0.05 (below 0.20 threshold from atmospheric_horror.yaml).
+    Candidates 1 and 2 return 0.30. The stage must select candidate 1
+    (higher LAION score among CLIP-passing) over candidate 0 (highest LAION
+    overall but blocked by CLIP).
+    """
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    config = _setup_config(tmp_project, repo_root)
+    story = _build_story(n=1)
+    scene = story.scenes[0]
+    story_dir = tmp_project / "data" / "stories" / story.id
+    story_dir.mkdir(parents=True, exist_ok=True)
+    story_path = story_dir / "story.json"
+    story.save(story_path)
+    responses = _build_responses_for_story(story, repo_root)
+
+    output_dir = story_dir / "keyframes" / f"scene_{scene.index:03d}"
+    score_map = {
+        output_dir / "candidate_0.png": 9.0,  # would win on LAION but CLIP rejects
+        output_dir / "candidate_1.png": 8.0,  # winner
+        output_dir / "candidate_2.png": 7.0,
+    }
+    clip_map = {
+        output_dir / "candidate_0.png": 0.05,  # below 0.20 threshold
+        output_dir / "candidate_1.png": 0.30,
+        output_dir / "candidate_2.png": 0.30,
+    }
+
+    config.settings["test"] = {
+        "comfy_client": FakeComfyClient(responses=responses),
+        "aesthetic_scorer": MappedFakeScorer(
+            scores_by_path=score_map,
+            default=0.0,
+            clip_similarities_by_path=clip_map,
+            clip_similarity_default=0.0,
+        ),
+        "mp_hands_factory": make_fake_hands_factory(None),
+    }
+    ctx = PipelineContext(config=config, logger=__import__("logging").getLogger("test"))
+
+    stage = KeyframeGeneratorStage()
+    artifacts = await stage.run(story, ctx)
+
+    assert artifacts["scenes_total"] == 1
+    assert artifacts["scenes_succeeded"] == 1
+    assert artifacts["scenes_via_fallback"] == 0
+    assert scene.keyframe_path is not None
+    assert "candidate_1.png" in str(scene.keyframe_path)
+    assert "candidate_0.png" not in str(scene.keyframe_path)
+    # candidate_0's score zeroed by CLIP failure (was 9.0 originally)
+    assert scene.keyframe_scores[0] == 0.0
+
+
+async def test_stage_clip_gate_halts_when_all_candidates_fail(  # noqa: ANN001
+    tmp_project, repo_root,
+) -> None:
+    """S7.1.A3.5: when every candidate misses the CLIP threshold, the Stage
+    surfaces KeyframeGenerationError -- the scene shouldn't quietly keep
+    a degenerate keyframe just because LAION scored it.
+    """
+    from platinum.pipeline.keyframe_generator import (
+        KeyframeGenerationError,
+        KeyframeGeneratorStage,
+    )
+    from platinum.utils.aesthetics import MappedFakeScorer
+    from platinum.utils.comfyui import FakeComfyClient
+    from tests._fixtures import make_fake_hands_factory
+
+    config = _setup_config(tmp_project, repo_root)
+    story = _build_story(n=1)
+    story_dir = tmp_project / "data" / "stories" / story.id
+    story_dir.mkdir(parents=True, exist_ok=True)
+    story_path = story_dir / "story.json"
+    story.save(story_path)
+    responses = _build_responses_for_story(story, repo_root)
+
+    config.settings["test"] = {
+        "comfy_client": FakeComfyClient(responses=responses),
+        "aesthetic_scorer": MappedFakeScorer(
+            scores_by_path={},
+            default=8.0,
+            clip_similarities_by_path={},
+            clip_similarity_default=0.05,  # all candidates fail CLIP gate
+        ),
+        "mp_hands_factory": make_fake_hands_factory(None),
+    }
+    ctx = PipelineContext(config=config, logger=__import__("logging").getLogger("test"))
+
+    stage = KeyframeGeneratorStage()
+    with pytest.raises(KeyframeGenerationError, match="clip"):
+        await stage.run(story, ctx)
