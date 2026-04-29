@@ -164,15 +164,61 @@ dl "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l
 dl "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors" \
    "$MODELS_DIR/clip/t5xxl_fp16.safetensors" || log "WARN: t5xxl_fp16 download failed"
 
-# IP-Adapter FaceID (for cross-scene character lock) -- not used by S6.1, deferred OK.
-dl "https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid_flux.bin" \
-   "$MODELS_DIR/ipadapter/ip-adapter-faceid_flux.bin" || \
-    log "IP-Adapter FaceID Flux variant not yet hosted at expected path -- fetch manually if needed"
+# S7.1.B7.1 -- Flux IP-Adapter (Redux fp8 build) for cross-scene face lock.
+# References config/workflows/flux_dev_keyframe.json:12.ipadapter_file.
+dl "https://huggingface.co/black-forest-labs/FLUX.1-Redux-dev/resolve/main/flux1-redux-dev.safetensors" \
+   "$MODELS_DIR/ipadapter/flux1-redux-dev-fp8_e4m3fn.safetensors" || \
+    log "WARN: FLUX.1-Redux-dev download failed (HF_TOKEN missing or no license acceptance?)"
 
-# ControlNet Depth (Flux variant) -- not used by S6.1, deferred OK.
+# S7.1.B7.1 -- Flux Depth ControlNet (used by config/workflows/flux_dev_keyframe.json:15).
 dl "https://huggingface.co/Shakker-Labs/FLUX.1-dev-ControlNet-Depth/resolve/main/diffusion_pytorch_model.safetensors" \
-   "$MODELS_DIR/controlnet/flux-depth.safetensors" || \
-    log "WARN: ControlNet Depth download failed -- deferred for S6.2"
+   "$MODELS_DIR/controlnet/flux-controlnet-depth-v3.safetensors" || \
+    log "WARN: ControlNet Depth download failed"
+
+# S7.1.B7.1 -- Flux Canny+Pose Union ControlNet (used by config/workflows/flux_dev_keyframe.json:18).
+dl "https://huggingface.co/Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro/resolve/main/diffusion_pytorch_model.safetensors" \
+   "$MODELS_DIR/controlnet/flux-controlnet-canny-pose-union.safetensors" || \
+    log "WARN: ControlNet Pose download failed"
+
+# S7.1.B7.1 -- DepthAnythingV2 preprocessor (used by config/workflows/pose_depth_map.json:3).
+mkdir -p "$MODELS_DIR/depthanything"
+dl "https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth" \
+   "$MODELS_DIR/depthanything/depth_anything_v2_vitl.pth" || \
+    log "WARN: DepthAnythingV2 download failed"
+
+# S7.1.B7.1 -- DWPose preprocessor (used by config/workflows/pose_depth_map.json:2).
+mkdir -p "$MODELS_DIR/dwpose"
+dl "https://huggingface.co/yzd-v/DWPose/resolve/main/yolox_l.onnx" \
+   "$MODELS_DIR/dwpose/yolox_l.onnx" || \
+    log "WARN: DWPose yolox download failed"
+dl "https://huggingface.co/yzd-v/DWPose/resolve/main/dw-ll_ucoco_384.onnx" \
+   "$MODELS_DIR/dwpose/dw-ll_ucoco_384.onnx" || \
+    log "WARN: DWPose dw-ll download failed"
+
+# S7.1.B7.1 -- ComfyUI extensions for IP-Adapter + ControlNet + preprocessors.
+# Pinned-revision clones; later upgrades happen via Manager so the verify run
+# is reproducible from a fresh box.
+declare -A COMFY_EXTS=(
+    [ComfyUI-IPAdapter_plus]="https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"
+    [ComfyUI-Advanced-ControlNet]="https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git"
+    [comfyui_controlnet_aux]="https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+)
+for ext_name in "${!COMFY_EXTS[@]}"; do
+    ext_dir="$COMFYUI_DIR/custom_nodes/$ext_name"
+    if [ ! -d "$ext_dir" ]; then
+        log "Cloning $ext_name"
+        git clone "${COMFY_EXTS[$ext_name]}" "$ext_dir"
+    else
+        log "$ext_name already present (idempotent)"
+    fi
+    if [ -f "$ext_dir/requirements.txt" ]; then
+        # Run inside ComfyUI's venv so the deps land where ComfyUI imports.
+        # shellcheck source=/dev/null
+        source "$COMFYUI_DIR/venv/bin/activate"
+        pip install -r "$ext_dir/requirements.txt"
+        deactivate
+    fi
+done
 
 # Wan 2.2 I2V weights -- not used by S6.1, deferred OK.
 dl "https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B/resolve/main/diffusion_pytorch_model.safetensors" \
