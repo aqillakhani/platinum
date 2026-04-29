@@ -213,24 +213,30 @@ def _build_preprocessor_responses(
     *, prerender_path: Path, repo_root: Path,
     pose_fixture: Path, depth_fixture: Path,
 ) -> dict[str, list[Path]]:
-    """Build responses for the pose_depth_map preprocessor calls.
+    """Build responses for the pose + depth preprocessor calls.
 
-    The Stage submits the same workflow twice (once for pose, once for
-    depth); FakeComfyClient.responses[sig] rotates through the list so
-    [pose_fixture, depth_fixture] yields each in order.
+    Mirrors PoseDepthMapStage._preprocess's two-workflow split (pose +
+    depth single-output workflows; see BX-cumulative-review fix
+    rationale). Returns {pose_sig: [pose_fixture], depth_sig: [depth_fixture]}.
     """
     import copy
 
     from platinum.utils.comfyui import workflow_signature
     from platinum.utils.workflow import load_workflow
 
-    wf_template = load_workflow(
-        "pose_depth_map", config_dir=repo_root / "config"
-    )
-    wf = copy.deepcopy(wf_template)
-    image_id = wf["_meta"]["role"]["image_input"]
-    wf[image_id]["inputs"]["image"] = str(prerender_path)
-    return {workflow_signature(wf): [pose_fixture, depth_fixture]}
+    out: dict[str, list[Path]] = {}
+    for workflow_name, fixture in (
+        ("pose_preprocessor", pose_fixture),
+        ("depth_preprocessor", depth_fixture),
+    ):
+        wf_template = load_workflow(
+            workflow_name, config_dir=repo_root / "config"
+        )
+        wf = copy.deepcopy(wf_template)
+        image_id = wf["_meta"]["role"]["image_input"]
+        wf[image_id]["inputs"]["image"] = str(prerender_path)
+        out[workflow_signature(wf)] = [fixture]
+    return out
 
 
 async def test_run_generates_pose_and_depth_for_each_composition_scene(

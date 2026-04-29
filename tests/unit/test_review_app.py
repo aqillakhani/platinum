@@ -457,6 +457,31 @@ def test_reference_image_404_on_missing(story_factory, tmp_path: Path) -> None:
     assert resp.status_code == 404
 
 
+def test_reference_image_blocks_path_traversal(
+    story_factory, tmp_path: Path
+) -> None:
+    """S7.1.B6.2 / BX cumulative review: /reference_image must reject
+    path traversal attempts. Mirrors the same test on /image so the new
+    route's safe_join behaviour is verified, not just relied upon.
+
+    Reviewer flagged the asymmetry in the cumulative Phase B review:
+    /image had this test, /reference_image did not.
+    """
+    from platinum.review_ui.app import create_app
+
+    story, _ = story_factory()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("hunter2")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(f"/reference_image/{story.id}/../../../secret.txt")
+    assert resp.status_code == 404
+
+
 # ---- B6.3: POST /api/story/<id>/select_character_reference -----------------
 
 

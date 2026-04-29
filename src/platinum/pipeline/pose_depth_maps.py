@@ -152,13 +152,19 @@ class PoseDepthMapStage(Stage):
         story: Story,
         ctx: PipelineContext,
     ) -> tuple[Path, Path]:
-        """Run pose_depth_map.json against the prerender; return (pose, depth).
+        """Run the pose + depth preprocessors against the prerender;
+        return (pose_path, depth_path).
 
-        Submits the same workflow signature twice. FakeComfyClient.responses
-        rotates through its list (test path) so [pose_fixture, depth_fixture]
-        yields each in order. Production HttpComfyClient currently picks the
-        first SaveImage output; multi-output download support is a follow-on
-        before the verify run.
+        Uses two single-output workflows (pose_preprocessor.json +
+        depth_preprocessor.json) rather than one combined workflow with
+        two SaveImage outputs. Why: HttpComfyClient._download only
+        returns the first output node it finds in the comfy /history
+        response, so a combined workflow would silently produce
+        identical pose and depth files in production -- the cumulative
+        code review at Phase B close caught this. Two single-output
+        submissions are unambiguous: each call returns exactly the
+        expected file. Compute cost is unchanged because the
+        preprocessors are independent passes either way.
         """
         from platinum.utils.comfyui import HttpComfyClient
         from platinum.utils.workflow import load_workflow
@@ -176,17 +182,19 @@ class PoseDepthMapStage(Stage):
             / f"scene_{scene.index:03d}"
         )
 
-        wf_template = load_workflow(
-            "pose_depth_map", config_dir=ctx.config.config_dir
-        )
-        wf = copy.deepcopy(wf_template)
-        image_id = wf["_meta"]["role"]["image_input"]
-        wf[image_id]["inputs"]["image"] = str(prerender_path)
-
         pose_path = out_dir / "_pose.png"
         depth_path = out_dir / "_depth.png"
-        await comfy.generate_image(workflow=wf, output_path=pose_path)
-        await comfy.generate_image(workflow=wf, output_path=depth_path)
+        for workflow_name, target_path in (
+            ("pose_preprocessor", pose_path),
+            ("depth_preprocessor", depth_path),
+        ):
+            wf_template = load_workflow(
+                workflow_name, config_dir=ctx.config.config_dir
+            )
+            wf = copy.deepcopy(wf_template)
+            image_id = wf["_meta"]["role"]["image_input"]
+            wf[image_id]["inputs"]["image"] = str(prerender_path)
+            await comfy.generate_image(workflow=wf, output_path=target_path)
         return pose_path, depth_path
 
     def _scenes_needing_refs(self, story: Story) -> list[Any]:

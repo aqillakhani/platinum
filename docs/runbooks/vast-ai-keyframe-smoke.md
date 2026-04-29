@@ -768,7 +768,8 @@ first eye-check. If <14/16:
 - S7.1 design doc: `docs/plans/2026-04-28-session-7.1-content-fidelity-design.md`
 - S7.1 plan doc: `docs/plans/2026-04-28-session-7.1-content-fidelity-plan.md`
 - Rebuilt Flux Dev workflow: `config/workflows/flux_dev_keyframe.json`
-- Pose+depth aux workflow: `config/workflows/pose_depth_map.json`
+- Pose preprocessor workflow: `config/workflows/pose_preprocessor.json`
+- Depth preprocessor workflow: `config/workflows/depth_preprocessor.json`
 - score_server source: `scripts/score_server/`
 - Provisioning script: `scripts/vast_setup.sh`
 - Pre-flight script: `scripts/preflight_check.py`

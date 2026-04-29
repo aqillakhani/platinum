@@ -186,13 +186,13 @@ dl "https://huggingface.co/Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro/resolve/
    "$MODELS_DIR/controlnet/flux-controlnet-canny-pose-union.safetensors" || \
     log "WARN: ControlNet Pose download failed"
 
-# S7.1.B7.1 -- DepthAnythingV2 preprocessor (used by config/workflows/pose_depth_map.json:3).
+# S7.1.B7.1 -- DepthAnythingV2 preprocessor (used by config/workflows/depth_preprocessor.json).
 mkdir -p "$MODELS_DIR/depthanything"
 dl "https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vitl.pth" \
    "$MODELS_DIR/depthanything/depth_anything_v2_vitl.pth" || \
     log "WARN: DepthAnythingV2 download failed"
 
-# S7.1.B7.1 -- DWPose preprocessor (used by config/workflows/pose_depth_map.json:2).
+# S7.1.B7.1 -- DWPose preprocessor (used by config/workflows/pose_preprocessor.json).
 mkdir -p "$MODELS_DIR/dwpose"
 dl "https://huggingface.co/yzd-v/DWPose/resolve/main/yolox_l.onnx" \
    "$MODELS_DIR/dwpose/yolox_l.onnx" || \

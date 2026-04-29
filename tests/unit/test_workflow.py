@@ -579,43 +579,59 @@ def test_inject_raises_filenotfounderror_for_nonexistent_face_ref() -> None:
     assert "face_ref" in msg or "exist" in msg
 
 
-def test_pose_depth_map_workflow_loads_and_has_required_roles() -> None:
-    """S7.1.B5.1: aux workflow config/workflows/pose_depth_map.json loads
-    cleanly and registers the load-bearing role tags PoseDepthMapStage
-    needs: image_input (LoadImage to swap per-scene), pose_output and
-    depth_output (SaveImages whose `filename_prefix` the Stage rewrites
-    per scene).
+def test_pose_preprocessor_workflow_loads_and_has_required_roles() -> None:
+    """S7.1.B5.1 (post-BX fix): pose_preprocessor.json is one of the two
+    single-output workflows replacing the original combined
+    pose_depth_map.json. Combined workflow was retracted because
+    HttpComfyClient._download only returns the first SaveImage output,
+    so a multi-output workflow would silently produce identical
+    files in production.
     """
     from platinum.utils.workflow import load_workflow
 
     repo_root = Path(__file__).resolve().parents[2]
-    wf = load_workflow("pose_depth_map", config_dir=repo_root / "config")
+    wf = load_workflow("pose_preprocessor", config_dir=repo_root / "config")
 
     roles = wf["_meta"]["role"]
-    for required in ("image_input", "pose_output", "depth_output"):
+    for required in ("image_input", "image_output"):
         assert required in roles, f"_meta.role missing {required!r}"
         assert roles[required] in wf, (
             f"role {required!r} points at missing node {roles[required]!r}"
         )
 
-    # Wiring: both preprocessors read from the image_input LoadImage.
     image_id = roles["image_input"]
     assert wf[image_id]["class_type"] == "LoadImage"
 
-    pose_id = roles["pose_output"]
-    assert wf[pose_id]["class_type"] == "SaveImage"
-    # SaveImage.images comes from a preprocessor whose own image input
-    # traces back to the LoadImage. We don't pin the intermediate node id
-    # (the workflow may grow), but we DO check the chain reaches LoadImage.
-    pose_src = wf[pose_id]["inputs"]["images"]
-    pose_preproc_id = pose_src[0]
-    assert wf[pose_preproc_id]["inputs"]["image"][0] == image_id
+    out_id = roles["image_output"]
+    assert wf[out_id]["class_type"] == "SaveImage"
+    # The SaveImage's `images` traces back through the preprocessor to LoadImage.
+    src_node_id = wf[out_id]["inputs"]["images"][0]
+    assert wf[src_node_id]["inputs"]["image"][0] == image_id
 
-    depth_id = roles["depth_output"]
-    assert wf[depth_id]["class_type"] == "SaveImage"
-    depth_src = wf[depth_id]["inputs"]["images"]
-    depth_preproc_id = depth_src[0]
-    assert wf[depth_preproc_id]["inputs"]["image"][0] == image_id
+
+def test_depth_preprocessor_workflow_loads_and_has_required_roles() -> None:
+    """S7.1.B5.1 (post-BX fix): depth_preprocessor.json is the single-output
+    DepthAnythingV2 workflow. Same shape as pose_preprocessor.json --
+    LoadImage -> preprocessor -> SaveImage."""
+    from platinum.utils.workflow import load_workflow
+
+    repo_root = Path(__file__).resolve().parents[2]
+    wf = load_workflow("depth_preprocessor", config_dir=repo_root / "config")
+
+    roles = wf["_meta"]["role"]
+    for required in ("image_input", "image_output"):
+        assert required in roles, f"_meta.role missing {required!r}"
+        assert roles[required] in wf, (
+            f"role {required!r} points at missing node {roles[required]!r}"
+        )
+
+    image_id = roles["image_input"]
+    assert wf[image_id]["class_type"] == "LoadImage"
+
+    out_id = roles["image_output"]
+    assert wf[out_id]["class_type"] == "SaveImage"
+    src_node_id = wf[out_id]["inputs"]["images"][0]
+    assert wf[src_node_id]["inputs"]["image"][0] == image_id
 
 
 def test_inject_default_kwargs_bypass_all_refs() -> None:
