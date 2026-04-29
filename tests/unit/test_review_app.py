@@ -540,3 +540,33 @@ def test_post_select_character_reference_missing_fields_returns_400(
             json={"character": "Fortunato"},  # no 'path'
         )
     assert resp.status_code == 400
+
+
+def test_character_gallery_includes_pick_button_js_handler(
+    story_factory, tmp_path: Path
+) -> None:
+    """S7.1.B6.4: rendered gallery embeds character_gallery.js with the
+    fetch handler that wires Pick clicks to the select_character_reference
+    POST. Pinning the function name + endpoint guards against accidental
+    deletion of the inline script include.
+    """
+    from platinum.review_ui.app import create_app
+
+    story, story_dir = story_factory(n_scenes=1)
+    story.scenes[0].character_refs = ["Fortunato"]
+    story.save(story_dir / "story.json")
+    _seed_character_refs(story, story_dir, character="Fortunato")
+
+    app = create_app(
+        story_id=story.id,
+        data_root=tmp_path / "data" / "stories",
+    )
+    with app.test_client() as client:
+        resp = client.get(f"/story/{story.id}/characters")
+    assert resp.status_code == 200
+    body = resp.data.decode("utf-8")
+    # The handler is included inline via {% include 'character_gallery.js' %}.
+    assert "select_character_reference" in body
+    assert "pick-button" in body
+    # The Pick button DOM tags must exist for the handler to find them.
+    assert 'class="ref-thumb pick-button"' in body
