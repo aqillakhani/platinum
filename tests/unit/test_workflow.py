@@ -724,7 +724,10 @@ class TestInjectVideo:
             "101": {"class_type": "WanVideoTextEncode", "inputs": {"positive_prompt": ""}},
             "102": {"class_type": "WanVideoSampler", "inputs": {"seed": 0}},
             "103": {"class_type": "VHS_VideoCombine", "inputs": {"filename_prefix": ""}},
-            "104": {"class_type": "WanVideoImageToVideoEncode", "inputs": {"width": 0, "height": 0}},
+            "104": {
+                "class_type": "WanVideoImageToVideoEncode",
+                "inputs": {"width": 0, "height": 0},
+            },
             "105": {"class_type": "WanVideoImageToVideoEncode", "inputs": {"num_frames": 0}},
             "106": {"class_type": "VHS_VideoCombine", "inputs": {"frame_rate": 0}},
         }

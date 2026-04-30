@@ -238,9 +238,12 @@ def main() -> int:
             ("Wan workflow JSON",        lambda: _check_wan_workflow_json(args.workflow)),
             ("ComfyUI alive",            lambda: _check_comfyui_alive(comfyui_host)),
             ("Score-server alive",       lambda: _check_score_server_alive(aesthetics_host)),
-            ("Wan weights",              lambda: _check_wan_weights(args.wan_models_dir)),
-            ("Wan extension",            lambda: _check_wan_extension_importable()),
-            ("VideoHelperSuite extension", lambda: _check_videohelpersuite_extension_dir(comfyui_dir)),
+            ("Wan weights",         lambda: _check_wan_weights(args.wan_models_dir)),
+            ("Wan extension",       lambda: _check_wan_extension_importable()),
+            (
+                "VideoHelperSuite extension",
+                lambda: _check_videohelpersuite_extension_dir(comfyui_dir),
+            ),
         ]
     else:
         checks = [
