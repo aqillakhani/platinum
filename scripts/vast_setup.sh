@@ -254,8 +254,13 @@ else
         log "WARN: WanVideoWrapper clone failed"
 fi
 if [ -f "$WANWRAPPER_DIR/requirements.txt" ]; then
+    # Run inside ComfyUI's venv so the deps land where ComfyUI imports.
+    # shellcheck source=/dev/null
+    source "$COMFYUI_DIR/venv/bin/activate"
     pip install -r "$WANWRAPPER_DIR/requirements.txt" || \
         log "WARN: WanVideoWrapper requirements install failed"
+    pip cache purge || true
+    deactivate
 fi
 
 # RealESRGAN upscaler (ncnn-vulkan binary build for speed)
