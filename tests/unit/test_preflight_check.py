@@ -198,6 +198,37 @@ class TestWanPreflightChecks:
         assert not ok
         assert "missing roles" in msg
 
+    def test_check_wan_workflow_accepts_list_form_role(self, tmp_path) -> None:
+        """A role value that's a list of node IDs is accepted as long as
+        every listed node exists in the workflow. The Wan 2.2 14B I2V
+        workflow uses seed=['8','9'] for the two-sampler MoE chain."""
+        from preflight_check import _check_wan_workflow_json
+
+        good = tmp_path / "wan_good_list.json"
+        good.write_text(
+            '{"_meta":{"role":{"image_in":"10","prompt":"20",'
+            '"seed":["30","31"],"video_out":"60"}},'
+            '"10":{},"20":{},"30":{},"31":{},"60":{}}'
+        )
+        ok, msg = _check_wan_workflow_json(good)
+        assert ok, msg
+
+    def test_check_wan_workflow_rejects_list_form_with_missing_node(
+        self, tmp_path
+    ) -> None:
+        """If any node ID inside a list-form role is absent, fail."""
+        from preflight_check import _check_wan_workflow_json
+
+        bad = tmp_path / "wan_bad_list.json"
+        bad.write_text(
+            '{"_meta":{"role":{"image_in":"10","prompt":"20",'
+            '"seed":["30","999"],"video_out":"60"}},'
+            '"10":{},"20":{},"30":{},"60":{}}'
+        )
+        ok, msg = _check_wan_workflow_json(bad)
+        assert not ok
+        assert "999" in msg
+
     def test_check_wan_weights_present(self, tmp_path) -> None:
         import os
 

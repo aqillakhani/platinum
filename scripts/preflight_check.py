@@ -115,7 +115,12 @@ WAN_WEIGHT_FILES = (
 
 
 def _check_wan_workflow_json(path: Path) -> tuple[bool, str]:
-    """Load Wan workflow JSON; verify _meta.role tags reference valid nodes."""
+    """Load Wan workflow JSON; verify _meta.role tags reference valid nodes.
+
+    Role values may be either a single node ID (str) or a list of IDs
+    (used by the Wan 2.2 14B I2V workflow's seed role, which points at
+    both samplers in the MoE chain).
+    """
     try:
         data = json.loads(Path(path).read_text())
     except Exception as exc:  # noqa: BLE001
@@ -124,9 +129,13 @@ def _check_wan_workflow_json(path: Path) -> tuple[bool, str]:
     missing = WAN_REQUIRED_ROLES - set(roles)
     if missing:
         return False, f"wan workflow missing roles: {sorted(missing)}"
-    for role, node_id in roles.items():
-        if role in WAN_REQUIRED_ROLES and node_id not in data:
-            return False, f"wan role '{role}' -> node '{node_id}' not in workflow"
+    for role, node_ref in roles.items():
+        if role not in WAN_REQUIRED_ROLES:
+            continue
+        ids = [node_ref] if isinstance(node_ref, str) else list(node_ref)
+        for nid in ids:
+            if nid not in data:
+                return False, f"wan role '{role}' -> node '{nid}' not in workflow"
     return True, f"wan workflow OK (roles: {sorted(WAN_REQUIRED_ROLES)})"
 
 
