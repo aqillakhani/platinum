@@ -319,11 +319,15 @@ def test_main_wan_mode_routes_to_wan_checks(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(httpx, "Client", _Client)
 
-    # 4. Stub the extension-on-disk check (the real one looks at a vast.ai-only
-    #    hardcoded path).
+    # 4. Stub the extension-on-disk checks (the real ones look at vast.ai-only
+    #    hardcoded paths).
     monkeypatch.setattr(
         pc, "_check_wan_extension_importable",
         lambda: (True, "WanVideoWrapper present (test-stub)"),
+    )
+    monkeypatch.setattr(
+        pc, "_check_videohelpersuite_extension_dir",
+        lambda *a, **k: (True, "VideoHelperSuite present (test-stub)"),
     )
 
     # 5. Required env vars + sys.argv.
@@ -344,6 +348,7 @@ def test_main_wan_mode_routes_to_wan_checks(tmp_path, monkeypatch, capsys):
     assert "Wan workflow JSON" in out
     assert "Wan weights" in out
     assert "Wan extension" in out
+    assert "VideoHelperSuite" in out
     # Flux-only check label must not have run (would be wrong shape for Wan).
     assert "[OK ] Workflow JSON" not in out
     assert "[FAIL]" not in out

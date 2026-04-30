@@ -218,13 +218,20 @@ def main() -> int:
 
     mode = _detect_workflow_mode(args.workflow)
     if mode == "wan":
+        # The ComfyUI directory is the parent of the models dir
+        # (vast_setup.sh symlinks $COMFYUI_DIR/models -> $MODELS_DIR; the
+        # default --wan-models-dir is /workspace/ComfyUI/models, so .parent
+        # is /workspace/ComfyUI). VideoHelperSuite lives in custom_nodes/
+        # under that.
+        comfyui_dir = args.wan_models_dir.parent
         checks = [
-            ("HF token resolve",      lambda: _check_hf_token(hf_token)),
-            ("Wan workflow JSON",     lambda: _check_wan_workflow_json(args.workflow)),
-            ("ComfyUI alive",         lambda: _check_comfyui_alive(comfyui_host)),
-            ("Score-server alive",    lambda: _check_score_server_alive(aesthetics_host)),
-            ("Wan weights",           lambda: _check_wan_weights(args.wan_models_dir)),
-            ("Wan extension",         lambda: _check_wan_extension_importable()),
+            ("HF token resolve",         lambda: _check_hf_token(hf_token)),
+            ("Wan workflow JSON",        lambda: _check_wan_workflow_json(args.workflow)),
+            ("ComfyUI alive",            lambda: _check_comfyui_alive(comfyui_host)),
+            ("Score-server alive",       lambda: _check_score_server_alive(aesthetics_host)),
+            ("Wan weights",              lambda: _check_wan_weights(args.wan_models_dir)),
+            ("Wan extension",            lambda: _check_wan_extension_importable()),
+            ("VideoHelperSuite extension", lambda: _check_videohelpersuite_extension_dir(comfyui_dir)),
         ]
     else:
         checks = [
