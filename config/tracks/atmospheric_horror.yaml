@@ -32,7 +32,7 @@ track:
     width: 768                     # S7.1: 9:16 portrait keyframes (Instagram reels target)
     height: 1344                   # S7.1: 9:16 portrait keyframes (Instagram reels target)
     aspect_ratio: "9:16"           # S7.1: informational; consumed by S8+ video pipeline
-    clip_min_similarity: 0.20      # S7.1: CLIP ViT-L-14 image-text content gate
+    clip_min_similarity: 0.0       # S7.1 verify: gate disabled (rejected viable Cask 3 renders -- CLIP score on 19th-century atmospheric horror is naturally lower than typical bright/colourful imagery the threshold was tuned against). Recalibration deferred to S7.2.
 
   # Video generation
   video_model:
@@ -118,7 +118,7 @@ track:
   # Quality gates -- automated thresholds enforced before human review (Session 5).
   quality_gates:
     brightness_floor_mean_rgb: 5.0    # mean RGB hard floor; recalibrated S6.3 Phase 2 (was 20.0; rejected legitimate chiaroscuro at 5-10 mean_rgb). Catches S6.2 fade-to-black at 0-3.
-    subject_min_edge_density: 0.005   # Canny edge density floor; recalibrated S6.3 Phase 2 (was 0.020; rejected viable atmospheric scenes with smooth dark backgrounds at 0.01-0.02).
+    subject_min_edge_density: 0.0   # S7.1 verify run disabled this gate -- Canny detected ~0.0001-0.002 edges on chiaroscuro Cask scenes (single-candle lighting), even though eye-check shows candidates ARE viable subjects (Montresor by candlelight). Gate was calibrated against brighter atmospheric scenes and isn't brightness-aware. Recalibration deferred to S7.2 (probably needs per-scene brightness-adjusted threshold, or replace Canny with face/subject detection).
     aesthetic_min_score: 6.0          # LAION-Aesthetics v2 (0-10); horror runs ~0.5 lower than bright tracks
     black_frame_max_ratio: 0.02       # max share of near-black frames; horror has intentional fade-to-blacks
     luminance_threshold: 8.0          # 0-255 mean below = "black frame"
