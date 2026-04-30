@@ -78,8 +78,14 @@ async def generate_video_for_scene(
 ) -> VideoReport:
     """Generate one Wan 2.2 I2V clip for a single scene.
 
-    Happy path only -- gates and retry added in subsequent tasks.
+    Runs 3 quality gates after generation: duration, black_frames, motion.
+    On any gate failure, raises VideoGenerationError(retryable=True).
     """
+    from platinum.utils.validate import (
+        check_black_frames,
+        check_duration_match,
+        check_motion,
+    )
     from platinum.utils.workflow import inject_video
 
     if scene.keyframe_path is None:
@@ -116,11 +122,52 @@ async def generate_video_for_scene(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     await comfy.generate_image(workflow=workflow, output_path=output_path)
 
+    # 4. Run quality gates in order: duration -> black_frames -> motion.
+    target_s = float(gates_cfg["duration_target_seconds"])
+    tol_s = float(gates_cfg["duration_tolerance_seconds"])
+    duration_result = check_duration_match(
+        output_path, target_seconds=target_s, tolerance_seconds=tol_s
+    )
+    black_result = check_black_frames(
+        output_path,
+        max_black_ratio=float(gates_cfg["black_frame_max_ratio"]),
+    )
+    motion_result = check_motion(
+        output_path,
+        min_flow_magnitude=float(gates_cfg["motion_min_flow"]),
+    )
+
+    gates_passed = {
+        "duration": duration_result.passed,
+        "black_frames": black_result.passed,
+        "motion": motion_result.passed,
+    }
+
+    if not all(gates_passed.values()):
+        reasons: list[str] = []
+        for k, r in (
+            ("duration", duration_result),
+            ("black_frames", black_result),
+            ("motion", motion_result),
+        ):
+            if not r.passed:
+                reasons.append(f"{k} gate failed: {r.reason}")
+        # Best-effort cleanup of the failed MP4.
+        try:
+            output_path.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+        raise VideoGenerationError(
+            scene_index=scene.index,
+            reason="; ".join(reasons),
+            retryable=True,
+        )
+
     return VideoReport(
         scene_index=scene.index,
         success=True,
         mp4_path=output_path,
-        duration_seconds=float(frame_count) / float(fps),
-        gates_passed={"duration": True, "black_frames": True, "motion": True},
+        duration_seconds=float(duration_result.metric),
+        gates_passed=gates_passed,
         retry_used=0,
     )
