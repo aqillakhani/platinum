@@ -245,9 +245,12 @@ dl "$KIJAI_BASE/Wan2_2-I2V-A14B-HIGH_bf16.safetensors" \
 dl "$KIJAI_BASE/Wan2_2-I2V-A14B-LOW_bf16.safetensors" \
    "$MODELS_DIR/diffusion_models/Wan2_2-I2V-A14B-LOW_bf16.safetensors" || \
     log "WARN: Wan 2.2 low-noise expert -- adjust URL if Kijai path moved"
-dl "$KIJAI_BASE/Wan2_2_VAE_bf16.safetensors" \
-   "$MODELS_DIR/vae/Wan2_2_VAE_bf16.safetensors" || \
-    log "WARN: Wan VAE -- adjust URL if Kijai path moved"
+# Wan 2.1 VAE (the Wan 2.2 14B I2V experts inherit the 2.1 VAE encoder;
+# all four 2.2 14B reference workflows in the WanVideoWrapper example
+# tarball load this file, not Wan2_2_VAE which is for the 2.2 5B family).
+dl "$KIJAI_BASE/Wan2_1_VAE_bf16.safetensors" \
+   "$MODELS_DIR/vae/Wan2_1_VAE_bf16.safetensors" || \
+    log "WARN: Wan 2.1 VAE -- adjust URL if Kijai path moved"
 dl "$WAN_BASE/models_t5_umt5-xxl-enc-bf16.pth" \
    "$MODELS_DIR/text_encoders/umt5_xxl.pth" || \
     log "WARN: UMT5 text encoder -- adjust URL if Wan-AI path moved"
@@ -267,6 +270,26 @@ if [ -f "$WANWRAPPER_DIR/requirements.txt" ]; then
     source "$COMFYUI_DIR/venv/bin/activate"
     pip install -r "$WANWRAPPER_DIR/requirements.txt" || \
         log "WARN: WanVideoWrapper requirements install failed"
+    pip cache purge || true
+    deactivate
+fi
+
+# ComfyUI-VideoHelperSuite extension (provides VHS_VideoCombine node, used
+# by the Wan 2.2 I2V workflow's terminal MP4 mux step). Kosinkadink's repo;
+# requires imageio-ffmpeg + opencv via its requirements.txt.
+log "Cloning ComfyUI-VideoHelperSuite extension..."
+VHS_DIR="$COMFYUI_DIR/custom_nodes/ComfyUI-VideoHelperSuite"
+if [ -d "$VHS_DIR" ]; then
+    git -C "$VHS_DIR" pull --ff-only || log "WARN: VideoHelperSuite pull failed"
+else
+    git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite "$VHS_DIR" || \
+        log "WARN: VideoHelperSuite clone failed"
+fi
+if [ -f "$VHS_DIR/requirements.txt" ]; then
+    # shellcheck source=/dev/null
+    source "$COMFYUI_DIR/venv/bin/activate"
+    pip install -r "$VHS_DIR/requirements.txt" || \
+        log "WARN: VideoHelperSuite requirements install failed"
     pip cache purge || true
     deactivate
 fi
