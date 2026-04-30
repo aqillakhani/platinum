@@ -203,3 +203,31 @@ def test_check_audio_levels_round_trips_with_real_ffmpeg(tmp_path: Path) -> None
     r = check_audio_levels(audio, target_lufs=measured, tolerance_db=0.5)
     assert r.passed
     assert "passed" in r.reason
+
+
+@pytest.mark.parametrize(
+    "track,expected_motion_floor",
+    [
+        ("atmospheric_horror", 0.3),
+        ("folktales_world_myths", 0.5),
+        ("childrens_fables", 0.7),
+        ("scifi_concept", 0.5),
+        ("slice_of_life", 0.6),
+    ],
+)
+def test_video_gates_block_present_per_track(
+    track: str, expected_motion_floor: float
+) -> None:
+    """Every track YAML has video_gates with all 4 keys; track-tuned motion floor."""
+    import yaml
+
+    cfg = yaml.safe_load(
+        (Path("config/tracks") / f"{track}.yaml").read_text(encoding="utf-8")
+    )
+    quality_gates = cfg["track"]["quality_gates"]
+    assert "video_gates" in quality_gates, f"{track}: video_gates block missing"
+    vg = quality_gates["video_gates"]
+    assert vg["duration_target_seconds"] == 5.0
+    assert vg["duration_tolerance_seconds"] == 0.2
+    assert vg["black_frame_max_ratio"] == 0.05
+    assert vg["motion_min_flow"] == expected_motion_floor

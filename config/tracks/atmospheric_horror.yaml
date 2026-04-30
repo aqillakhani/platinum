@@ -128,6 +128,11 @@ track:
     duration_tolerance_seconds: 0.5   # narration audio vs. scene target
     content_gate: "claude"            # S7.1.A4: "off" | "claude" | "claude_strict"
     content_gate_min_score: 6         # S7.1.A4: 1-10 Claude-vision fidelity score
+    video_gates:
+      duration_target_seconds: 5.0
+      duration_tolerance_seconds: 0.2
+      black_frame_max_ratio: 0.05
+      motion_min_flow: 0.3
 
   # Publish metadata defaults
   publish:

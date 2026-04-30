@@ -84,6 +84,11 @@ track:
     duration_tolerance_seconds: 0.5
     content_gate: "off"               # S7.1.A4: enable per-track once we tune
     content_gate_min_score: 7
+    video_gates:
+      duration_target_seconds: 5.0
+      duration_tolerance_seconds: 0.2
+      black_frame_max_ratio: 0.05
+      motion_min_flow: 0.5
   publish:
     title_template: "{title} | A Concept Piece"
     description_template: |
