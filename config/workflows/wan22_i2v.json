@@ -1,0 +1,104 @@
+{
+  "_meta": {
+    "comment": "Wan 2.2 I2V-A14B workflow (S8 Phase A). Requires ComfyUI-WanVideoWrapper extension. Node class_type strings are best-effort and may need adjustment during live A6000 verify.",
+    "role": {
+      "image_in": "10",
+      "prompt": "20",
+      "seed": "30",
+      "video_out": "60",
+      "width": "30",
+      "height": "30",
+      "frame_count": "40",
+      "fps": "60"
+    }
+  },
+  "1": {
+    "class_type": "WanVideoModelLoader",
+    "inputs": {
+      "model": "wan2_2_i2v_high_noise.safetensors",
+      "base_precision": "fp16",
+      "load_device": "main_device"
+    }
+  },
+  "2": {
+    "class_type": "WanVideoModelLoader",
+    "inputs": {
+      "model": "wan2_2_i2v_low_noise.safetensors",
+      "base_precision": "fp16",
+      "load_device": "main_device"
+    }
+  },
+  "3": {
+    "class_type": "WanVideoVAELoader",
+    "inputs": {
+      "model_name": "wan2_2_vae.pth",
+      "precision": "fp16"
+    }
+  },
+  "4": {
+    "class_type": "WanVideoT5TextEncoder",
+    "inputs": {
+      "model_name": "umt5_xxl.pth",
+      "precision": "bf16"
+    }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "PLACEHOLDER.png"
+    }
+  },
+  "20": {
+    "class_type": "WanVideoTextEncode",
+    "inputs": {
+      "t5_encoder": ["4", 0],
+      "text": "PLACEHOLDER",
+      "negative_text": ""
+    }
+  },
+  "25": {
+    "class_type": "WanVideoImageEncode",
+    "inputs": {
+      "vae": ["3", 0],
+      "image": ["10", 0]
+    }
+  },
+  "30": {
+    "class_type": "WanVideoSampler",
+    "inputs": {
+      "model_high_noise": ["1", 0],
+      "model_low_noise": ["2", 0],
+      "image_embeds": ["25", 0],
+      "text_embeds": ["20", 0],
+      "seed": 0,
+      "steps": 30,
+      "cfg": 6.0,
+      "scheduler": "unipc",
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "40": {
+    "class_type": "WanVideoLatentVideo",
+    "inputs": {
+      "samples": ["30", 0],
+      "length": 80
+    }
+  },
+  "50": {
+    "class_type": "WanVideoDecode",
+    "inputs": {
+      "vae": ["3", 0],
+      "samples": ["40", 0]
+    }
+  },
+  "60": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["50", 0],
+      "frame_rate": 16,
+      "filename_prefix": "wan_output",
+      "format": "video/h264-mp4"
+    }
+  }
+}
