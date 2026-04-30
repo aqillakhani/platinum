@@ -638,6 +638,12 @@ async def test_stage_clip_gate_filters_low_similarity_end_to_end(  # noqa: ANN00
     from tests._fixtures import make_fake_hands_factory
 
     config = _setup_config(tmp_project, repo_root)
+    # atmospheric_horror's clip_min_similarity was lowered to 0.0 in S7.1
+    # verify-run calibration. This test still exercises the gate logic, so
+    # restore the original 0.20 threshold for this test only.
+    config.track("atmospheric_horror").setdefault("image_model", {})[
+        "clip_min_similarity"
+    ] = 0.20
     story = _build_story(n=1)
     scene = story.scenes[0]
     story_dir = tmp_project / "data" / "stories" / story.id
@@ -699,6 +705,11 @@ async def test_stage_clip_gate_halts_when_all_candidates_fail(  # noqa: ANN001
     from tests._fixtures import make_fake_hands_factory
 
     config = _setup_config(tmp_project, repo_root)
+    # See sibling test: restore the 0.20 CLIP threshold that was lowered to
+    # 0.0 globally for atmospheric_horror in S7.1 verify-run calibration.
+    config.track("atmospheric_horror").setdefault("image_model", {})[
+        "clip_min_similarity"
+    ] = 0.20
     story = _build_story(n=1)
     story_dir = tmp_project / "data" / "stories" / story.id
     story_dir.mkdir(parents=True, exist_ok=True)
