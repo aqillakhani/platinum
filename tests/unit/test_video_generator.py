@@ -799,6 +799,134 @@ class TestGenerateVideo:
         assert scenes[1].video_path is not None
 
 
+class TestGenerateVideoPreconditions:
+    @pytest.mark.asyncio
+    async def test_missing_keyframe_path_halts_before_any_comfy_call(
+        self, tmp_path: Path
+    ) -> None:
+        from platinum.pipeline.video_generator import (
+            VideoGenerationError,
+            generate_video,
+        )
+        from platinum.utils.comfyui import FakeComfyClient
+
+        comfy = FakeComfyClient(responses={})
+        from types import SimpleNamespace
+        scenes = [
+            SimpleNamespace(
+                index=0, visual_prompt="x",
+                keyframe_path=None,  # missing
+                video_path=None, video_duration_seconds=0.0,
+            ),
+        ]
+        story = SimpleNamespace(scenes=scenes)
+
+        with pytest.raises(VideoGenerationError) as excinfo:
+            await generate_video(
+                story,
+                workflow_template=_wan_template_for_tests(), comfy=comfy,
+                output_root=tmp_path / "clips",
+                gates_cfg={
+                    "duration_target_seconds": 5.0,
+                    "duration_tolerance_seconds": 0.2,
+                    "black_frame_max_ratio": 0.05,
+                    "motion_min_flow": 0.0,
+                },
+                width=1280, height=720, frame_count=80, fps=16,
+            )
+        assert excinfo.value.retryable is False
+        assert "keyframe_path" in excinfo.value.reason
+        # No comfy calls -- precondition rejected before any work.
+        assert len(comfy.calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_missing_gates_cfg_key_halts(self, tmp_path: Path) -> None:
+        from platinum.pipeline.video_generator import (
+            VideoGenerationError,
+            generate_video,
+        )
+        from platinum.utils.comfyui import FakeComfyClient
+
+        comfy = FakeComfyClient(responses={})
+        from types import SimpleNamespace
+        scenes = [
+            SimpleNamespace(
+                index=0, visual_prompt="x",
+                keyframe_path=tmp_path / "kf.png",
+                video_path=None, video_duration_seconds=0.0,
+            ),
+        ]
+        (tmp_path / "kf.png").write_bytes(b"fake_png")
+        story = SimpleNamespace(scenes=scenes)
+
+        with pytest.raises(VideoGenerationError) as excinfo:
+            await generate_video(
+                story,
+                workflow_template=_wan_template_for_tests(), comfy=comfy,
+                output_root=tmp_path / "clips",
+                gates_cfg={"duration_target_seconds": 5.0},  # missing other keys
+                width=1280, height=720, frame_count=80, fps=16,
+            )
+        assert excinfo.value.retryable is False
+        assert "gates_cfg" in excinfo.value.reason
+        assert len(comfy.calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_filtered_out_scenes_dont_trigger_precondition_failures(
+        self, tmp_path: Path
+    ) -> None:
+        """A scene with a missing keyframe is fine if it's filtered out."""
+        from platinum.pipeline.video_generator import generate_video
+        from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+        from platinum.utils.workflow import inject_video
+        from tests._fixtures import make_test_video_with_motion
+
+        motion_mp4 = tmp_path / "motion.mp4"
+        make_test_video_with_motion(motion_mp4, n_frames=80, fps=16, size=(64, 64))
+
+        workflow_template = _wan_template_for_tests()
+        wf = inject_video(
+            workflow_template, image_in="scene_001.png",
+            prompt="x", seed=1000, output_prefix="scene_001_raw",
+            width=1280, height=720, frame_count=80, fps=16,
+        )
+        comfy = FakeComfyClient(responses={workflow_signature(wf): [motion_mp4]})
+
+        from types import SimpleNamespace
+        kf1 = tmp_path / "scene_001.png"
+        kf1.write_bytes(b"fake_png")
+        scenes = [
+            SimpleNamespace(
+                index=0, visual_prompt="x",
+                keyframe_path=None,  # missing -- but filtered out
+                video_path=None, video_duration_seconds=0.0,
+            ),
+            SimpleNamespace(
+                index=1, visual_prompt="x",
+                keyframe_path=kf1, video_path=None,
+                video_duration_seconds=0.0,
+            ),
+        ]
+        story = SimpleNamespace(scenes=scenes)
+
+        reports = await generate_video(
+            story,
+            workflow_template=workflow_template, comfy=comfy,
+            output_root=tmp_path / "clips",
+            gates_cfg={
+                "duration_target_seconds": 5.0,
+                "duration_tolerance_seconds": 0.2,
+                "black_frame_max_ratio": 0.05,
+                "motion_min_flow": 0.0,
+            },
+            scene_filter={1},
+            width=1280, height=720, frame_count=80, fps=16,
+        )
+
+        assert len(reports) == 1
+        assert reports[0].scene_index == 1
+
+
 def _wan_template_for_tests() -> dict:
     """Shared minimal Wan workflow template for the test module."""
     return {

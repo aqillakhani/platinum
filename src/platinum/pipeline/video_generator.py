@@ -55,6 +55,14 @@ class VideoGenerationError(RuntimeError):
         super().__init__(f"scene_index={scene_index}: {reason} (retryable={retryable})")
 
 
+REQUIRED_GATES_KEYS = (
+    "duration_target_seconds",
+    "duration_tolerance_seconds",
+    "black_frame_max_ratio",
+    "motion_min_flow",
+)
+
+
 def _seed_for_scene(scene_index: int, *, retry: int = 0) -> int:
     """Deterministic seed for a scene's video generation.
 
@@ -206,12 +214,46 @@ async def generate_video(
 ) -> list[VideoReport]:
     """Run video generation for every scene that needs one.
 
+    Validates preconditions up-front: gates_cfg has all required keys,
+    every targeted scene has keyframe_path set and the file exists.
+    Halts with VideoGenerationError(retryable=False) if any precondition
+    fails -- no comfy calls made.
+
     Mutates each scene in-place: video_path, video_duration_seconds.
 
     Resume semantics: a scene whose video_path is already set AND points
     at an existing file is skipped. scene_filter (set of scene indexes)
     further restricts the set processed.
     """
+    # Precondition 1: gates_cfg has all required keys.
+    missing_keys = [k for k in REQUIRED_GATES_KEYS if k not in gates_cfg]
+    if missing_keys:
+        raise VideoGenerationError(
+            scene_index=-1,
+            reason=f"gates_cfg missing keys: {missing_keys}",
+            retryable=False,
+        )
+
+    # Precondition 2: every targeted scene has a keyframe.
+    for scene in story.scenes:
+        if scene_filter is not None and scene.index not in scene_filter:
+            continue
+        if scene.video_path is not None and Path(scene.video_path).exists():
+            continue  # resume -- skip precondition for already-done scenes
+        if scene.keyframe_path is None:
+            raise VideoGenerationError(
+                scene_index=scene.index,
+                reason=f"scene {scene.index} has no keyframe_path",
+                retryable=False,
+            )
+        if not Path(scene.keyframe_path).exists():
+            raise VideoGenerationError(
+                scene_index=scene.index,
+                reason=f"scene {scene.index} keyframe_path missing on disk: "
+                       f"{scene.keyframe_path}",
+                retryable=False,
+            )
+
     reports: list[VideoReport] = []
     for scene in story.scenes:
         if scene.video_path is not None and Path(scene.video_path).exists():
