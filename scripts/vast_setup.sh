@@ -227,22 +227,30 @@ for ext_name in "${!COMFY_EXTS[@]}"; do
 done
 
 # Wan 2.2 I2V-A14B (MoE: 2 experts + VAE + UMT5 text encoder). S8 Phase A.
+#
+# The original Wan-AI/Wan2.2-I2V-A14B repo ships the experts as 6-shard
+# diffusers-format directories (~57GB each) which WanVideoModelLoader
+# can't read directly. Kijai/WanVideo_comfy redistributes them as
+# single-file bf16 safetensors (~28.6GB each) -- that's the format the
+# WanVideoWrapper extension expects. UMT5 text encoder isn't in Kijai's
+# repo so we still pull it from Wan-AI (the single .pth there works).
 log "Provisioning Wan 2.2 I2V-A14B weights..."
+KIJAI_BASE="https://huggingface.co/Kijai/WanVideo_comfy/resolve/main"
 WAN_BASE="https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B/resolve/main"
 mkdir -p "$MODELS_DIR/diffusion_models" "$MODELS_DIR/vae" "$MODELS_DIR/text_encoders"
 
-dl "$WAN_BASE/high_noise_model.safetensors" \
-   "$MODELS_DIR/diffusion_models/wan2_2_i2v_high_noise.safetensors" || \
-    log "WARN: Wan 2.2 high-noise expert -- adjust URL if HF path moved"
-dl "$WAN_BASE/low_noise_model.safetensors" \
-   "$MODELS_DIR/diffusion_models/wan2_2_i2v_low_noise.safetensors" || \
-    log "WARN: Wan 2.2 low-noise expert -- adjust URL if HF path moved"
-dl "$WAN_BASE/Wan2.1_VAE.pth" \
-   "$MODELS_DIR/vae/wan2_2_vae.pth" || \
-    log "WARN: Wan VAE -- adjust URL if HF path moved"
+dl "$KIJAI_BASE/Wan2_2-I2V-A14B-HIGH_bf16.safetensors" \
+   "$MODELS_DIR/diffusion_models/Wan2_2-I2V-A14B-HIGH_bf16.safetensors" || \
+    log "WARN: Wan 2.2 high-noise expert -- adjust URL if Kijai path moved"
+dl "$KIJAI_BASE/Wan2_2-I2V-A14B-LOW_bf16.safetensors" \
+   "$MODELS_DIR/diffusion_models/Wan2_2-I2V-A14B-LOW_bf16.safetensors" || \
+    log "WARN: Wan 2.2 low-noise expert -- adjust URL if Kijai path moved"
+dl "$KIJAI_BASE/Wan2_2_VAE_bf16.safetensors" \
+   "$MODELS_DIR/vae/Wan2_2_VAE_bf16.safetensors" || \
+    log "WARN: Wan VAE -- adjust URL if Kijai path moved"
 dl "$WAN_BASE/models_t5_umt5-xxl-enc-bf16.pth" \
    "$MODELS_DIR/text_encoders/umt5_xxl.pth" || \
-    log "WARN: UMT5 text encoder -- adjust URL if HF path moved"
+    log "WARN: UMT5 text encoder -- adjust URL if Wan-AI path moved"
 
 # ComfyUI-WanVideoWrapper extension (provides WanVideo* node classes).
 log "Cloning ComfyUI-WanVideoWrapper extension..."

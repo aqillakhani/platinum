@@ -16,13 +16,19 @@ viable 5s clips on first eye-check after Rental 2.
 
 ```bash
 vastai search offers \
-  'gpu_name=RTX_A6000 cpu_ram>=64 disk_space>=80 verified=true' \
+  'gpu_name=RTX_A6000 cpu_ram>=64 disk_space>=150 verified=true' \
   -o 'dph_total'
 vastai create instance <id> \
-  --image nvidia/cuda:12.4.0-cudnn-runtime-ubuntu22.04 \
-  --disk 80
+  --image pytorch/pytorch:latest \
+  --disk 150 --ssh
 # wait for instance running, get ssh host:port from `vastai show instance <id>`
 ```
+
+The image must be `pytorch/pytorch:latest` -- vast_setup.sh requires
+conda (which the pytorch base image ships) and the rest of the script
+assumes that environment. Disk 150GB is needed because the Wan 2.2 MoE
+weights are ~58GB on top of Flux + ControlNet + extensions (~70GB total).
+The 80GB allocation used in earlier runbooks is too small.
 
 ## Step 2: Run vast_setup.sh
 

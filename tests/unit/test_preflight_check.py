@@ -206,28 +206,31 @@ class TestWanPreflightChecks:
         # Empty dir -> fail.
         ok, msg = _check_wan_weights(tmp_path)
         assert not ok
-        assert "high_noise" in msg or "low_noise" in msg or "missing" in msg.lower()
+        assert "HIGH" in msg or "LOW" in msg or "missing" in msg.lower()
 
-        # All 4 files present with reasonable size. Use os.truncate for efficient
-        # sparse file creation instead of writing actual bytes (avoids slow I/O).
+        # All 4 files present, just above the (loose) preflight min size.
+        # Production weights are ~28/28/1.4/11 GB but the preflight threshold
+        # is only 100MB (any-file-at-all sanity); tests float at 110MB.
+        # NOTE: os.truncate on Windows allocates real bytes (NTFS sparse needs
+        # FSCTL_SET_SPARSE), so test file sizes here are also disk usage.
         (tmp_path / "diffusion_models").mkdir()
-        high_noise_path = tmp_path / "diffusion_models" / "wan2_2_i2v_high_noise.safetensors"
-        high_noise_path.touch()
-        os.truncate(high_noise_path, 1_500_000_000)  # 1.5GB
+        high_path = tmp_path / "diffusion_models" / "Wan2_2-I2V-A14B-HIGH_bf16.safetensors"
+        high_path.touch()
+        os.truncate(high_path, 110_000_000)
 
-        low_noise_path = tmp_path / "diffusion_models" / "wan2_2_i2v_low_noise.safetensors"
-        low_noise_path.touch()
-        os.truncate(low_noise_path, 1_500_000_000)  # 1.5GB
+        low_path = tmp_path / "diffusion_models" / "Wan2_2-I2V-A14B-LOW_bf16.safetensors"
+        low_path.touch()
+        os.truncate(low_path, 110_000_000)
 
         (tmp_path / "vae").mkdir()
-        vae_path = tmp_path / "vae" / "wan2_2_vae.pth"
+        vae_path = tmp_path / "vae" / "Wan2_2_VAE_bf16.safetensors"
         vae_path.touch()
-        os.truncate(vae_path, 200_000_000)  # 200MB
+        os.truncate(vae_path, 110_000_000)
 
         (tmp_path / "text_encoders").mkdir()
         umt5_path = tmp_path / "text_encoders" / "umt5_xxl.pth"
         umt5_path.touch()
-        os.truncate(umt5_path, 2_000_000_000)  # 2GB
+        os.truncate(umt5_path, 110_000_000)
 
         ok, msg = _check_wan_weights(tmp_path)
         assert ok, msg
@@ -254,22 +257,24 @@ def test_main_wan_mode_routes_to_wan_checks(tmp_path, monkeypatch, capsys):
         "10": {}, "20": {}, "30": {}, "60": {},
     }))
 
-    # 2. Build a fake Wan models dir with sparse files at the expected sizes.
+    # 2. Build a fake Wan models dir with files just above the 100MB preflight
+    #    floor (Kijai single-file repackages + Wan-AI UMT5; real weights are
+    #    much larger but tests don't need to allocate real-size bytes).
     (tmp_path / "diffusion_models").mkdir()
-    p1 = tmp_path / "diffusion_models" / "wan2_2_i2v_high_noise.safetensors"
+    p1 = tmp_path / "diffusion_models" / "Wan2_2-I2V-A14B-HIGH_bf16.safetensors"
     p1.touch()
-    os.truncate(p1, 1_500_000_000)
-    p2 = tmp_path / "diffusion_models" / "wan2_2_i2v_low_noise.safetensors"
+    os.truncate(p1, 110_000_000)
+    p2 = tmp_path / "diffusion_models" / "Wan2_2-I2V-A14B-LOW_bf16.safetensors"
     p2.touch()
-    os.truncate(p2, 1_500_000_000)
+    os.truncate(p2, 110_000_000)
     (tmp_path / "vae").mkdir()
-    p3 = tmp_path / "vae" / "wan2_2_vae.pth"
+    p3 = tmp_path / "vae" / "Wan2_2_VAE_bf16.safetensors"
     p3.touch()
-    os.truncate(p3, 200_000_000)
+    os.truncate(p3, 110_000_000)
     (tmp_path / "text_encoders").mkdir()
     p4 = tmp_path / "text_encoders" / "umt5_xxl.pth"
     p4.touch()
-    os.truncate(p4, 2_000_000_000)
+    os.truncate(p4, 110_000_000)
 
     # 3. Stub all network checks (HF range GET, ComfyUI /system_stats,
     #    score-server /health) to pass.

@@ -96,11 +96,18 @@ def _workflow_signature(path: Path) -> str:
 
 WAN_REQUIRED_ROLES = frozenset({"image_in", "prompt", "seed", "video_out"})
 
+# Filenames + minimum sizes for the Wan 2.2 weights downloaded by
+# vast_setup.sh. HIGH/LOW/VAE come from Kijai/WanVideo_comfy single-file
+# repackages (bf16 safetensors). UMT5 comes from Wan-AI/Wan2.2-I2V-A14B
+# (the original .pth). Real on-disk sizes are roughly 28.6/28.6/1.4/11.4 GB.
+# Min sizes are deliberately loose (100MB floor) -- they catch "file
+# wasn't downloaded at all / is a 0-byte stub" rather than partial
+# truncations; ComfyUI's loader will fail loudly on a truly broken file.
 WAN_WEIGHT_FILES = (
-    ("diffusion_models", "wan2_2_i2v_high_noise.safetensors", 1_000_000_000),
-    ("diffusion_models", "wan2_2_i2v_low_noise.safetensors", 1_000_000_000),
-    ("vae", "wan2_2_vae.pth", 100_000_000),
-    ("text_encoders", "umt5_xxl.pth", 1_000_000_000),
+    ("diffusion_models", "Wan2_2-I2V-A14B-HIGH_bf16.safetensors", 100_000_000),
+    ("diffusion_models", "Wan2_2-I2V-A14B-LOW_bf16.safetensors", 100_000_000),
+    ("vae", "Wan2_2_VAE_bf16.safetensors", 100_000_000),
+    ("text_encoders", "umt5_xxl.pth", 100_000_000),
 )
 
 

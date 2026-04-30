@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "comment": "Wan 2.2 I2V-A14B workflow (S8 Phase A). Requires ComfyUI-WanVideoWrapper extension. Node class_type strings are best-effort and may need adjustment during live A6000 verify.",
+    "comment": "Wan 2.2 I2V-A14B workflow (S8 Phase A). Requires ComfyUI-WanVideoWrapper extension (kijai). Filenames match Kijai/WanVideo_comfy single-file repackages downloaded by vast_setup.sh. class_type strings are best-effort and may need adjustment during live A6000 verify.",
     "role": {
       "image_in": "10",
       "prompt": "20",
@@ -15,24 +15,24 @@
   "1": {
     "class_type": "WanVideoModelLoader",
     "inputs": {
-      "model": "wan2_2_i2v_high_noise.safetensors",
-      "base_precision": "fp16",
+      "model": "Wan2_2-I2V-A14B-HIGH_bf16.safetensors",
+      "base_precision": "bf16",
       "load_device": "main_device"
     }
   },
   "2": {
     "class_type": "WanVideoModelLoader",
     "inputs": {
-      "model": "wan2_2_i2v_low_noise.safetensors",
-      "base_precision": "fp16",
+      "model": "Wan2_2-I2V-A14B-LOW_bf16.safetensors",
+      "base_precision": "bf16",
       "load_device": "main_device"
     }
   },
   "3": {
     "class_type": "WanVideoVAELoader",
     "inputs": {
-      "model_name": "wan2_2_vae.pth",
-      "precision": "fp16"
+      "model_name": "Wan2_2_VAE_bf16.safetensors",
+      "precision": "bf16"
     }
   },
   "4": {
