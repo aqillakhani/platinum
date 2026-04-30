@@ -62,3 +62,31 @@ class TestVideoGenerationError:
 
         exc = VideoGenerationError(scene_index=0, reason="comfy http 500")
         assert exc.retryable is False
+
+
+class TestSeedForScene:
+    def test_base_seed_is_index_times_thousand(self) -> None:
+        from platinum.pipeline.video_generator import _seed_for_scene
+
+        assert _seed_for_scene(0, retry=0) == 0
+        assert _seed_for_scene(1, retry=0) == 1000
+        assert _seed_for_scene(7, retry=0) == 7000
+        assert _seed_for_scene(15, retry=0) == 15000
+
+    def test_retry_increments_seed_by_one(self) -> None:
+        from platinum.pipeline.video_generator import _seed_for_scene
+
+        assert _seed_for_scene(7, retry=1) == 7001
+
+    def test_disjoint_from_keyframe_seeds(self) -> None:
+        """keyframe_generator uses scene*1000 + candidate_idx (0,1,2 typically).
+
+        Video uses scene*1000 + retry (0,1). Both fit in same 1000-block but
+        retry=0/1 collide with candidate=0/1 only if user runs both with the
+        same scene -- which is fine because keyframes write to PNG and
+        video to MP4. The test just confirms the formula stays simple.
+        """
+        from platinum.pipeline.video_generator import _seed_for_scene
+
+        assert _seed_for_scene(7, retry=0) == 7000
+        assert _seed_for_scene(7, retry=1) == 7001

@@ -53,3 +53,12 @@ class VideoGenerationError(RuntimeError):
         self.reason = reason
         self.retryable = retryable
         super().__init__(f"scene_index={scene_index}: {reason} (retryable={retryable})")
+
+
+def _seed_for_scene(scene_index: int, *, retry: int = 0) -> int:
+    """Deterministic seed for a scene's video generation.
+
+    seed = scene_index * 1000 + retry. With retry in {0, 1} only two seeds
+    are ever used per scene (initial + one retry).
+    """
+    return scene_index * 1000 + retry
