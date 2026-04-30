@@ -163,6 +163,21 @@ def _check_wan_extension_importable() -> tuple[bool, str]:
     return True, f"WanVideoWrapper present at {extension_path}"
 
 
+def _check_videohelpersuite_extension_dir(comfyui_dir: Path) -> tuple[bool, str]:
+    """Confirm ComfyUI-VideoHelperSuite is present under custom_nodes/.
+
+    Folder-only check (no Python import). VHS registers nodes via
+    __init__.py at ComfyUI startup; if the folder is there and
+    requirements.txt was pip-installed (vast_setup.sh's responsibility),
+    the VHS_VideoCombine node will be registered. Used by the Wan 2.2
+    I2V workflow's video_out role.
+    """
+    vhs_dir = Path(comfyui_dir) / "custom_nodes" / "ComfyUI-VideoHelperSuite"
+    if not vhs_dir.is_dir():
+        return False, f"VideoHelperSuite extension missing at {vhs_dir}"
+    return True, f"VideoHelperSuite present at {vhs_dir}"
+
+
 def _detect_workflow_mode(path: Path) -> str:
     """Return 'wan' if the workflow's _meta.role advertises Wan-only roles,
     else 'flux'. On any load failure, default to 'flux' so the Flux validator

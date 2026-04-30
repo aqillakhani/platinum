@@ -235,6 +235,28 @@ class TestWanPreflightChecks:
         ok, msg = _check_wan_weights(tmp_path)
         assert ok, msg
 
+    def test_check_videohelpersuite_extension_dir_present(self, tmp_path) -> None:
+        """VideoHelperSuite folder present under custom_nodes -> OK."""
+        from preflight_check import _check_videohelpersuite_extension_dir
+
+        custom_nodes = tmp_path / "custom_nodes"
+        custom_nodes.mkdir()
+        (custom_nodes / "ComfyUI-VideoHelperSuite").mkdir()
+
+        ok, msg = _check_videohelpersuite_extension_dir(tmp_path)
+        assert ok, msg
+        assert "VideoHelperSuite" in msg
+
+    def test_check_videohelpersuite_extension_dir_missing(self, tmp_path) -> None:
+        """VideoHelperSuite folder absent -> fail with clear message."""
+        from preflight_check import _check_videohelpersuite_extension_dir
+
+        (tmp_path / "custom_nodes").mkdir()  # custom_nodes exists but VHS doesn't
+        ok, msg = _check_videohelpersuite_extension_dir(tmp_path)
+        assert not ok
+        assert "VideoHelperSuite" in msg
+        assert "missing" in msg.lower() or "not found" in msg.lower()
+
 
 def test_main_wan_mode_routes_to_wan_checks(tmp_path, monkeypatch, capsys):
     """When --workflow points at a Wan-shaped workflow, main() runs the Wan
