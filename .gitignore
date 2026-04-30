@@ -56,3 +56,6 @@ Thumbs.db
 # Stray
 *.bak
 *.tmp
+
+# Research artifacts -- workflow examples + object_info dumps from boxes
+docs/research/
