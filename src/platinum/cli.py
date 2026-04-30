@@ -198,6 +198,14 @@ def adapt(
         False, "--rerun-rejected",
         help="Re-run visual_prompts for REJECTED scenes using review_feedback (S7).",
     ),
+    rerun_all_prompts: bool = typer.Option(
+        False, "--rerun-all-prompts",
+        help=(
+            "Re-run visual_prompts for ALL scenes and force a full re-render. "
+            "Use after a Phase B template change (S7.1) when every scene needs "
+            "fresh composition_notes + character_refs."
+        ),
+    ),
 ) -> None:
     """Adapt curator-approved stories: narration -> scenes -> visual prompts.
 
@@ -215,7 +223,68 @@ def adapt(
     from platinum.pipeline.story_adapter import StoryAdapterStage
     from platinum.pipeline.visual_prompts import VisualPromptsStage
 
+    if rerun_rejected and rerun_all_prompts:
+        console.print(
+            "[red]--rerun-rejected and --rerun-all-prompts are mutually exclusive.[/red]"
+        )
+        raise typer.Exit(code=2)
+
     cfg = Config()
+
+    if rerun_all_prompts:
+        eligible_all: list[Story] = []
+        for story_dir in sorted(p for p in cfg.stories_dir.iterdir() if p.is_dir()):
+            story_json = story_dir / "story.json"
+            if not story_json.exists():
+                continue
+            try:
+                s = Story.load(story_json)
+            except Exception as exc:
+                console.print(f"[yellow]Skipping unreadable {story_dir.name}: {exc}[/yellow]")
+                continue
+            if story is not None and s.id != story:
+                continue
+            if track is not None and s.track != track:
+                continue
+            vp = s.latest_stage_run("visual_prompts")
+            if vp is None or vp.status != StageStatus.COMPLETE:
+                continue
+            eligible_all.append(s)
+
+        if not eligible_all:
+            console.print("[yellow]No eligible stories for --rerun-all-prompts.[/yellow]")
+            raise typer.Exit(code=0)
+
+        ctx = PipelineContext(config=cfg, logger=logging.getLogger("platinum.adapt"))
+        for s in eligible_all:
+            all_indices = {sc.index for sc in s.scenes}
+            cfg.settings.setdefault("runtime", {})["scene_filter"] = all_indices
+            cfg.settings.setdefault("runtime", {}).pop("deviation_feedback", None)
+            console.print(
+                f"[cyan]Re-prompting ALL scenes of {s.id} (n={len(all_indices)})...[/cyan]"
+            )
+            stage = VisualPromptsStage()
+            try:
+                asyncio.run(stage.run(s, ctx))
+            except Exception as exc:
+                console.print(f"[red]{s.id} failed: {exc}[/red]")
+                raise
+            # Force re-render: every scene flips to REGENERATE and loses its
+            # cached keyframe_path so the orchestrator re-enters keyframe stage
+            # for all of them, not just the previously-REJECTED subset.
+            for sc in s.scenes:
+                sc.review_status = ReviewStatus.REGENERATE
+                sc.review_feedback = None
+                sc.keyframe_path = None
+            s.save(cfg.stories_dir / s.id / "story.json")
+
+        cfg.settings.get("runtime", {}).pop("scene_filter", None)
+
+        console.print(
+            f"[green]Re-prompted ALL scenes across "
+            f"{len(eligible_all)} story candidate(s).[/green]"
+        )
+        return
 
     if rerun_rejected:
         eligible_rejected: list[tuple[Story, set[int]]] = []
@@ -373,32 +442,10 @@ def keyframes(
         )
         raise typer.Exit(code=1)
 
-    # S7.1.B4.6: gate keyframe rendering on completed character refs. If the
-    # story has scenes with character_refs but Story.characters has no path
-    # for those names (or the path is missing on disk), IPAdapterFaceID
-    # would silently fall back to weight=0 and produce face-inconsistent
-    # output. Better to block here with a clear pointer at the review UI.
     from pathlib import Path
 
     from platinum.pipeline.character_references import CharacterReferenceStage
-
-    char_stage = CharacterReferenceStage()
-    if not char_stage.is_complete(s):
-        discovered = sorted(char_stage._discover_characters(s))
-        missing = [
-            name
-            for name in discovered
-            if not s.characters.get(name) or not Path(s.characters[name]).exists()
-        ]
-        console.print(
-            f"[red]Story {story} has unresolved character references: "
-            f"{missing}.[/red]"
-        )
-        console.print(
-            f"[yellow]Run 'platinum review characters {story}' to pick "
-            f"refs before keyframe generation.[/yellow]"
-        )
-        raise typer.Exit(code=1)
+    from platinum.pipeline.pose_depth_maps import PoseDepthMapStage
 
     # Parse --scenes "1,8,16" -> {1, 8, 16}. Values are matched against
     # `scene.index` (which the scene_breakdown stage emits as 1-indexed),
@@ -456,7 +503,47 @@ def keyframes(
     if no_content_gate:
         cfg.settings.setdefault("runtime", {})["no_content_gate"] = True
     ctx = PipelineContext(config=cfg, logger=logging.getLogger("platinum.keyframes"))
-    orchestrator = Orchestrator(stages=[KeyframeGeneratorStage()])
+
+    # S7.1.B4.6 / C2: phase 1 -- generate per-character ref candidates if the
+    # story nominates recurring characters and the user has not yet picked
+    # refs via the review UI. After CharacterReferenceStage.run() materialises
+    # candidates to disk, we re-check is_complete; if picks are still missing
+    # we halt cleanly (exit 0) and point at the review UI. Resume on the
+    # next invocation skips this phase entirely (is_complete=True).
+    char_stage = CharacterReferenceStage()
+    if not char_stage.is_complete(s):
+        try:
+            asyncio.run(Orchestrator(stages=[char_stage]).run(s, ctx))
+        except Exception as exc:
+            console.print(f"[red]character_references failed for {story}: {exc}[/red]")
+            raise
+        s.save(story_path)
+        if not char_stage.is_complete(s):
+            discovered = sorted(char_stage._discover_characters(s))
+            missing = [
+                name
+                for name in discovered
+                if not s.characters.get(name) or not Path(s.characters[name]).exists()
+            ]
+            console.print(
+                f"[cyan]Generated reference candidates for {discovered}.[/cyan]"
+            )
+            console.print(
+                f"[yellow]Pick a ref per character via "
+                f"'platinum review characters {story}', then re-run "
+                f"'platinum keyframes {story}'.[/yellow]"
+            )
+            console.print(f"[yellow]Awaiting picks for: {missing}.[/yellow]")
+            raise typer.Exit(code=0)
+
+    # Phase 2: pose+depth preprocessor pass + the keyframe render itself.
+    # Both stages are resume-aware (is_complete returns True when their
+    # outputs are already on disk), so re-runs after a partial failure
+    # pick up where the previous run halted.
+    orchestrator = Orchestrator(stages=[
+        PoseDepthMapStage(),
+        KeyframeGeneratorStage(),
+    ])
 
     try:
         asyncio.run(orchestrator.run(s, ctx))

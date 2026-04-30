@@ -165,6 +165,110 @@ def test_rerun_rejected_empty_set_exits_zero(cli_project: Path, monkeypatch) -> 
     assert "no rejected" in result.output.lower()
 
 
+def test_rerun_all_prompts_rewrites_every_scene_and_clears_keyframes(
+    cli_project: Path, rejected_story_factory, monkeypatch,
+) -> None:
+    """`--rerun-all-prompts` forces a full Phase B re-author.
+
+    Every scene's visual_prompt + composition_notes + character_refs
+    must be rewritten, every keyframe_path cleared, and every
+    review_status flipped to REGENERATE so the orchestrator's
+    keyframe stage will re-render with new conditioning.
+
+    S7.1 Phase B verify run gating -- before this flag, only
+    REJECTED scenes picked up the new structural fields, and APPROVED
+    keyframes were silently skipped by the orchestrator's per-scene
+    `is_complete` check.
+    """
+    story_id, story_path = rejected_story_factory()
+    pre = Story.load(story_path)
+    pre.scenes[1].keyframe_path = Path("/workspace/old/scene_002/candidate_0.png")
+    pre.scenes[2].keyframe_path = Path("/workspace/old/scene_003/candidate_0.png")
+    pre.save(story_path)
+
+    fixture_path = cli_project / "fixture.json"
+    response = _make_visual_prompts_response([
+        {"index": 1, "visual_prompt": "ALL: scene 1 amber-lit nobleman",
+         "negative_prompt": "bright daylight",
+         "composition_notes": "single oil lamp camera-right",
+         "character_refs": ["Fortunato"]},
+        {"index": 2, "visual_prompt": "ALL: scene 2 catacombs torchlit",
+         "negative_prompt": "bright daylight",
+         "composition_notes": "two figures descending stairs",
+         "character_refs": ["Fortunato", "Montresor"]},
+        {"index": 3, "visual_prompt": "ALL: scene 3 cellar lantern",
+         "negative_prompt": "bright daylight",
+         "composition_notes": "lone figure at brick wall",
+         "character_refs": ["Montresor"]},
+    ])
+    fixture_path.write_text(
+        json.dumps({"request": {}, "response": response}),
+        encoding="utf-8",
+    )
+
+    from tests._fixtures import FixtureRecorder
+    recorder = FixtureRecorder(path=fixture_path, mode="replay")
+
+    from platinum import cli as cli_mod
+    original_init = cli_mod.Config.__init__
+
+    def init_with_recorder(self, root=None) -> None:
+        original_init(self, root=root)
+        self.settings.setdefault("test", {})["claude_recorder"] = recorder
+
+    monkeypatch.setattr(
+        cli_mod, "Config",
+        type("C", (cli_mod.Config,), {"__init__": init_with_recorder}),
+    )
+    monkeypatch.setattr("platinum.config._ROOT", cli_project, raising=False)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_mod.app, ["adapt", "--story", story_id, "--rerun-all-prompts"],
+    )
+    assert result.exit_code == 0, result.output
+
+    rt = Story.load(story_path)
+    # Every scene's visual_prompt + structural fields must be rewritten.
+    assert rt.scenes[0].visual_prompt == "ALL: scene 1 amber-lit nobleman"
+    assert rt.scenes[1].visual_prompt == "ALL: scene 2 catacombs torchlit"
+    assert rt.scenes[2].visual_prompt == "ALL: scene 3 cellar lantern"
+    assert rt.scenes[0].composition_notes == "single oil lamp camera-right"
+    assert rt.scenes[1].composition_notes == "two figures descending stairs"
+    assert rt.scenes[2].composition_notes == "lone figure at brick wall"
+    assert rt.scenes[0].character_refs == ["Fortunato"]
+    assert rt.scenes[1].character_refs == ["Fortunato", "Montresor"]
+    assert rt.scenes[2].character_refs == ["Montresor"]
+    # Every scene's keyframe_path cleared so orchestrator re-renders.
+    assert rt.scenes[0].keyframe_path is None
+    assert rt.scenes[1].keyframe_path is None
+    assert rt.scenes[2].keyframe_path is None
+    # Every scene flipped to REGENERATE -- including the previously APPROVED one.
+    assert rt.scenes[0].review_status == ReviewStatus.REGENERATE
+    assert rt.scenes[1].review_status == ReviewStatus.REGENERATE
+    assert rt.scenes[2].review_status == ReviewStatus.REGENERATE
+    # review_feedback cleared on the previously REJECTED scene.
+    assert rt.scenes[0].review_feedback is None
+
+
+def test_rerun_all_prompts_and_rerun_rejected_are_mutually_exclusive(
+    cli_project: Path, monkeypatch,
+) -> None:
+    """Passing both flags fails fast with a clear error."""
+    monkeypatch.chdir(cli_project)
+    monkeypatch.setattr("platinum.config._ROOT", cli_project, raising=False)
+
+    from platinum import cli as cli_mod
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_mod.app,
+        ["adapt", "--story", "x", "--rerun-rejected", "--rerun-all-prompts"],
+    )
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output.lower() or \
+           "cannot use both" in result.output.lower()
+
+
 def test_rerun_rejected_only_applies_new_prompts_to_REJECTED(
     cli_project: Path, rejected_story_factory, monkeypatch,
 ) -> None:
