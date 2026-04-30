@@ -1,15 +1,15 @@
 {
   "_meta": {
-    "comment": "Wan 2.2 I2V-A14B workflow (S8 Phase A). Requires ComfyUI-WanVideoWrapper extension (kijai). Filenames match Kijai/WanVideo_comfy single-file repackages downloaded by vast_setup.sh. class_type strings are best-effort and may need adjustment during live A6000 verify.",
+    "comment": "Wan 2.2 14B I2V workflow (S8.17 rewrite). Two-expert MoE: HIGH expert runs steps 0-15, LOW expert runs steps 15-30 with samples handoff. Uses Wan 2.1 VAE -- the Wan 2.2 14B I2V experts inherit the 2.1 VAE encoder; the 2.2 VAE is for the 2.2 5B family only. Requires ComfyUI-WanVideoWrapper + ComfyUI-VideoHelperSuite extensions. Filenames match the Kijai/WanVideo_comfy single-file repackages downloaded by vast_setup.sh.",
     "role": {
-      "image_in": "10",
-      "prompt": "20",
-      "seed": "30",
-      "video_out": "60",
-      "width": "30",
-      "height": "30",
-      "frame_count": "40",
-      "fps": "60"
+      "image_in": "5",
+      "prompt": "6",
+      "seed": ["8", "9"],
+      "video_out": "11",
+      "width": "7",
+      "height": "7",
+      "frame_count": "7",
+      "fps": "11"
     }
   },
   "1": {
@@ -17,7 +17,9 @@
     "inputs": {
       "model": "Wan2_2-I2V-A14B-HIGH_bf16.safetensors",
       "base_precision": "bf16",
-      "load_device": "main_device"
+      "quantization": "disabled",
+      "load_device": "main_device",
+      "attention_mode": "sdpa"
     }
   },
   "2": {
@@ -25,80 +27,116 @@
     "inputs": {
       "model": "Wan2_2-I2V-A14B-LOW_bf16.safetensors",
       "base_precision": "bf16",
-      "load_device": "main_device"
+      "quantization": "disabled",
+      "load_device": "main_device",
+      "attention_mode": "sdpa"
     }
   },
   "3": {
     "class_type": "WanVideoVAELoader",
     "inputs": {
-      "model_name": "Wan2_2_VAE_bf16.safetensors",
+      "model_name": "Wan2_1_VAE_bf16.safetensors",
       "precision": "bf16"
     }
   },
   "4": {
-    "class_type": "WanVideoT5TextEncoder",
+    "class_type": "LoadWanVideoT5TextEncoder",
     "inputs": {
       "model_name": "umt5_xxl.pth",
-      "precision": "bf16"
+      "precision": "bf16",
+      "load_device": "offload_device",
+      "quantization": "disabled"
     }
   },
-  "10": {
+  "5": {
     "class_type": "LoadImage",
     "inputs": {
       "image": "PLACEHOLDER.png"
     }
   },
-  "20": {
+  "6": {
     "class_type": "WanVideoTextEncode",
     "inputs": {
-      "t5_encoder": ["4", 0],
-      "text": "PLACEHOLDER",
-      "negative_text": ""
+      "t5": ["4", 0],
+      "positive_prompt": "PLACEHOLDER",
+      "negative_prompt": "blurry, low quality, jpeg artifacts, distorted, deformed, mutated, extra limbs, missing limbs, watermark, text, signature, oversaturated, amateur, cartoon, sketch, painting, 3d render, motionless picture, still image, frozen frame",
+      "force_offload": true
     }
   },
-  "25": {
-    "class_type": "WanVideoImageEncode",
+  "7": {
+    "class_type": "WanVideoImageToVideoEncode",
     "inputs": {
       "vae": ["3", 0],
-      "image": ["10", 0]
+      "start_image": ["5", 0],
+      "width": 1280,
+      "height": 720,
+      "num_frames": 81,
+      "noise_aug_strength": 0.0,
+      "start_latent_strength": 1.0,
+      "end_latent_strength": 1.0,
+      "force_offload": true,
+      "fun_or_fl2v_model": false
     }
   },
-  "30": {
+  "8": {
     "class_type": "WanVideoSampler",
     "inputs": {
-      "model_high_noise": ["1", 0],
-      "model_low_noise": ["2", 0],
-      "image_embeds": ["25", 0],
-      "text_embeds": ["20", 0],
-      "seed": 0,
+      "model": ["1", 0],
+      "image_embeds": ["7", 0],
+      "text_embeds": ["6", 0],
       "steps": 30,
       "cfg": 6.0,
+      "shift": 8.0,
+      "seed": 0,
+      "force_offload": true,
       "scheduler": "unipc",
-      "width": 1280,
-      "height": 720
+      "riflex_freq_index": 0,
+      "end_step": 15
     }
   },
-  "40": {
-    "class_type": "WanVideoLatentVideo",
+  "9": {
+    "class_type": "WanVideoSampler",
     "inputs": {
-      "samples": ["30", 0],
-      "length": 80
+      "model": ["2", 0],
+      "image_embeds": ["7", 0],
+      "text_embeds": ["6", 0],
+      "samples": ["8", 0],
+      "steps": 30,
+      "cfg": 6.0,
+      "shift": 8.0,
+      "seed": 0,
+      "force_offload": true,
+      "scheduler": "unipc",
+      "riflex_freq_index": 0,
+      "start_step": 15
     }
   },
-  "50": {
+  "10": {
     "class_type": "WanVideoDecode",
     "inputs": {
       "vae": ["3", 0],
-      "samples": ["40", 0]
+      "samples": ["9", 0],
+      "enable_vae_tiling": false,
+      "tile_x": 272,
+      "tile_y": 272,
+      "tile_stride_x": 144,
+      "tile_stride_y": 128
     }
   },
-  "60": {
+  "11": {
     "class_type": "VHS_VideoCombine",
     "inputs": {
-      "images": ["50", 0],
+      "images": ["10", 0],
       "frame_rate": 16,
+      "loop_count": 0,
       "filename_prefix": "wan_output",
-      "format": "video/h264-mp4"
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true
     }
   }
 }
