@@ -153,11 +153,28 @@ def _check_wan_extension_importable() -> tuple[bool, str]:
     return True, f"WanVideoWrapper present at {extension_path}"
 
 
+def _detect_workflow_mode(path: Path) -> str:
+    """Return 'wan' if the workflow's _meta.role advertises Wan-only roles,
+    else 'flux'. On any load failure, default to 'flux' so the Flux validator
+    runs and surfaces the load error with its existing message."""
+    try:
+        data = json.loads(Path(path).read_text())
+    except Exception:  # noqa: BLE001
+        return "flux"
+    roles = set(data.get("_meta", {}).get("role", {}).keys())
+    return "wan" if "video_out" in roles or "image_in" in roles else "flux"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--workflow", type=Path,
         default=Path("config/workflows/flux_dev_keyframe.json"),
+    )
+    parser.add_argument(
+        "--wan-models-dir", type=Path,
+        default=Path("/workspace/ComfyUI/models"),
+        help="ComfyUI models root (used only for Wan workflows).",
     )
     args = parser.parse_args()
 
@@ -174,12 +191,23 @@ def main() -> int:
         print("ERROR: PLATINUM_AESTHETICS_HOST not in env", file=sys.stderr)
         return 2
 
-    checks = [
-        ("HF token resolve",      lambda: _check_hf_token(hf_token)),
-        ("Workflow JSON",         lambda: _check_workflow_json(args.workflow)),
-        ("ComfyUI alive",         lambda: _check_comfyui_alive(comfyui_host)),
-        ("Score-server alive",    lambda: _check_score_server_alive(aesthetics_host)),
-    ]
+    mode = _detect_workflow_mode(args.workflow)
+    if mode == "wan":
+        checks = [
+            ("HF token resolve",      lambda: _check_hf_token(hf_token)),
+            ("Wan workflow JSON",     lambda: _check_wan_workflow_json(args.workflow)),
+            ("ComfyUI alive",         lambda: _check_comfyui_alive(comfyui_host)),
+            ("Score-server alive",    lambda: _check_score_server_alive(aesthetics_host)),
+            ("Wan weights",           lambda: _check_wan_weights(args.wan_models_dir)),
+            ("Wan extension",         lambda: _check_wan_extension_importable()),
+        ]
+    else:
+        checks = [
+            ("HF token resolve",      lambda: _check_hf_token(hf_token)),
+            ("Workflow JSON",         lambda: _check_workflow_json(args.workflow)),
+            ("ComfyUI alive",         lambda: _check_comfyui_alive(comfyui_host)),
+            ("Score-server alive",    lambda: _check_score_server_alive(aesthetics_host)),
+        ]
     for label, fn in checks:
         t0 = time.monotonic()
         passed, msg = fn()
@@ -190,7 +218,7 @@ def main() -> int:
             return 1
 
     sig = _workflow_signature(args.workflow)
-    print(f"  [INFO] workflow signature: {sig}", flush=True)
+    print(f"  [INFO] workflow signature: {sig}  (mode={mode})", flush=True)
     print("preflight OK", flush=True)
     return 0
 

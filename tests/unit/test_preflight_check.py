@@ -231,3 +231,146 @@ class TestWanPreflightChecks:
 
         ok, msg = _check_wan_weights(tmp_path)
         assert ok, msg
+
+
+def test_main_wan_mode_routes_to_wan_checks(tmp_path, monkeypatch, capsys):
+    """When --workflow points at a Wan-shaped workflow, main() runs the Wan
+    checks (workflow JSON, weights, extension) -- not the Flux checks.
+    Regression for an S8 cumulative-review gap where _check_wan_* were
+    defined but never wired into main()."""
+    import json
+    import os
+    import sys
+
+    import httpx
+    import preflight_check as pc
+
+    # 1. Build a Wan-shaped workflow JSON.
+    wan_wf = tmp_path / "wan22.json"
+    wan_wf.write_text(json.dumps({
+        "_meta": {"role": {
+            "image_in": "10", "prompt": "20", "seed": "30", "video_out": "60",
+        }},
+        "10": {}, "20": {}, "30": {}, "60": {},
+    }))
+
+    # 2. Build a fake Wan models dir with sparse files at the expected sizes.
+    (tmp_path / "diffusion_models").mkdir()
+    p1 = tmp_path / "diffusion_models" / "wan2_2_i2v_high_noise.safetensors"
+    p1.touch()
+    os.truncate(p1, 1_500_000_000)
+    p2 = tmp_path / "diffusion_models" / "wan2_2_i2v_low_noise.safetensors"
+    p2.touch()
+    os.truncate(p2, 1_500_000_000)
+    (tmp_path / "vae").mkdir()
+    p3 = tmp_path / "vae" / "wan2_2_vae.pth"
+    p3.touch()
+    os.truncate(p3, 200_000_000)
+    (tmp_path / "text_encoders").mkdir()
+    p4 = tmp_path / "text_encoders" / "umt5_xxl.pth"
+    p4.touch()
+    os.truncate(p4, 2_000_000_000)
+
+    # 3. Stub all network checks (HF range GET, ComfyUI /system_stats,
+    #    score-server /health) to pass.
+    class _Ok:
+        status_code = 200
+        text = ""
+        content = b"x" * 1024
+        def json(self):
+            return {"devices": [{"name": "RTX A6000"}]}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+        def get(self, *a, **k):
+            return _Ok()
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+
+    # 4. Stub the extension-on-disk check (the real one looks at a vast.ai-only
+    #    hardcoded path).
+    monkeypatch.setattr(
+        pc, "_check_wan_extension_importable",
+        lambda: (True, "WanVideoWrapper present (test-stub)"),
+    )
+
+    # 5. Required env vars + sys.argv.
+    monkeypatch.setenv("HF_TOKEN", "hf_x")
+    monkeypatch.setenv("PLATINUM_COMFYUI_HOST", "http://localhost:8188")
+    monkeypatch.setenv("PLATINUM_AESTHETICS_HOST", "http://localhost:8189")
+    monkeypatch.setattr(sys, "argv", [
+        "preflight_check.py",
+        "--workflow", str(wan_wf),
+        "--wan-models-dir", str(tmp_path),
+    ])
+
+    rc = pc.main()
+    captured = capsys.readouterr()
+    out = captured.out
+    assert rc == 0, out
+    # Wan-specific checks must have run.
+    assert "Wan workflow JSON" in out
+    assert "Wan weights" in out
+    assert "Wan extension" in out
+    # Flux-only check label must not have run (would be wrong shape for Wan).
+    assert "[OK ] Workflow JSON" not in out
+    assert "[FAIL]" not in out
+
+
+def test_main_flux_mode_unchanged(tmp_path, monkeypatch, capsys):
+    """Default mode (Flux workflow path) still runs the original 4 checks
+    only. Regression to ensure the Wan branch doesn't leak into Flux mode."""
+    import json
+    import sys
+
+    import httpx
+    import preflight_check as pc
+
+    flux_wf = tmp_path / "flux.json"
+    flux_wf.write_text(json.dumps({
+        "_meta": {"role": {
+            "positive_prompt": "3", "negative_prompt": "4", "empty_latent": "5",
+            "sampler": "6", "save_image": "8",
+            "model_sampling_flux": "10", "flux_guidance": "11",
+        }},
+        "3": {}, "4": {}, "5": {}, "6": {}, "8": {}, "10": {}, "11": {},
+    }))
+
+    class _Ok:
+        status_code = 200
+        text = ""
+        content = b"x" * 1024
+        def json(self):
+            return {"devices": [{"name": "RTX A6000"}]}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            pass
+        def get(self, *a, **k):
+            return _Ok()
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    monkeypatch.setenv("HF_TOKEN", "hf_x")
+    monkeypatch.setenv("PLATINUM_COMFYUI_HOST", "http://localhost:8188")
+    monkeypatch.setenv("PLATINUM_AESTHETICS_HOST", "http://localhost:8189")
+    monkeypatch.setattr(sys, "argv", [
+        "preflight_check.py",
+        "--workflow", str(flux_wf),
+    ])
+
+    rc = pc.main()
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "Workflow JSON" in out
+    assert "Wan workflow JSON" not in out
+    assert "Wan weights" not in out
+    assert "Wan extension" not in out

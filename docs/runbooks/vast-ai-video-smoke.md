@@ -38,9 +38,10 @@ ssh -p <port> root@<host> 'apt-get install -y dos2unix && dos2unix /workspace/pl
 ssh -p <port> root@<host> 'cd /workspace/platinum && python scripts/preflight_check.py --workflow config/workflows/wan22_i2v.json'
 ```
 
-Expect 5 checks GREEN: HF token, ComfyUI alive, score-server alive, Wan
-workflow valid, Wan weights present + extension importable. If any fail,
-investigate before continuing.
+The script auto-detects Wan mode from the workflow's `_meta.role`. Expect
+6 checks GREEN: HF token resolve, Wan workflow JSON, ComfyUI alive,
+score-server alive, Wan weights present (4 files), WanVideoWrapper
+extension on disk. If any fail, investigate before continuing.
 
 ## Step 4: Rental 1 (probe -- scenes 1, 8, 16)
 

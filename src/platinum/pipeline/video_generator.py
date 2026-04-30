@@ -71,6 +71,14 @@ def _seed_for_scene(scene_index: int, *, retry: int = 0) -> int:
 
     seed = scene_index * 1000 + retry. With retry in {0, 1} only two seeds
     are ever used per scene (initial + one retry).
+
+    Note on overlap with keyframe seeds: keyframe_generator._seeds_for_scene
+    uses scene_index*1000 + regen_count*100 + offset, so video retry=0/1
+    collide with keyframe candidate_idx=0/1 at regen_count=0. This is
+    intentional -- Wan 2.2 I2V and Flux are different models, so the same
+    integer seed produces different outputs. Output extensions also differ
+    (.mp4 vs .png) so file-path collisions are impossible. Do not "fix" the
+    apparent overlap.
     """
     return scene_index * 1000 + retry
 
