@@ -7,6 +7,11 @@ from pathlib import Path
 from platinum.utils.workflow import inject_video
 
 
+def _as_id_list(role_val: object) -> list[str]:
+    """Normalize a role value to a list of node IDs (str -> [str], list passes through)."""
+    return [role_val] if isinstance(role_val, str) else list(role_val)  # type: ignore[arg-type]
+
+
 class TestWan22I2VWorkflow:
     def test_workflow_loads_and_has_required_roles(self) -> None:
         path = Path("config/workflows/wan22_i2v.json")
@@ -15,9 +20,10 @@ class TestWan22I2VWorkflow:
         roles = wf.get("_meta", {}).get("role", {})
         for required in ("image_in", "prompt", "seed", "video_out"):
             assert required in roles, f"missing required role: {required}"
-            assert roles[required] in wf, (
-                f"role {required} -> node {roles[required]} not present in workflow"
-            )
+            for node_id in _as_id_list(roles[required]):
+                assert node_id in wf, (
+                    f"role {required} -> node {node_id} not present in workflow"
+                )
 
     def test_inject_video_round_trip_succeeds(self) -> None:
         path = Path("config/workflows/wan22_i2v.json")
@@ -33,6 +39,10 @@ class TestWan22I2VWorkflow:
         # Each required role's node has the expected mutation visible.
         roles = out["_meta"]["role"]
         assert out[roles["image_in"]]["inputs"]["image"] == "scene_000.png"
-        assert out[roles["prompt"]]["inputs"]["text"] == "probe"
-        assert out[roles["seed"]]["inputs"]["seed"] == 42
+        # Prompt-target node uses WanVideoTextEncode's positive_prompt input.
+        assert out[roles["prompt"]]["inputs"]["positive_prompt"] == "probe"
+        # Seed role can be either str (single sampler) or list (MoE chain);
+        # inject_video writes the same value to every listed sampler node.
+        for sid in _as_id_list(roles["seed"]):
+            assert out[sid]["inputs"]["seed"] == 42
         assert out[roles["video_out"]]["inputs"]["filename_prefix"] == "scene_000_raw"

@@ -42,6 +42,21 @@ def _resolve_role(workflow: dict[str, Any], role: str) -> str:
     return roles[role]
 
 
+def _resolve_role_ids(workflow: dict[str, Any], role: str) -> list[str]:
+    """Resolve a role to a list of node IDs.
+
+    Single-string roles wrap to a one-element list; list-valued roles pass
+    through. Used by `inject_video` for the `seed` role, which on the Wan
+    2.2 14B I2V workflow points at two samplers (HIGH + LOW) that must
+    share a coupled seed for determinism across the MoE handoff.
+    """
+    roles = workflow.get("_meta", {}).get("role", {})
+    if role not in roles:
+        raise KeyError(f"workflow _meta.role missing required role: {role!r}")
+    val = roles[role]
+    return [val] if isinstance(val, str) else list(val)
+
+
 def _apply_ref(
     workflow: dict[str, Any],
     *,
@@ -172,10 +187,15 @@ def inject_video(
     """Return a new workflow dict with Wan 2.2 I2V variable fields swapped in.
 
     Required _meta.role entries: image_in, prompt, seed, video_out.
+      seed may be either a single node ID (str) or a list of IDs; the list
+      form is used by Wan 2.2 14B I2V's two-sampler MoE chain (HIGH + LOW
+      must share a coupled seed for determinism across the samples handoff).
+      The prompt-target node's `positive_prompt` input is overwritten
+      (matches WanVideoTextEncode's schema).
 
     Optional _meta.role entries (each mutated only if present in roles):
-      width, height -- typically a WanSampler or KSampler node's inputs.
-      frame_count   -- WanLatentVideo node's `length` input (frames per clip).
+      width, height -- typically WanVideoImageToVideoEncode's widget inputs.
+      frame_count   -- the same encoder's `num_frames` input (frames per clip).
       fps           -- VHS_VideoCombine node's `frame_rate` input.
 
     image_in is the server-side filename returned by ComfyClient.upload_image
@@ -185,11 +205,13 @@ def inject_video(
     out = copy.deepcopy(workflow)
     image_id = _resolve_role(out, "image_in")
     prompt_id = _resolve_role(out, "prompt")
-    seed_id = _resolve_role(out, "seed")
     video_id = _resolve_role(out, "video_out")
     out[image_id]["inputs"]["image"] = image_in
-    out[prompt_id]["inputs"]["text"] = prompt
-    out[seed_id]["inputs"]["seed"] = seed
+    out[prompt_id]["inputs"]["positive_prompt"] = prompt
+    # seed is a list-capable role: same value to every sampler in the chain
+    # (Wan 2.2 14B I2V uses two WanVideoSampler nodes that must share a seed).
+    for sid in _resolve_role_ids(out, "seed"):
+        out[sid]["inputs"]["seed"] = seed
     out[video_id]["inputs"]["filename_prefix"] = output_prefix
 
     roles = out.get("_meta", {}).get("role", {})
@@ -198,7 +220,7 @@ def inject_video(
     if height is not None and "height" in roles:
         out[roles["height"]]["inputs"]["height"] = height
     if frame_count is not None and "frame_count" in roles:
-        out[roles["frame_count"]]["inputs"]["length"] = frame_count
+        out[roles["frame_count"]]["inputs"]["num_frames"] = frame_count
     if fps is not None and "fps" in roles:
         out[roles["fps"]]["inputs"]["frame_rate"] = fps
 

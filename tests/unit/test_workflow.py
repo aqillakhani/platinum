@@ -721,11 +721,11 @@ class TestInjectVideo:
                 }
             },
             "100": {"class_type": "LoadImage", "inputs": {"image": ""}},
-            "101": {"class_type": "WanT5TextEncode", "inputs": {"text": ""}},
-            "102": {"class_type": "WanSampler", "inputs": {"seed": 0}},
+            "101": {"class_type": "WanVideoTextEncode", "inputs": {"positive_prompt": ""}},
+            "102": {"class_type": "WanVideoSampler", "inputs": {"seed": 0}},
             "103": {"class_type": "VHS_VideoCombine", "inputs": {"filename_prefix": ""}},
-            "104": {"class_type": "WanSampler", "inputs": {"width": 0, "height": 0}},
-            "105": {"class_type": "WanLatentVideo", "inputs": {"length": 0}},
+            "104": {"class_type": "WanVideoImageToVideoEncode", "inputs": {"width": 0, "height": 0}},
+            "105": {"class_type": "WanVideoImageToVideoEncode", "inputs": {"num_frames": 0}},
             "106": {"class_type": "VHS_VideoCombine", "inputs": {"frame_rate": 0}},
         }
 
@@ -747,11 +747,42 @@ class TestInjectVideo:
         assert out is not wf
         # Input untouched.
         assert wf["100"]["inputs"]["image"] == ""
-        assert wf["101"]["inputs"]["text"] == ""
+        assert wf["101"]["inputs"]["positive_prompt"] == ""
         # Output mutated.
         assert out["100"]["inputs"]["image"] == "scene_001.png"
-        assert out["101"]["inputs"]["text"] == "A dimly lit crypt"
+        assert out["101"]["inputs"]["positive_prompt"] == "A dimly lit crypt"
         assert out["102"]["inputs"]["seed"] == 1000
+
+    def test_writes_shared_seed_to_list_role(self) -> None:
+        """When _meta.role['seed'] is a list of node IDs, inject_video writes
+        the same seed value into all of them. Used by the Wan 2.2 14B I2V
+        workflow's two-sampler MoE chain (HIGH + LOW must share seed)."""
+        from platinum.utils.workflow import inject_video
+
+        wf = {
+            "_meta": {
+                "role": {
+                    "image_in": "100",
+                    "prompt": "101",
+                    "seed": ["102", "108"],
+                    "video_out": "103",
+                }
+            },
+            "100": {"class_type": "LoadImage", "inputs": {"image": ""}},
+            "101": {"class_type": "WanT5TextEncode", "inputs": {"text": ""}},
+            "102": {"class_type": "WanSampler", "inputs": {"seed": 0}},
+            "103": {"class_type": "VHS_VideoCombine", "inputs": {"filename_prefix": ""}},
+            "108": {"class_type": "WanSampler", "inputs": {"seed": 0}},
+        }
+        out = inject_video(
+            wf,
+            image_in="x.png",
+            prompt="x",
+            seed=4242,
+            output_prefix="scene_001_raw",
+        )
+        assert out["102"]["inputs"]["seed"] == 4242
+        assert out["108"]["inputs"]["seed"] == 4242
 
     def test_required_roles_raise_on_missing(self) -> None:
         from platinum.utils.workflow import inject_video
@@ -800,7 +831,7 @@ class TestInjectVideo:
             frame_count=80,
             fps=16,
         )
-        assert out["105"]["inputs"]["length"] == 80
+        assert out["105"]["inputs"]["num_frames"] == 80
         assert out["106"]["inputs"]["frame_rate"] == 16
 
     def test_output_prefix_threaded_into_video_out(self) -> None:
