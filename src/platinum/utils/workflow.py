@@ -147,3 +147,59 @@ def inject(
         bypass_field="strength",
     )
     return out
+
+
+REQUIRED_VIDEO_ROLES = (
+    "image_in",
+    "prompt",
+    "seed",
+    "video_out",
+)
+
+
+def inject_video(
+    workflow: dict[str, Any],
+    *,
+    image_in: str,
+    prompt: str,
+    seed: int,
+    output_prefix: str,
+    width: int | None = None,
+    height: int | None = None,
+    frame_count: int | None = None,
+    fps: int | None = None,
+) -> dict[str, Any]:
+    """Return a new workflow dict with Wan 2.2 I2V variable fields swapped in.
+
+    Required _meta.role entries: image_in, prompt, seed, video_out.
+
+    Optional _meta.role entries (each mutated only if present in roles):
+      width, height -- typically a WanSampler or KSampler node's inputs.
+      frame_count   -- WanLatentVideo node's `length` input (frames per clip).
+      fps           -- VHS_VideoCombine node's `frame_rate` input.
+
+    image_in is the server-side filename returned by ComfyClient.upload_image
+    (NOT a local path); the LoadImage node references files by name relative
+    to ComfyUI's `input/` directory.
+    """
+    out = copy.deepcopy(workflow)
+    image_id = _resolve_role(out, "image_in")
+    prompt_id = _resolve_role(out, "prompt")
+    seed_id = _resolve_role(out, "seed")
+    video_id = _resolve_role(out, "video_out")
+    out[image_id]["inputs"]["image"] = image_in
+    out[prompt_id]["inputs"]["text"] = prompt
+    out[seed_id]["inputs"]["seed"] = seed
+    out[video_id]["inputs"]["filename_prefix"] = output_prefix
+
+    roles = out.get("_meta", {}).get("role", {})
+    if width is not None and "width" in roles:
+        out[roles["width"]]["inputs"]["width"] = width
+    if height is not None and "height" in roles:
+        out[roles["height"]]["inputs"]["height"] = height
+    if frame_count is not None and "frame_count" in roles:
+        out[roles["frame_count"]]["inputs"]["length"] = frame_count
+    if fps is not None and "fps" in roles:
+        out[roles["fps"]]["inputs"]["frame_rate"] = fps
+
+    return out

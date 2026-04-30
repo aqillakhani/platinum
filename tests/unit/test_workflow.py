@@ -699,3 +699,119 @@ def test_inject_default_kwargs_bypass_all_refs() -> None:
     assert "ipadapter_apply" not in roles
     assert "controlnet_depth_apply" not in roles
     assert "controlnet_pose_apply" not in roles
+
+
+class TestInjectVideo:
+    """inject_video for Wan 2.2 I2V workflows."""
+
+    def _wf_template(self) -> dict:
+        # Minimal Wan-shape workflow: 4 required-role nodes + 4 optional-role
+        # nodes. inputs are the only mutable surface inject_video touches.
+        return {
+            "_meta": {
+                "role": {
+                    "image_in": "100",
+                    "prompt": "101",
+                    "seed": "102",
+                    "video_out": "103",
+                    "width": "104",
+                    "height": "104",   # often the same node as width (e.g., a sampler)
+                    "frame_count": "105",
+                    "fps": "106",
+                }
+            },
+            "100": {"class_type": "LoadImage", "inputs": {"image": ""}},
+            "101": {"class_type": "WanT5TextEncode", "inputs": {"text": ""}},
+            "102": {"class_type": "WanSampler", "inputs": {"seed": 0}},
+            "103": {"class_type": "VHS_VideoCombine", "inputs": {"filename_prefix": ""}},
+            "104": {"class_type": "WanSampler", "inputs": {"width": 0, "height": 0}},
+            "105": {"class_type": "WanLatentVideo", "inputs": {"length": 0}},
+            "106": {"class_type": "VHS_VideoCombine", "inputs": {"frame_rate": 0}},
+        }
+
+    def test_returns_new_dict_does_not_mutate_input(self) -> None:
+        from platinum.utils.workflow import inject_video
+
+        wf = self._wf_template()
+        out = inject_video(
+            wf,
+            image_in="scene_001.png",
+            prompt="A dimly lit crypt",
+            seed=1000,
+            output_prefix="scene_001_raw",
+            width=1280,
+            height=720,
+            frame_count=80,
+            fps=16,
+        )
+        assert out is not wf
+        # Input untouched.
+        assert wf["100"]["inputs"]["image"] == ""
+        assert wf["101"]["inputs"]["text"] == ""
+        # Output mutated.
+        assert out["100"]["inputs"]["image"] == "scene_001.png"
+        assert out["101"]["inputs"]["text"] == "A dimly lit crypt"
+        assert out["102"]["inputs"]["seed"] == 1000
+
+    def test_required_roles_raise_on_missing(self) -> None:
+        from platinum.utils.workflow import inject_video
+
+        wf = self._wf_template()
+        # Drop the prompt role.
+        del wf["_meta"]["role"]["prompt"]
+        with pytest.raises(KeyError, match="prompt"):
+            inject_video(
+                wf,
+                image_in="x.png",
+                prompt="x",
+                seed=0,
+                output_prefix="x",
+            )
+
+    def test_optional_dimensions_skipped_when_role_absent(self) -> None:
+        from platinum.utils.workflow import inject_video
+
+        wf = self._wf_template()
+        del wf["_meta"]["role"]["width"]
+        del wf["_meta"]["role"]["height"]
+        out = inject_video(
+            wf,
+            image_in="x.png",
+            prompt="x",
+            seed=0,
+            output_prefix="x",
+            width=1280,   # silently ignored
+            height=720,
+        )
+        # Node 104's width/height inputs unchanged because the role wasn't there.
+        assert out["104"]["inputs"]["width"] == 0
+        assert out["104"]["inputs"]["height"] == 0
+
+    def test_optional_frame_count_and_fps_set_when_role_present(self) -> None:
+        from platinum.utils.workflow import inject_video
+
+        wf = self._wf_template()
+        out = inject_video(
+            wf,
+            image_in="x.png",
+            prompt="x",
+            seed=42,
+            output_prefix="x",
+            frame_count=80,
+            fps=16,
+        )
+        assert out["105"]["inputs"]["length"] == 80
+        assert out["106"]["inputs"]["frame_rate"] == 16
+
+    def test_output_prefix_threaded_into_video_out(self) -> None:
+        from platinum.utils.workflow import inject_video
+
+        wf = self._wf_template()
+        out = inject_video(
+            wf,
+            image_in="x.png",
+            prompt="x",
+            seed=0,
+            output_prefix="scene_007_raw",
+        )
+        assert out["103"]["inputs"]["filename_prefix"] == "scene_007_raw"
