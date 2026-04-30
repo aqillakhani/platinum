@@ -338,32 +338,43 @@ class VideoGeneratorStage(Stage):
         )
 
         scenes_total = len(story.scenes)
+        reports: list[VideoReport] = []
         try:
-            reports = await generate_video(
-                story,
-                workflow_template=workflow_template,
-                comfy=comfy,
-                output_root=output_root,
-                gates_cfg=video_gates,
-                scene_filter=scene_filter,
-                width=width, height=height,
-                frame_count=frame_count, fps=fps,
-            )
-        except VideoGenerationError:
+            try:
+                reports = await generate_video(
+                    story,
+                    workflow_template=workflow_template,
+                    comfy=comfy,
+                    output_root=output_root,
+                    gates_cfg=video_gates,
+                    scene_filter=scene_filter,
+                    width=width, height=height,
+                    frame_count=frame_count, fps=fps,
+                )
+            except VideoGenerationError:
+                try:
+                    if hasattr(ctx, "story_path"):
+                        story.save(ctx.story_path(story))
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "failed to save story.json after VideoGenerationError"
+                    )
+                raise
+
             try:
                 if hasattr(ctx, "story_path"):
                     story.save(ctx.story_path(story))
             except Exception:  # noqa: BLE001
-                logger.exception(
-                    "failed to save story.json after VideoGenerationError"
-                )
-            raise
-
-        try:
-            if hasattr(ctx, "story_path"):
-                story.save(ctx.story_path(story))
-        except Exception:  # noqa: BLE001
-            logger.exception("failed to save story.json after stage completion")
+                logger.exception("failed to save story.json after stage completion")
+        finally:
+            # Close any clients the Stage constructed (skip test-injected ones --
+            # tests own their lifecycle). Best-effort: never let cleanup errors
+            # mask the original exception.
+            if injected_comfy is None and hasattr(comfy, "aclose"):
+                try:
+                    await comfy.aclose()
+                except Exception:  # noqa: BLE001
+                    logger.exception("failed to aclose ComfyClient")
 
         scenes_succeeded = sum(
             1 for s in story.scenes

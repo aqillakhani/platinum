@@ -113,3 +113,75 @@ class TestVideoGeneratorStage:
         for scene in scenes:
             assert scene.video_path is not None
             assert Path(scene.video_path).exists()
+
+
+class TestStageResourceCleanup:
+    @pytest.mark.asyncio
+    async def test_stage_constructed_comfy_is_aclosed(self, tmp_path: Path) -> None:
+        """When the Stage constructs its own HttpComfyClient (no test override),
+        Stage.run must aclose it after both success and failure paths.
+        """
+        from platinum.pipeline.video_generator import VideoGeneratorStage
+
+        # We assert by instrumenting a stand-in ComfyClient with an aclose tracker.
+        class _TrackingComfy:
+            aclose_called = False
+            async def upload_image(self, path):
+                return path.name
+            async def generate_image(self, *, workflow, output_path):
+                # Force fail so the run halts -- we still want aclose.
+                raise RuntimeError("fail")
+            async def aclose(self):
+                self.aclose_called = True
+
+        comfy = _TrackingComfy()
+        # Patch HttpComfyClient at the import-source so the Stage's local
+        # `from platinum.utils.comfyui import HttpComfyClient` resolves to
+        # our factory (returns the tracking comfy).
+        from platinum.utils import comfyui as cu
+
+        def _factory(host, **_kwargs):
+            return comfy
+
+        original = cu.HttpComfyClient
+        cu.HttpComfyClient = _factory  # type: ignore[assignment, misc]
+        try:
+            from types import SimpleNamespace
+            kf = tmp_path / "scene_000.png"
+            kf.write_bytes(b"fake_png")
+            scenes = [SimpleNamespace(
+                index=0, visual_prompt="x", keyframe_path=kf,
+                video_path=None, video_duration_seconds=0.0, validation={},
+            )]
+            story = SimpleNamespace(
+                id="story_test", track="atmospheric_horror",
+                scenes=scenes, save=lambda *_a, **_k: None,
+            )
+            ctx = SimpleNamespace(
+                config=SimpleNamespace(
+                    settings={"test": {"workflow_template": _wan_template()},
+                              "runtime": {}},
+                    track=lambda _n: {
+                        "quality_gates": {"video_gates": {
+                            "duration_target_seconds": 5.0,
+                            "duration_tolerance_seconds": 0.2,
+                            "black_frame_max_ratio": 0.05,
+                            "motion_min_flow": 0.0,
+                        }},
+                        "video_model": {"width": 1280, "height": 720,
+                                        "frame_count": 80, "fps": 16},
+                    },
+                    config_dir=tmp_path / "config",
+                ),
+                story_path=lambda _s: tmp_path / "stories" / "story.json",
+                db_path=tmp_path / "db",
+            )
+            (tmp_path / "stories").mkdir(parents=True, exist_ok=True)
+
+            stage = VideoGeneratorStage()
+            with pytest.raises(RuntimeError):
+                await stage.run(story, ctx)
+        finally:
+            cu.HttpComfyClient = original  # type: ignore[assignment, misc]
+
+        assert comfy.aclose_called is True
