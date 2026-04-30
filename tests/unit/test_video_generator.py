@@ -195,7 +195,8 @@ class TestGenerateVideoForSceneGates:
         make_test_video(black_mp4, n_frames=80, fps=16, color=(0, 0, 0), size=(64, 64))
 
         workflow_template = _wan_template_for_tests()
-        wf_for_sig = inject_video(
+        # Register both seeds (initial and retry) to handle retry loop
+        wf_seed_0 = inject_video(
             workflow_template,
             image_in="scene_001.png",
             prompt="x",
@@ -206,7 +207,23 @@ class TestGenerateVideoForSceneGates:
             frame_count=80,
             fps=16,
         )
-        comfy = FakeComfyClient(responses={workflow_signature(wf_for_sig): [black_mp4]})
+        wf_seed_1 = inject_video(
+            workflow_template,
+            image_in="scene_001.png",
+            prompt="x",
+            seed=1001,
+            output_prefix="scene_001_raw",
+            width=1280,
+            height=720,
+            frame_count=80,
+            fps=16,
+        )
+        comfy = FakeComfyClient(
+            responses={
+                workflow_signature(wf_seed_0): [black_mp4],
+                workflow_signature(wf_seed_1): [black_mp4],
+            }
+        )
 
         keyframe = tmp_path / "scene_001.png"
         keyframe.write_bytes(b"fake_png")
@@ -256,7 +273,8 @@ class TestGenerateVideoForSceneGates:
         )
 
         workflow_template = _wan_template_for_tests()
-        wf_for_sig = inject_video(
+        # Register both seeds (initial and retry) to handle retry loop
+        wf_seed_0 = inject_video(
             workflow_template,
             image_in="scene_001.png",
             prompt="x",
@@ -267,7 +285,23 @@ class TestGenerateVideoForSceneGates:
             frame_count=80,
             fps=16,
         )
-        comfy = FakeComfyClient(responses={workflow_signature(wf_for_sig): [static_mp4]})
+        wf_seed_1 = inject_video(
+            workflow_template,
+            image_in="scene_001.png",
+            prompt="x",
+            seed=1001,
+            output_prefix="scene_001_raw",
+            width=1280,
+            height=720,
+            frame_count=80,
+            fps=16,
+        )
+        comfy = FakeComfyClient(
+            responses={
+                workflow_signature(wf_seed_0): [static_mp4],
+                workflow_signature(wf_seed_1): [static_mp4],
+            }
+        )
 
         keyframe = tmp_path / "scene_001.png"
         keyframe.write_bytes(b"fake_png")
@@ -317,7 +351,8 @@ class TestGenerateVideoForSceneGates:
         )  # 2.0s
 
         workflow_template = _wan_template_for_tests()
-        wf_for_sig = inject_video(
+        # Register both seeds (initial and retry) to handle retry loop
+        wf_seed_0 = inject_video(
             workflow_template,
             image_in="scene_001.png",
             prompt="x",
@@ -328,7 +363,23 @@ class TestGenerateVideoForSceneGates:
             frame_count=80,
             fps=16,
         )
-        comfy = FakeComfyClient(responses={workflow_signature(wf_for_sig): [short_mp4]})
+        wf_seed_1 = inject_video(
+            workflow_template,
+            image_in="scene_001.png",
+            prompt="x",
+            seed=1001,
+            output_prefix="scene_001_raw",
+            width=1280,
+            height=720,
+            frame_count=80,
+            fps=16,
+        )
+        comfy = FakeComfyClient(
+            responses={
+                workflow_signature(wf_seed_0): [short_mp4],
+                workflow_signature(wf_seed_1): [short_mp4],
+            }
+        )
 
         keyframe = tmp_path / "scene_001.png"
         keyframe.write_bytes(b"fake_png")
@@ -360,6 +411,83 @@ class TestGenerateVideoForSceneGates:
             )
         assert excinfo.value.retryable is True
         assert "duration" in excinfo.value.reason
+
+
+class TestGenerateVideoForSceneRetry:
+    @pytest.mark.asyncio
+    async def test_retry_once_on_first_content_fail(self, tmp_path: Path) -> None:
+        """Fake returns black MP4 on first call (gate fails), motion MP4 on
+        second (gate passes). Function should succeed with retry_used=1.
+        """
+        from platinum.pipeline.video_generator import generate_video_for_scene
+        from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+        from platinum.utils.workflow import inject_video
+        from tests._fixtures import make_test_video, make_test_video_with_motion
+
+        black_mp4 = tmp_path / "black.mp4"
+        motion_mp4 = tmp_path / "motion.mp4"
+        make_test_video(black_mp4, n_frames=80, fps=16, color=(0, 0, 0), size=(64, 64))
+        make_test_video_with_motion(motion_mp4, n_frames=80, fps=16, size=(64, 64))
+
+        workflow_template = _wan_template_for_tests()
+        # Different seeds -> different signatures -> two distinct response slots.
+        wf_seed_0 = inject_video(
+            workflow_template,
+            image_in="scene_001.png",
+            prompt="x",
+            seed=1000,
+            output_prefix="scene_001_raw",
+            width=1280,
+            height=720,
+            frame_count=80,
+            fps=16,
+        )
+        wf_seed_1 = inject_video(
+            workflow_template,
+            image_in="scene_001.png",
+            prompt="x",
+            seed=1001,
+            output_prefix="scene_001_raw",
+            width=1280,
+            height=720,
+            frame_count=80,
+            fps=16,
+        )
+        comfy = FakeComfyClient(
+            responses={
+                workflow_signature(wf_seed_0): [black_mp4],
+                workflow_signature(wf_seed_1): [motion_mp4],
+            }
+        )
+
+        keyframe = tmp_path / "scene_001.png"
+        keyframe.write_bytes(b"fake_png")
+        from types import SimpleNamespace
+
+        scene = SimpleNamespace(
+            index=1, visual_prompt="x", keyframe_path=keyframe, video_path=None
+        )
+
+        report = await generate_video_for_scene(
+            scene,
+            workflow_template=workflow_template,
+            comfy=comfy,
+            output_path=tmp_path / "clips" / "scene_001_raw.mp4",
+            gates_cfg={
+                "duration_target_seconds": 5.0,
+                "duration_tolerance_seconds": 0.2,
+                "black_frame_max_ratio": 0.05,
+                "motion_min_flow": 0.0,
+            },
+            width=1280,
+            height=720,
+            frame_count=80,
+            fps=16,
+        )
+
+        assert report.success is True
+        assert report.retry_used == 1
+        assert len(comfy.calls) == 2  # initial + 1 retry
 
 
 def _wan_template_for_tests() -> dict:

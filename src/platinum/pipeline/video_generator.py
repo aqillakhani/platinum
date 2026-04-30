@@ -79,7 +79,9 @@ async def generate_video_for_scene(
     """Generate one Wan 2.2 I2V clip for a single scene.
 
     Runs 3 quality gates after generation: duration, black_frames, motion.
-    On any gate failure, raises VideoGenerationError(retryable=True).
+    On content failure, retries once with a new seed. Returns VideoReport
+    on success or raises VideoGenerationError on infra failure or 2nd
+    content fail.
     """
     from platinum.utils.validate import (
         check_black_frames,
@@ -104,70 +106,77 @@ async def generate_video_for_scene(
     # 1. Upload keyframe to ComfyUI.
     server_filename = await comfy.upload_image(Path(scene.keyframe_path))
 
-    # 2. Build the workflow.
-    seed = _seed_for_scene(scene.index, retry=0)
-    workflow = inject_video(
-        workflow_template,
-        image_in=server_filename,
-        prompt=scene.visual_prompt or "",
-        seed=seed,
-        output_prefix=f"scene_{scene.index:03d}_raw",
-        width=width,
-        height=height,
-        frame_count=frame_count,
-        fps=fps,
-    )
-
-    # 3. Submit & download.
+    # 2. Try up to twice: initial attempt (retry=0) and one retry (retry=1).
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    await comfy.generate_image(workflow=workflow, output_path=output_path)
+    last_reasons: list[str] = []
 
-    # 4. Run quality gates in order: duration -> black_frames -> motion.
-    target_s = float(gates_cfg["duration_target_seconds"])
-    tol_s = float(gates_cfg["duration_tolerance_seconds"])
-    duration_result = check_duration_match(
-        output_path, target_seconds=target_s, tolerance_seconds=tol_s
-    )
-    black_result = check_black_frames(
-        output_path,
-        max_black_ratio=float(gates_cfg["black_frame_max_ratio"]),
-    )
-    motion_result = check_motion(
-        output_path,
-        min_flow_magnitude=float(gates_cfg["motion_min_flow"]),
-    )
+    for retry in (0, 1):
+        seed = _seed_for_scene(scene.index, retry=retry)
+        workflow = inject_video(
+            workflow_template,
+            image_in=server_filename,
+            prompt=scene.visual_prompt or "",
+            seed=seed,
+            output_prefix=f"scene_{scene.index:03d}_raw",
+            width=width,
+            height=height,
+            frame_count=frame_count,
+            fps=fps,
+        )
 
-    gates_passed = {
-        "duration": duration_result.passed,
-        "black_frames": black_result.passed,
-        "motion": motion_result.passed,
-    }
+        # 3. Submit & download.
+        await comfy.generate_image(workflow=workflow, output_path=output_path)
 
-    if not all(gates_passed.values()):
-        reasons: list[str] = []
+        # 4. Run quality gates in order: duration -> black_frames -> motion.
+        target_s = float(gates_cfg["duration_target_seconds"])
+        tol_s = float(gates_cfg["duration_tolerance_seconds"])
+        duration_result = check_duration_match(
+            output_path, target_seconds=target_s, tolerance_seconds=tol_s
+        )
+        black_result = check_black_frames(
+            output_path,
+            max_black_ratio=float(gates_cfg["black_frame_max_ratio"]),
+        )
+        motion_result = check_motion(
+            output_path,
+            min_flow_magnitude=float(gates_cfg["motion_min_flow"]),
+        )
+
+        gates_passed = {
+            "duration": duration_result.passed,
+            "black_frames": black_result.passed,
+            "motion": motion_result.passed,
+        }
+
+        if all(gates_passed.values()):
+            # All gates passed; return success.
+            return VideoReport(
+                scene_index=scene.index,
+                success=True,
+                mp4_path=output_path,
+                duration_seconds=float(duration_result.metric),
+                gates_passed=gates_passed,
+                retry_used=retry,
+            )
+
+        # Gate failure: collect reasons and clean up for next retry.
+        last_reasons = []
         for k, r in (
             ("duration", duration_result),
             ("black_frames", black_result),
             ("motion", motion_result),
         ):
             if not r.passed:
-                reasons.append(f"{k} gate failed: {r.reason}")
+                last_reasons.append(f"{k} gate failed: {r.reason}")
         # Best-effort cleanup of the failed MP4.
         try:
             output_path.unlink(missing_ok=True)
         except Exception:  # noqa: BLE001
             pass
-        raise VideoGenerationError(
-            scene_index=scene.index,
-            reason="; ".join(reasons),
-            retryable=True,
-        )
 
-    return VideoReport(
+    # Both attempts exhausted; raise with collected reasons from final attempt.
+    raise VideoGenerationError(
         scene_index=scene.index,
-        success=True,
-        mp4_path=output_path,
-        duration_seconds=float(duration_result.metric),
-        gates_passed=gates_passed,
-        retry_used=0,
+        reason="; ".join(last_reasons),
+        retryable=True,
     )
