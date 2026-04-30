@@ -226,10 +226,37 @@ for ext_name in "${!COMFY_EXTS[@]}"; do
     fi
 done
 
-# Wan 2.2 I2V weights -- not used by S6.1, deferred OK.
-dl "https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B/resolve/main/diffusion_pytorch_model.safetensors" \
-   "$MODELS_DIR/checkpoints/wan22_i2v.safetensors" || \
-    log "Wan 2.2 weights -- adjust URL if HuggingFace path changed (deferred to S8)"
+# Wan 2.2 I2V-A14B (MoE: 2 experts + VAE + UMT5 text encoder). S8 Phase A.
+log "Provisioning Wan 2.2 I2V-A14B weights..."
+WAN_BASE="https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B/resolve/main"
+mkdir -p "$MODELS_DIR/diffusion_models" "$MODELS_DIR/vae" "$MODELS_DIR/text_encoders"
+
+dl "$WAN_BASE/high_noise_model.safetensors" \
+   "$MODELS_DIR/diffusion_models/wan2_2_i2v_high_noise.safetensors" || \
+    log "WARN: Wan 2.2 high-noise expert -- adjust URL if HF path moved"
+dl "$WAN_BASE/low_noise_model.safetensors" \
+   "$MODELS_DIR/diffusion_models/wan2_2_i2v_low_noise.safetensors" || \
+    log "WARN: Wan 2.2 low-noise expert -- adjust URL if HF path moved"
+dl "$WAN_BASE/Wan2.1_VAE.pth" \
+   "$MODELS_DIR/vae/wan2_2_vae.pth" || \
+    log "WARN: Wan VAE -- adjust URL if HF path moved"
+dl "$WAN_BASE/models_t5_umt5-xxl-enc-bf16.pth" \
+   "$MODELS_DIR/text_encoders/umt5_xxl.pth" || \
+    log "WARN: UMT5 text encoder -- adjust URL if HF path moved"
+
+# ComfyUI-WanVideoWrapper extension (provides WanVideo* node classes).
+log "Cloning ComfyUI-WanVideoWrapper extension..."
+WANWRAPPER_DIR="$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper"
+if [ -d "$WANWRAPPER_DIR" ]; then
+    git -C "$WANWRAPPER_DIR" pull --ff-only || log "WARN: WanVideoWrapper pull failed"
+else
+    git clone https://github.com/kijai/ComfyUI-WanVideoWrapper "$WANWRAPPER_DIR" || \
+        log "WARN: WanVideoWrapper clone failed"
+fi
+if [ -f "$WANWRAPPER_DIR/requirements.txt" ]; then
+    pip install -r "$WANWRAPPER_DIR/requirements.txt" || \
+        log "WARN: WanVideoWrapper requirements install failed"
+fi
 
 # RealESRGAN upscaler (ncnn-vulkan binary build for speed)
 if [ ! -d "$MODELS_DIR/realesrgan-ncnn-vulkan" ]; then
