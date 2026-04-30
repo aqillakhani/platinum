@@ -17,6 +17,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, ClassVar
+
+from platinum.pipeline.stage import Stage
 
 logger = logging.getLogger(__name__)
 
@@ -282,3 +285,102 @@ async def generate_video(
             scene.index, report.retry_used, report.duration_seconds,
         )
     return reports
+
+
+class VideoGeneratorStage(Stage):
+    """Per-story video generation stage. See module docstring."""
+
+    name: ClassVar[str] = "video_generator"
+
+    async def run(self, story: Any, ctx: Any) -> dict[str, Any]:
+        from platinum.utils.comfyui import HttpComfyClient
+        from platinum.utils.workflow import load_workflow
+
+        test_overrides = ctx.config.settings.get("test", {})
+        injected_comfy = test_overrides.get("comfy_client")
+        injected_template = test_overrides.get("workflow_template")
+        comfy = injected_comfy or HttpComfyClient(
+            host=ctx.config.settings.get("comfyui", {}).get(
+                "host", "http://localhost:8188"
+            ),
+        )
+
+        if injected_template is not None:
+            workflow_template = injected_template
+        else:
+            workflow_template = load_workflow(
+                "wan22_i2v", config_dir=ctx.config.config_dir
+            )
+
+        track_cfg = ctx.config.track(story.track)
+        quality_gates = dict(track_cfg.get("quality_gates", {}))
+        video_gates = dict(quality_gates.get("video_gates", {}))
+        video_model_cfg = dict(track_cfg.get("video_model", {}))
+        width = int(video_model_cfg.get("width", 1280))
+        height = int(video_model_cfg.get("height", 720))
+        frame_count = int(video_model_cfg.get("frame_count", 80))
+        fps = int(video_model_cfg.get("fps", 16))
+
+        # Resolve story dir (matches keyframe_generator pattern).
+        if hasattr(ctx, "story_path"):
+            try:
+                story_dir = Path(ctx.story_path(story)).parent
+            except Exception:  # noqa: BLE001
+                story_dir = Path("data/stories") / story.id
+        else:
+            story_dir = Path("data/stories") / story.id
+        output_root = story_dir / "clips"
+
+        runtime = ctx.config.settings.get("runtime", {})
+        scene_filter_raw = runtime.get("scene_filter")
+        scene_filter: set[int] | None = (
+            set(scene_filter_raw) if scene_filter_raw is not None else None
+        )
+
+        scenes_total = len(story.scenes)
+        try:
+            reports = await generate_video(
+                story,
+                workflow_template=workflow_template,
+                comfy=comfy,
+                output_root=output_root,
+                gates_cfg=video_gates,
+                scene_filter=scene_filter,
+                width=width, height=height,
+                frame_count=frame_count, fps=fps,
+            )
+        except VideoGenerationError:
+            try:
+                if hasattr(ctx, "story_path"):
+                    story.save(ctx.story_path(story))
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "failed to save story.json after VideoGenerationError"
+                )
+            raise
+
+        try:
+            if hasattr(ctx, "story_path"):
+                story.save(ctx.story_path(story))
+        except Exception:  # noqa: BLE001
+            logger.exception("failed to save story.json after stage completion")
+
+        scenes_succeeded = sum(
+            1 for s in story.scenes
+            if s.video_path is not None and Path(s.video_path).exists()
+        )
+        return {
+            "scenes_total": scenes_total,
+            "scenes_succeeded": scenes_succeeded,
+            "scenes_failed": scenes_total - scenes_succeeded,
+            "retries_used": sum(r.retry_used for r in reports),
+            "reports": [
+                {
+                    "scene_index": r.scene_index,
+                    "success": r.success,
+                    "duration_seconds": r.duration_seconds,
+                    "retry_used": r.retry_used,
+                }
+                for r in reports
+            ],
+        }
