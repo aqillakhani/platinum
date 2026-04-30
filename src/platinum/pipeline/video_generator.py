@@ -125,7 +125,16 @@ async def generate_video_for_scene(
         )
 
         # 3. Submit & download.
-        await comfy.generate_image(workflow=workflow, output_path=output_path)
+        try:
+            await comfy.generate_image(workflow=workflow, output_path=output_path)
+        except VideoGenerationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- infra failures bubble out
+            raise VideoGenerationError(
+                scene_index=scene.index,
+                reason=f"comfy generate_image failed: {exc!r}",
+                retryable=False,
+            ) from exc
 
         # 4. Run quality gates in order: duration -> black_frames -> motion.
         target_s = float(gates_cfg["duration_target_seconds"])

@@ -490,6 +490,137 @@ class TestGenerateVideoForSceneRetry:
         assert len(comfy.calls) == 2  # initial + 1 retry
 
 
+class TestGenerateVideoForSceneHalt:
+    @pytest.mark.asyncio
+    async def test_halt_on_second_content_fail(self, tmp_path: Path) -> None:
+        """Both initial and retry produce black MP4. Should raise after 2 attempts."""
+        from platinum.pipeline.video_generator import (
+            VideoGenerationError,
+            generate_video_for_scene,
+        )
+        from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+        from platinum.utils.workflow import inject_video
+        from tests._fixtures import make_test_video
+
+        black_mp4 = tmp_path / "black.mp4"
+        make_test_video(black_mp4, n_frames=80, fps=16, color=(0, 0, 0), size=(64, 64))
+
+        workflow_template = _wan_template_for_tests()
+        # Both seeds map to the same black fixture.
+        wf_seed_0 = inject_video(
+            workflow_template,
+            image_in="scene_001.png",
+            prompt="x",
+            seed=1000,
+            output_prefix="scene_001_raw",
+            width=1280,
+            height=720,
+            frame_count=80,
+            fps=16,
+        )
+        wf_seed_1 = inject_video(
+            workflow_template,
+            image_in="scene_001.png",
+            prompt="x",
+            seed=1001,
+            output_prefix="scene_001_raw",
+            width=1280,
+            height=720,
+            frame_count=80,
+            fps=16,
+        )
+        comfy = FakeComfyClient(
+            responses={
+                workflow_signature(wf_seed_0): [black_mp4],
+                workflow_signature(wf_seed_1): [black_mp4],
+            }
+        )
+
+        keyframe = tmp_path / "scene_001.png"
+        keyframe.write_bytes(b"fake_png")
+        from types import SimpleNamespace
+
+        scene = SimpleNamespace(
+            index=1,
+            visual_prompt="x",
+            keyframe_path=keyframe,
+            video_path=None,
+        )
+
+        with pytest.raises(VideoGenerationError) as excinfo:
+            await generate_video_for_scene(
+                scene,
+                workflow_template=workflow_template,
+                comfy=comfy,
+                output_path=tmp_path / "clips" / "scene_001_raw.mp4",
+                gates_cfg={
+                    "duration_target_seconds": 5.0,
+                    "duration_tolerance_seconds": 0.2,
+                    "black_frame_max_ratio": 0.05,
+                    "motion_min_flow": 0.0,
+                },
+                width=1280,
+                height=720,
+                frame_count=80,
+                fps=16,
+            )
+        assert excinfo.value.retryable is True
+        assert len(comfy.calls) == 2
+        # Failed MP4 cleaned up.
+        assert not (tmp_path / "clips" / "scene_001_raw.mp4").exists()
+
+    @pytest.mark.asyncio
+    async def test_infra_failure_not_retried(self, tmp_path: Path) -> None:
+        """generate_image raises -> propagate as retryable=False, no retry."""
+        from platinum.pipeline.video_generator import (
+            VideoGenerationError,
+            generate_video_for_scene,
+        )
+
+        keyframe = tmp_path / "scene_001.png"
+        keyframe.write_bytes(b"fake_png")
+        from types import SimpleNamespace
+
+        scene = SimpleNamespace(
+            index=1, visual_prompt="x", keyframe_path=keyframe, video_path=None
+        )
+
+        # Hand-rolled fake that raises on generate_image.
+        class _BrokenComfy:
+            calls: list = []
+
+            async def upload_image(self, path):
+                return path.name
+
+            async def generate_image(self, *, workflow, output_path):
+                self.calls.append(workflow)
+                raise RuntimeError("ComfyUI returned 500")
+
+        comfy = _BrokenComfy()
+
+        with pytest.raises(VideoGenerationError) as excinfo:
+            await generate_video_for_scene(
+                scene,
+                workflow_template=_wan_template_for_tests(),
+                comfy=comfy,
+                output_path=tmp_path / "clips" / "scene_001_raw.mp4",
+                gates_cfg={
+                    "duration_target_seconds": 5.0,
+                    "duration_tolerance_seconds": 0.2,
+                    "black_frame_max_ratio": 0.05,
+                    "motion_min_flow": 0.0,
+                },
+                width=1280,
+                height=720,
+                frame_count=80,
+                fps=16,
+            )
+        assert excinfo.value.retryable is False
+        assert "ComfyUI returned 500" in excinfo.value.reason
+        # Only one attempt, no retry.
+        assert len(comfy.calls) == 1
+
+
 def _wan_template_for_tests() -> dict:
     """Shared minimal Wan workflow template for the test module."""
     return {
