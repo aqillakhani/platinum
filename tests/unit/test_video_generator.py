@@ -621,6 +621,184 @@ class TestGenerateVideoForSceneHalt:
         assert len(comfy.calls) == 1
 
 
+class TestGenerateVideo:
+    @pytest.mark.asyncio
+    async def test_iterates_all_scenes_setting_video_path(
+        self, tmp_path: Path
+    ) -> None:
+        from platinum.pipeline.video_generator import generate_video
+        from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+        from platinum.utils.workflow import inject_video
+        from tests._fixtures import make_test_video_with_motion
+
+        # 3 scenes -> 3 distinct workflow signatures (different seeds).
+        motion_mp4 = tmp_path / "motion.mp4"
+        make_test_video_with_motion(motion_mp4, n_frames=80, fps=16, size=(64, 64))
+
+        workflow_template = _wan_template_for_tests()
+        responses: dict[str, list[Path]] = {}
+        for scene_index in (0, 1, 2):
+            wf = inject_video(
+                workflow_template, image_in=f"scene_{scene_index:03d}.png",
+                prompt=f"prompt {scene_index}",
+                seed=scene_index * 1000,
+                output_prefix=f"scene_{scene_index:03d}_raw",
+                width=1280, height=720, frame_count=80, fps=16,
+            )
+            responses[workflow_signature(wf)] = [motion_mp4]
+        comfy = FakeComfyClient(responses=responses)
+
+        # Build 3 fake scenes.
+        from types import SimpleNamespace
+        scenes = []
+        for i in (0, 1, 2):
+            kf = tmp_path / f"scene_{i:03d}.png"
+            kf.write_bytes(b"fake_png")
+            scenes.append(SimpleNamespace(
+                index=i, visual_prompt=f"prompt {i}",
+                keyframe_path=kf, video_path=None,
+                video_duration_seconds=0.0,
+            ))
+        story = SimpleNamespace(scenes=scenes)
+
+        reports = await generate_video(
+            story,
+            workflow_template=workflow_template,
+            comfy=comfy,
+            output_root=tmp_path / "clips",
+            gates_cfg={
+                "duration_target_seconds": 5.0,
+                "duration_tolerance_seconds": 0.2,
+                "black_frame_max_ratio": 0.05,
+                "motion_min_flow": 0.0,
+            },
+            width=1280, height=720, frame_count=80, fps=16,
+        )
+
+        assert len(reports) == 3
+        for scene in scenes:
+            assert scene.video_path is not None
+            assert Path(scene.video_path).exists()
+            assert scene.video_duration_seconds > 0.0
+
+    @pytest.mark.asyncio
+    async def test_skips_scenes_with_existing_video_path(self, tmp_path: Path) -> None:
+        """Resume semantics: scene with video_path set + file exists is skipped."""
+        from platinum.pipeline.video_generator import generate_video
+        from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+        from platinum.utils.workflow import inject_video
+        from tests._fixtures import make_test_video_with_motion
+
+        motion_mp4 = tmp_path / "motion.mp4"
+        make_test_video_with_motion(motion_mp4, n_frames=80, fps=16, size=(64, 64))
+
+        workflow_template = _wan_template_for_tests()
+        wf = inject_video(
+            workflow_template, image_in="scene_001.png",
+            prompt="prompt 1", seed=1000, output_prefix="scene_001_raw",
+            width=1280, height=720, frame_count=80, fps=16,
+        )
+        comfy = FakeComfyClient(responses={workflow_signature(wf): [motion_mp4]})
+
+        # Scene 0 already has a video file -> should be skipped.
+        existing_video = tmp_path / "clips" / "scene_000_raw.mp4"
+        existing_video.parent.mkdir(parents=True, exist_ok=True)
+        existing_video.write_bytes(b"existing")
+
+        from types import SimpleNamespace
+        kf0 = tmp_path / "scene_000.png"
+        kf0.write_bytes(b"fake_png")
+        kf1 = tmp_path / "scene_001.png"
+        kf1.write_bytes(b"fake_png")
+        scenes = [
+            SimpleNamespace(
+                index=0, visual_prompt="prompt 0",
+                keyframe_path=kf0, video_path=existing_video,
+                video_duration_seconds=5.0,
+            ),
+            SimpleNamespace(
+                index=1, visual_prompt="prompt 1",
+                keyframe_path=kf1, video_path=None,
+                video_duration_seconds=0.0,
+            ),
+        ]
+        story = SimpleNamespace(scenes=scenes)
+
+        reports = await generate_video(
+            story,
+            workflow_template=workflow_template, comfy=comfy,
+            output_root=tmp_path / "clips",
+            gates_cfg={
+                "duration_target_seconds": 5.0,
+                "duration_tolerance_seconds": 0.2,
+                "black_frame_max_ratio": 0.05,
+                "motion_min_flow": 0.0,
+            },
+            width=1280, height=720, frame_count=80, fps=16,
+        )
+
+        # Only one scene was processed (scene 1).
+        assert len(reports) == 1
+        assert reports[0].scene_index == 1
+        assert len(comfy.calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_scene_filter_only_processes_listed_scenes(
+        self, tmp_path: Path
+    ) -> None:
+        from platinum.pipeline.video_generator import generate_video
+        from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+        from platinum.utils.workflow import inject_video
+        from tests._fixtures import make_test_video_with_motion
+
+        motion_mp4 = tmp_path / "motion.mp4"
+        make_test_video_with_motion(motion_mp4, n_frames=80, fps=16, size=(64, 64))
+
+        workflow_template = _wan_template_for_tests()
+        responses: dict[str, list[Path]] = {}
+        for scene_index in (0, 1, 2):
+            wf = inject_video(
+                workflow_template, image_in=f"scene_{scene_index:03d}.png",
+                prompt=f"prompt {scene_index}", seed=scene_index * 1000,
+                output_prefix=f"scene_{scene_index:03d}_raw",
+                width=1280, height=720, frame_count=80, fps=16,
+            )
+            responses[workflow_signature(wf)] = [motion_mp4]
+        comfy = FakeComfyClient(responses=responses)
+
+        from types import SimpleNamespace
+        scenes = []
+        for i in (0, 1, 2):
+            kf = tmp_path / f"scene_{i:03d}.png"
+            kf.write_bytes(b"fake_png")
+            scenes.append(SimpleNamespace(
+                index=i, visual_prompt=f"prompt {i}",
+                keyframe_path=kf, video_path=None,
+                video_duration_seconds=0.0,
+            ))
+        story = SimpleNamespace(scenes=scenes)
+
+        reports = await generate_video(
+            story,
+            workflow_template=workflow_template, comfy=comfy,
+            output_root=tmp_path / "clips",
+            gates_cfg={
+                "duration_target_seconds": 5.0,
+                "duration_tolerance_seconds": 0.2,
+                "black_frame_max_ratio": 0.05,
+                "motion_min_flow": 0.0,
+            },
+            scene_filter={1},  # only process scene index 1
+            width=1280, height=720, frame_count=80, fps=16,
+        )
+
+        assert len(reports) == 1
+        assert reports[0].scene_index == 1
+        assert scenes[0].video_path is None  # untouched
+        assert scenes[2].video_path is None  # untouched
+        assert scenes[1].video_path is not None
+
+
 def _wan_template_for_tests() -> dict:
     """Shared minimal Wan workflow template for the test module."""
     return {

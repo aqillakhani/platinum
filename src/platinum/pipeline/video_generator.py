@@ -189,3 +189,54 @@ async def generate_video_for_scene(
         reason="; ".join(last_reasons),
         retryable=True,
     )
+
+
+async def generate_video(
+    story,                       # platinum.models.story.Story
+    *,
+    workflow_template: dict,
+    comfy,
+    output_root: Path,
+    gates_cfg: dict,
+    scene_filter: set[int] | None = None,
+    width: int = 1280,
+    height: int = 720,
+    frame_count: int = 80,
+    fps: int = 16,
+) -> list[VideoReport]:
+    """Run video generation for every scene that needs one.
+
+    Mutates each scene in-place: video_path, video_duration_seconds.
+
+    Resume semantics: a scene whose video_path is already set AND points
+    at an existing file is skipped. scene_filter (set of scene indexes)
+    further restricts the set processed.
+    """
+    reports: list[VideoReport] = []
+    for scene in story.scenes:
+        if scene.video_path is not None and Path(scene.video_path).exists():
+            logger.info(
+                "scene %d already has video_path=%s; skipping (resume)",
+                scene.index, scene.video_path,
+            )
+            continue
+        if scene_filter is not None and scene.index not in scene_filter:
+            logger.info("scene %d not in scene_filter; skipping", scene.index)
+            continue
+        output_path = output_root / f"scene_{scene.index:03d}_raw.mp4"
+        report = await generate_video_for_scene(
+            scene,
+            workflow_template=workflow_template,
+            comfy=comfy,
+            output_path=output_path,
+            gates_cfg=gates_cfg,
+            width=width, height=height, frame_count=frame_count, fps=fps,
+        )
+        scene.video_path = report.mp4_path
+        scene.video_duration_seconds = report.duration_seconds
+        reports.append(report)
+        logger.info(
+            "scene %d video generated (retry=%d, duration=%.2fs)",
+            scene.index, report.retry_used, report.duration_seconds,
+        )
+    return reports
