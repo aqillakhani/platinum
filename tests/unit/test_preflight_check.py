@@ -180,3 +180,54 @@ def test_workflow_signature_stable(tmp_path):
     sig2 = _workflow_signature(p2)
     assert sig1 == sig2
     assert len(sig1) == 12                            # short hash
+
+
+class TestWanPreflightChecks:
+    def test_check_wan_workflow_valid(self, tmp_path) -> None:
+        """Wan workflow JSON has all required _meta.role entries."""
+        from preflight_check import _check_wan_workflow_json
+
+        good = tmp_path / "wan_good.json"
+        good.write_text('{"_meta":{"role":{"image_in":"10","prompt":"20","seed":"30","video_out":"60"}},"10":{},"20":{},"30":{},"60":{}}')
+        ok, msg = _check_wan_workflow_json(good)
+        assert ok, msg
+
+        bad = tmp_path / "wan_bad.json"
+        bad.write_text('{"_meta":{"role":{"image_in":"10"}},"10":{}}')
+        ok, msg = _check_wan_workflow_json(bad)
+        assert not ok
+        assert "missing roles" in msg
+
+    def test_check_wan_weights_present(self, tmp_path) -> None:
+        import os
+
+        from preflight_check import _check_wan_weights
+
+        # Empty dir -> fail.
+        ok, msg = _check_wan_weights(tmp_path)
+        assert not ok
+        assert "high_noise" in msg or "low_noise" in msg or "missing" in msg.lower()
+
+        # All 4 files present with reasonable size. Use os.truncate for efficient
+        # sparse file creation instead of writing actual bytes (avoids slow I/O).
+        (tmp_path / "diffusion_models").mkdir()
+        high_noise_path = tmp_path / "diffusion_models" / "wan2_2_i2v_high_noise.safetensors"
+        high_noise_path.touch()
+        os.truncate(high_noise_path, 1_500_000_000)  # 1.5GB
+
+        low_noise_path = tmp_path / "diffusion_models" / "wan2_2_i2v_low_noise.safetensors"
+        low_noise_path.touch()
+        os.truncate(low_noise_path, 1_500_000_000)  # 1.5GB
+
+        (tmp_path / "vae").mkdir()
+        vae_path = tmp_path / "vae" / "wan2_2_vae.pth"
+        vae_path.touch()
+        os.truncate(vae_path, 200_000_000)  # 200MB
+
+        (tmp_path / "text_encoders").mkdir()
+        umt5_path = tmp_path / "text_encoders" / "umt5_xxl.pth"
+        umt5_path.touch()
+        os.truncate(umt5_path, 2_000_000_000)  # 2GB
+
+        ok, msg = _check_wan_weights(tmp_path)
+        assert ok, msg

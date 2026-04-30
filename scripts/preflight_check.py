@@ -94,6 +94,65 @@ def _workflow_signature(path: Path) -> str:
     return hashlib.sha256(canonical).hexdigest()[:12]
 
 
+WAN_REQUIRED_ROLES = frozenset({"image_in", "prompt", "seed", "video_out"})
+
+WAN_WEIGHT_FILES = (
+    ("diffusion_models", "wan2_2_i2v_high_noise.safetensors", 1_000_000_000),
+    ("diffusion_models", "wan2_2_i2v_low_noise.safetensors", 1_000_000_000),
+    ("vae", "wan2_2_vae.pth", 100_000_000),
+    ("text_encoders", "umt5_xxl.pth", 1_000_000_000),
+)
+
+
+def _check_wan_workflow_json(path: Path) -> tuple[bool, str]:
+    """Load Wan workflow JSON; verify _meta.role tags reference valid nodes."""
+    try:
+        data = json.loads(Path(path).read_text())
+    except Exception as exc:  # noqa: BLE001
+        return False, f"wan workflow JSON load failed: {exc!r}"
+    roles = data.get("_meta", {}).get("role", {})
+    missing = WAN_REQUIRED_ROLES - set(roles)
+    if missing:
+        return False, f"wan workflow missing roles: {sorted(missing)}"
+    for role, node_id in roles.items():
+        if role in WAN_REQUIRED_ROLES and node_id not in data:
+            return False, f"wan role '{role}' -> node '{node_id}' not in workflow"
+    return True, f"wan workflow OK (roles: {sorted(WAN_REQUIRED_ROLES)})"
+
+
+def _check_wan_weights(models_dir: Path) -> tuple[bool, str]:
+    """Verify Wan 2.2 weight files exist and are at least minimal size."""
+    missing: list[str] = []
+    too_small: list[str] = []
+    for subdir, filename, min_size in WAN_WEIGHT_FILES:
+        p = Path(models_dir) / subdir / filename
+        if not p.exists():
+            missing.append(str(p))
+            continue
+        if p.stat().st_size < min_size:
+            too_small.append(f"{p} ({p.stat().st_size}B < {min_size}B)")
+    if missing:
+        return False, f"wan weights missing: {missing}"
+    if too_small:
+        return False, f"wan weights too small (download incomplete?): {too_small}"
+    return True, "wan weights OK (4 files present, sizes plausible)"
+
+
+def _check_wan_extension_importable() -> tuple[bool, str]:
+    """Confirm the ComfyUI-WanVideoWrapper extension is on disk.
+
+    On the box this is just a path check -- we don't actually run its
+    node registration here.
+    """
+    extension_path = Path("/workspace/ComfyUI/custom_nodes/ComfyUI-WanVideoWrapper")
+    if not extension_path.exists():
+        return False, f"WanVideoWrapper not at {extension_path}"
+    init_py = extension_path / "__init__.py"
+    if not init_py.exists():
+        return False, f"WanVideoWrapper __init__.py missing at {init_py}"
+    return True, f"WanVideoWrapper present at {extension_path}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
