@@ -106,7 +106,10 @@ WAN_REQUIRED_ROLES = frozenset({"image_in", "prompt", "seed", "video_out"})
 WAN_WEIGHT_FILES = (
     ("diffusion_models", "Wan2_2-I2V-A14B-HIGH_bf16.safetensors", 100_000_000),
     ("diffusion_models", "Wan2_2-I2V-A14B-LOW_bf16.safetensors", 100_000_000),
-    ("vae", "Wan2_2_VAE_bf16.safetensors", 100_000_000),
+    # Wan 2.1 VAE: the Wan 2.2 14B I2V experts inherit the 2.1 VAE encoder.
+    # All four 2.2 14B reference workflows in the WanVideoWrapper example
+    # tarball load this file, not Wan2_2_VAE (which is for the 2.2 5B family).
+    ("vae", "Wan2_1_VAE_bf16.safetensors", 100_000_000),
     ("text_encoders", "umt5_xxl.pth", 100_000_000),
 )
 

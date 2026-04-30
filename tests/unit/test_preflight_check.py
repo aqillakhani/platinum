@@ -223,7 +223,7 @@ class TestWanPreflightChecks:
         os.truncate(low_path, 110_000_000)
 
         (tmp_path / "vae").mkdir()
-        vae_path = tmp_path / "vae" / "Wan2_2_VAE_bf16.safetensors"
+        vae_path = tmp_path / "vae" / "Wan2_1_VAE_bf16.safetensors"
         vae_path.touch()
         os.truncate(vae_path, 110_000_000)
 
@@ -268,7 +268,7 @@ def test_main_wan_mode_routes_to_wan_checks(tmp_path, monkeypatch, capsys):
     p2.touch()
     os.truncate(p2, 110_000_000)
     (tmp_path / "vae").mkdir()
-    p3 = tmp_path / "vae" / "Wan2_2_VAE_bf16.safetensors"
+    p3 = tmp_path / "vae" / "Wan2_1_VAE_bf16.safetensors"
     p3.touch()
     os.truncate(p3, 110_000_000)
     (tmp_path / "text_encoders").mkdir()
