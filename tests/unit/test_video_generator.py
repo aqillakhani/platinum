@@ -90,3 +90,89 @@ class TestSeedForScene:
 
         assert _seed_for_scene(7, retry=0) == 7000
         assert _seed_for_scene(7, retry=1) == 7001
+
+
+class TestGenerateVideoForSceneHappyPath:
+    @pytest.mark.asyncio
+    async def test_happy_path_writes_mp4_and_returns_report(
+        self, tmp_path: Path
+    ) -> None:
+        from platinum.pipeline.video_generator import (
+            VideoReport,
+            generate_video_for_scene,
+        )
+        from platinum.utils.comfyui import FakeComfyClient, workflow_signature
+        from platinum.utils.workflow import inject_video
+        from tests._fixtures import make_test_video_with_motion
+
+        # Pre-bake a 5s synthetic MP4 with motion as the Fake's response.
+        fixture_mp4 = tmp_path / "wan_output.mp4"
+        make_test_video_with_motion(fixture_mp4, n_frames=80, fps=16, size=(64, 64))
+
+        # Workflow template with all required + optional video roles.
+        workflow_template = {
+            "_meta": {"role": {
+                "image_in": "100", "prompt": "101", "seed": "102",
+                "video_out": "103", "width": "104", "height": "104",
+                "frame_count": "105", "fps": "106",
+            }},
+            "100": {"class_type": "LoadImage", "inputs": {"image": ""}},
+            "101": {"class_type": "WanT5TextEncode", "inputs": {"text": ""}},
+            "102": {"class_type": "WanSampler",
+                    "inputs": {"seed": 0, "width": 0, "height": 0}},
+            "103": {"class_type": "VHS_VideoCombine",
+                    "inputs": {"filename_prefix": "", "frame_rate": 0}},
+            "104": {"class_type": "WanSampler",
+                    "inputs": {"width": 0, "height": 0}},
+            "105": {"class_type": "WanLatentVideo", "inputs": {"length": 0}},
+            "106": {"class_type": "VHS_VideoCombine", "inputs": {"frame_rate": 0}},
+        }
+
+        # Pre-compute the signature the Fake will see for retry=0.
+        keyframe = tmp_path / "scene_001.png"
+        keyframe.write_bytes(b"fake_png")  # FakeComfyClient.upload_image
+                                           # only reads the path .name.
+        wf_for_signature = inject_video(
+            workflow_template,
+            image_in="scene_001.png",  # what FakeComfyClient.upload_image returns
+            prompt="a dimly lit crypt",
+            seed=1000,
+            output_prefix="scene_001_raw",
+            width=1280, height=720, frame_count=80, fps=16,
+        )
+        sig = workflow_signature(wf_for_signature)
+        comfy = FakeComfyClient(responses={sig: [fixture_mp4]})
+
+        # Mock Scene with the minimum surface video_generator needs.
+        from types import SimpleNamespace
+        scene = SimpleNamespace(
+            index=1,
+            visual_prompt="a dimly lit crypt",
+            keyframe_path=keyframe,
+            video_path=None,
+        )
+
+        report = await generate_video_for_scene(
+            scene,
+            workflow_template=workflow_template,
+            comfy=comfy,
+            output_path=tmp_path / "clips" / "scene_001_raw.mp4",
+            gates_cfg={
+                "duration_target_seconds": 5.0,
+                "duration_tolerance_seconds": 0.2,
+                "black_frame_max_ratio": 0.05,
+                "motion_min_flow": 0.0,   # gates not yet implemented
+            },
+            width=1280,
+            height=720,
+            frame_count=80,
+            fps=16,
+        )
+
+        assert isinstance(report, VideoReport)
+        assert report.scene_index == 1
+        assert report.success is True
+        assert report.retry_used == 0
+        assert report.mp4_path is not None
+        assert report.mp4_path.exists()
+        assert (tmp_path / "clips" / "scene_001_raw.mp4").exists()
