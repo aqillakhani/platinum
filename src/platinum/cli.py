@@ -561,6 +561,105 @@ def keyframes(
 
 
 @app.command()
+def video(
+    story: str = typer.Argument(..., help="Story id (must have keyframes COMPLETE)."),
+    scenes: str | None = typer.Option(
+        None, "--scenes",
+        help="Comma-sep scene indices to run (smoke subset). Default: all with keyframe_path.",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Print the planned scene set; do not call comfy.",
+    ),
+    rerun_all: bool = typer.Option(
+        False, "--rerun-all",
+        help="Force regeneration of all targeted scenes (ignore existing video_path).",
+    ),
+) -> None:
+    """Generate Wan 2.2 I2V clips for each scene's keyframe.
+
+    Requires keyframe_path set for every scene (via keyframes stage).
+    Reads PLATINUM_COMFYUI_HOST from .env (or settings.yaml fallback).
+    Use --scenes for smoke runs. Use --rerun-all to force re-generation.
+    """
+    import json
+    import logging
+
+    from platinum.models.story import Story
+    from platinum.pipeline.context import PipelineContext
+    from platinum.pipeline.video_generator import VideoGeneratorStage
+
+    cfg = Config()
+    story_path = cfg.stories_dir / story / "story.json"
+    if not story_path.exists():
+        console.print(
+            f"[red]Story not found:[/red] {story} (looked in {story_path})"
+        )
+        raise typer.Exit(code=1)
+
+    s = Story.load(story_path)
+
+    # Parse --scenes "1,3,5" -> {1, 3, 5}. Values are matched against
+    # scene.index (which is 1-indexed).
+    scene_filter: set[int] | None = None
+
+    if scenes is not None:
+        try:
+            scene_filter = {int(x.strip()) for x in scenes.split(",") if x.strip()}
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"--scenes must be comma-separated integers (got: {scenes!r})",
+                param_hint="--scenes",
+            ) from exc
+        valid_indices = {scene.index for scene in s.scenes}
+        unknown = scene_filter - valid_indices
+        if unknown:
+            available = sorted(valid_indices)
+            raise typer.BadParameter(
+                f"--scenes references unknown scene index(es) "
+                f"{sorted(unknown)}; available: {available}",
+                param_hint="--scenes",
+            )
+
+    if dry_run:
+        planned = sorted(scene_filter) if scene_filter else sorted(
+            sc.index for sc in s.scenes if sc.keyframe_path is not None
+        )
+        console.print(
+            f"[cyan]Would generate video for scenes {planned} of story {story}[/cyan]"
+        )
+        raise typer.Exit(code=0)
+
+    if rerun_all and scene_filter is not None:
+        # If user specifies both --rerun-all and --scenes, wipe video_path
+        # only for the targeted scenes.
+        for sc in s.scenes:
+            if sc.index in scene_filter:
+                sc.video_path = None
+    elif rerun_all:
+        # Wipe all video_path entries.
+        for sc in s.scenes:
+            sc.video_path = None
+
+    cfg.settings.setdefault("runtime", {})["scene_filter"] = scene_filter
+    ctx = PipelineContext(config=cfg, logger=logging.getLogger("platinum.video"))
+
+    stage = VideoGeneratorStage()
+    try:
+        result = asyncio.run(stage.run(s, ctx))
+    except Exception as exc:
+        console.print(f"[red]video generation failed for {story}: {exc}[/red]")
+        raise
+
+    # Save the mutated story back to disk.
+    s.save(story_path)
+
+    # Print JSON summary.
+    console.print(json.dumps(result, indent=2, default=str))
+    console.print(f"[green]Video generation complete for {story}.[/green]")
+
+
+@app.command()
 def render(
     story: str = typer.Argument(..., help="Story id to render."),
 ) -> None:
