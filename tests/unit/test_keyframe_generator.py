@@ -2148,6 +2148,14 @@ def _build_responses_for_ref_test(
     return responses
 
 
+@pytest.mark.skip(
+    reason=(
+        "S7.1 IPAdapter Flux deferred to S7.2: workflow nodes 12/13/14 "
+        "ripped out (cubiq plugin lacks IPAdapterFaceIDApply; Redux loader "
+        "can't supply FaceID model). face_ref_path is a silent no-op via "
+        "inject()'s _apply_ref short-circuit."
+    )
+)
 async def test_generate_for_scene_passes_face_ref_path_to_inject(
     tmp_path: Path,
 ) -> None:
@@ -2188,6 +2196,7 @@ async def test_generate_for_scene_passes_face_ref_path_to_inject(
         assert call["workflow"]["13"]["inputs"]["image"] == face_ref
 
 
+@pytest.mark.skip(reason="S7.1 ControlNet Flux deferred -- depth_ref_path is no-op.")
 async def test_generate_for_scene_passes_depth_ref_path_to_inject(
     tmp_path: Path,
 ) -> None:
@@ -2228,6 +2237,7 @@ async def test_generate_for_scene_passes_depth_ref_path_to_inject(
         assert call["workflow"]["16"]["inputs"]["image"] == depth_ref
 
 
+@pytest.mark.skip(reason="S7.1 ControlNet Flux deferred -- pose_ref_path is no-op.")
 async def test_generate_for_scene_passes_pose_ref_path_to_inject(
     tmp_path: Path,
 ) -> None:
@@ -2268,6 +2278,9 @@ async def test_generate_for_scene_passes_pose_ref_path_to_inject(
         assert call["workflow"]["19"]["inputs"]["image"] == pose_ref
 
 
+@pytest.mark.skip(
+    reason="S7.1 IPAdapter Flux deferred -- face_ref_path is a no-op."
+)
 async def test_generate_resolves_face_ref_from_story_characters(
     tmp_path: Path,
 ) -> None:
@@ -2321,6 +2334,7 @@ async def test_generate_resolves_face_ref_from_story_characters(
         assert call["workflow"]["13"]["inputs"]["image"] == alice_ref
 
 
+@pytest.mark.skip(reason="S7.1 ControlNet Flux deferred -- pose+depth paths are no-op.")
 async def test_generate_passes_scene_pose_and_depth_paths_through(
     tmp_path: Path,
 ) -> None:

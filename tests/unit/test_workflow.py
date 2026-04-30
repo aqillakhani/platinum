@@ -245,15 +245,22 @@ def test_rebuilt_flux_workflow_has_required_roles_and_cfg_1() -> None:
     # KSampler.cfg = 1.0 (was 3.5 in S6.2)
     sampler_id = roles["sampler"]
     assert wf[sampler_id]["inputs"]["cfg"] == 1.0
-    # KSampler.model now points at IPAdapterFaceIDApply output (was ["10", 0]
-    # pre-S7.1.B1.1; B1.1 inserted IPAdapterFaceIDApply between ModelSamplingFlux
-    # and KSampler so face refs can condition the model chain).
-    assert wf[sampler_id]["inputs"]["model"] == ["14", 0]
-    # KSampler.positive now sources from ControlNetApplyAdvanced_pose (S7.1.B1.3),
-    # which itself receives positive from ControlNetApplyAdvanced_depth (S7.1.B1.2).
-    # The two ControlNet apply nodes chain between FluxGuidance and KSampler so
-    # depth + pose maps can both condition the positive branch.
-    assert wf[sampler_id]["inputs"]["positive"] == ["20", 0]
+    # KSampler.model points at ModelSamplingFlux directly. The S7.1.B1.1
+    # plan inserted IPAdapterFaceIDApply (node 14) between ModelSamplingFlux
+    # and KSampler so face refs could condition the model chain, but the
+    # IPAdapterFaceIDApply class doesn't exist in the modern cubiq plugin
+    # and the Redux loader couldn't supply a true FaceID model anyway --
+    # so the verify run reverts to the pre-B1.1 routing until Flux IP-Adapter
+    # ships properly (deferred to S7.2). See workflow JSON for the rip-out.
+    assert wf[sampler_id]["inputs"]["model"] == ["10", 0]
+    # KSampler.positive sources from FluxGuidance directly. The S7.1 verify
+    # run discovered Flux ControlNets need a VAE input the workflow didn't
+    # wire AND the prerender pass produces near-black maps for dark scenes
+    # (Cask) -- DWPose + DepthAnythingV2 fail to extract usable conditioning
+    # signal, and ControlNet at strength=1 then forces hatched-grid garbage
+    # output. ControlNet rip-out deferred to S7.2 (need brighter prerender
+    # workflow + per-scene gating on prerender brightness).
+    assert wf[sampler_id]["inputs"]["positive"] == ["11", 0]
 
     # Node 10: ModelSamplingFlux exists with proper shifts
     assert wf["10"]["class_type"] == "ModelSamplingFlux"
@@ -311,6 +318,14 @@ def test_inject_against_rebuilt_workflow_produces_valid_wiring() -> None:
     assert out["11"]["inputs"]["guidance"] == 3.5
 
 
+@pytest.mark.skip(
+    reason=(
+        "S7.1 IPAdapter Flux deferred to S7.2: cubiq plugin doesn't ship "
+        "'IPAdapterFaceIDApply' (deprecated node name) and the Redux loader "
+        "can't provide a true FaceID model. Workflow surgery removed nodes "
+        "12/13/14 + roles. Re-enable once Flux IP-Adapter ships properly."
+    )
+)
 def test_workflow_has_ipadapter_nodes_after_b1_1() -> None:
     """S7.1.B1.1: shipped JSON gains IPAdapterFaceID nodes 12, 13, 14.
 
@@ -355,6 +370,12 @@ def test_workflow_has_ipadapter_nodes_after_b1_1() -> None:
     assert wf[sampler_id]["inputs"]["model"] == ["14", 0]
 
 
+@pytest.mark.skip(
+    reason=(
+        "S7.1 ControlNet Flux deferred to S7.2 -- nodes 15/16/17 ripped "
+        "out (dark prerenders produce hatched-grid garbage at strength=1)."
+    )
+)
 def test_workflow_has_controlnet_depth_nodes_after_b1_2() -> None:
     """S7.1.B1.2: shipped JSON gains ControlNet Depth nodes 15, 16, 17.
 
@@ -407,6 +428,7 @@ def test_workflow_has_controlnet_depth_nodes_after_b1_2() -> None:
     assert wf[sampler_id]["inputs"]["negative"] == ["4", 0]
 
 
+@pytest.mark.skip(reason="S7.1 ControlNet Flux deferred to S7.2 -- nodes 18/19/20 ripped out.")
 def test_workflow_has_controlnet_pose_nodes_after_b1_3() -> None:
     """S7.1.B1.3: shipped JSON gains ControlNet OpenPose nodes 18, 19, 20.
 
@@ -457,6 +479,13 @@ def test_workflow_has_controlnet_pose_nodes_after_b1_3() -> None:
     assert wf[sampler_id]["inputs"]["negative"] == ["4", 0]
 
 
+@pytest.mark.skip(
+    reason=(
+        "S7.1 IPAdapter Flux deferred -- face_ref_path is now a silent "
+        "no-op until Flux IP-Adapter ships. inject()'s _apply_ref short-"
+        "circuits cleanly when face_ref_image isn't in _meta.role."
+    )
+)
 def test_inject_with_face_ref_sets_loadimage_face(tmp_path: Path) -> None:
     """S7.1.B1.4: inject(face_ref_path=path) writes path into node 13.image."""
     from platinum.utils.workflow import inject, load_workflow
@@ -475,6 +504,7 @@ def test_inject_with_face_ref_sets_loadimage_face(tmp_path: Path) -> None:
     assert out[face_loader_id]["inputs"]["image"] == str(face_ref)
 
 
+@pytest.mark.skip(reason="S7.1 IPAdapter Flux deferred -- ipadapter_apply role removed.")
 def test_inject_with_face_ref_none_sets_ipadapter_weight_zero() -> None:
     """S7.1.B1.4: inject(face_ref_path=None) sets node 14.weight=0 (bypass).
 
@@ -496,6 +526,9 @@ def test_inject_with_face_ref_none_sets_ipadapter_weight_zero() -> None:
     assert out[apply_id]["inputs"]["weight"] == 0.0
 
 
+@pytest.mark.skip(
+    reason="S7.1 ControlNet Flux deferred -- depth_ref_path now no-op."
+)
 def test_inject_with_depth_ref_sets_loadimage_depth(tmp_path: Path) -> None:
     """S7.1.B1.4: inject(depth_ref_path=path) writes path into node 16.image."""
     from platinum.utils.workflow import inject, load_workflow
@@ -514,6 +547,7 @@ def test_inject_with_depth_ref_sets_loadimage_depth(tmp_path: Path) -> None:
     assert out[depth_loader_id]["inputs"]["image"] == str(depth_ref)
 
 
+@pytest.mark.skip(reason="S7.1 ControlNet Flux deferred -- controlnet_depth_apply role removed.")
 def test_inject_with_depth_ref_none_sets_controlnet_depth_strength_zero() -> None:
     """S7.1.B1.4: inject(depth_ref_path=None) sets node 17.strength=0 (bypass)."""
     from platinum.utils.workflow import inject, load_workflow
@@ -529,6 +563,7 @@ def test_inject_with_depth_ref_none_sets_controlnet_depth_strength_zero() -> Non
     assert out[apply_id]["inputs"]["strength"] == 0.0
 
 
+@pytest.mark.skip(reason="S7.1 ControlNet Flux deferred -- pose_ref_path now silent no-op.")
 def test_inject_with_pose_ref_sets_loadimage_pose(tmp_path: Path) -> None:
     """S7.1.B1.4: inject(pose_ref_path=path) writes path into node 19.image."""
     from platinum.utils.workflow import inject, load_workflow
@@ -547,6 +582,7 @@ def test_inject_with_pose_ref_sets_loadimage_pose(tmp_path: Path) -> None:
     assert out[pose_loader_id]["inputs"]["image"] == str(pose_ref)
 
 
+@pytest.mark.skip(reason="S7.1 ControlNet Flux deferred -- controlnet_pose_apply role removed.")
 def test_inject_with_pose_ref_none_sets_controlnet_pose_strength_zero() -> None:
     """S7.1.B1.4: inject(pose_ref_path=None) sets node 20.strength=0 (bypass)."""
     from platinum.utils.workflow import inject, load_workflow
@@ -562,6 +598,12 @@ def test_inject_with_pose_ref_none_sets_controlnet_pose_strength_zero() -> None:
     assert out[apply_id]["inputs"]["strength"] == 0.0
 
 
+@pytest.mark.skip(
+    reason=(
+        "S7.1 IPAdapter Flux deferred -- face role removed from _meta, "
+        "so inject(face_ref_path=...) silently no-ops instead of raising."
+    )
+)
 def test_inject_raises_filenotfounderror_for_nonexistent_face_ref() -> None:
     """S7.1.B1.4: inject() validates ref paths early and raises FileNotFoundError
     rather than letting ComfyUI error out mid-sample on a missing file."""
@@ -644,9 +686,16 @@ def test_inject_default_kwargs_bypass_all_refs() -> None:
 
     repo_root = Path(__file__).resolve().parents[2]
     wf = load_workflow("flux_dev_keyframe", config_dir=repo_root / "config")
-    out = inject(wf, prompt="x", negative_prompt="y", seed=42)
+    # Sanity: inject still returns a dict even with all conditioning roles removed.
+    assert isinstance(inject(wf, prompt="x", negative_prompt="y", seed=42), dict)
 
     roles = wf["_meta"]["role"]
-    assert out[roles["ipadapter_apply"]]["inputs"]["weight"] == 0.0
-    assert out[roles["controlnet_depth_apply"]]["inputs"]["strength"] == 0.0
-    assert out[roles["controlnet_pose_apply"]]["inputs"]["strength"] == 0.0
+    # All conditioning roles removed in S7.1 verify-run rip-outs:
+    # - ipadapter_apply: cubiq plugin doesn't ship IPAdapterFaceIDApply
+    # - controlnet_depth_apply / controlnet_pose_apply: Flux ControlNets
+    #   produce hatched-grid garbage when fed near-black prerenders, and
+    #   the prerender of dark Cask scenes is near-black by design.
+    # All three deferred to S7.2.
+    assert "ipadapter_apply" not in roles
+    assert "controlnet_depth_apply" not in roles
+    assert "controlnet_pose_apply" not in roles
