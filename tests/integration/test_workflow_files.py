@@ -46,3 +46,42 @@ class TestWan22I2VWorkflow:
         for sid in _as_id_list(roles["seed"]):
             assert out[sid]["inputs"]["seed"] == 42
         assert out[roles["video_out"]]["inputs"]["filename_prefix"] == "scene_000_raw"
+
+    def test_sampler_tuning_post_s8_A_2(self) -> None:
+        """S8.A.2: cfg dropped 6.0 -> 2.5, total steps dropped 30 -> 10
+        (5 HIGH + 5 LOW samples handoff). Pin so a casual edit can't
+        drift back into the over-constrained regime that produced
+        narrative-incoherent motion in the S8.18 verify run.
+        """
+        path = Path("config/workflows/wan22_i2v.json")
+        wf = json.loads(path.read_text(encoding="utf-8"))
+        seed_nodes = _as_id_list(wf["_meta"]["role"]["seed"])
+        assert len(seed_nodes) == 2, "expected MoE pair (HIGH, LOW samplers)"
+        high, low = seed_nodes
+        assert wf[high]["inputs"]["steps"] == 10
+        assert wf[high]["inputs"]["cfg"] == 2.5
+        assert wf[high]["inputs"]["end_step"] == 5
+        assert wf[low]["inputs"]["steps"] == 10
+        assert wf[low]["inputs"]["cfg"] == 2.5
+        assert wf[low]["inputs"]["start_step"] == 5
+
+    def test_negative_prompt_includes_coherence_terms(self) -> None:
+        """S8.A.2: existing negative prompt was render-quality only
+        (blurry, distorted, watermark, ...). Wan 2.2 verify produced
+        action duplication + reverse motion + object multiplication;
+        community guidance is to add explicit narrative-coherence
+        negatives. Pin a few canonical terms so a future regression
+        is loud.
+        """
+        path = Path("config/workflows/wan22_i2v.json")
+        wf = json.loads(path.read_text(encoding="utf-8"))
+        prompt_node = wf["_meta"]["role"]["prompt"]
+        neg = wf[prompt_node]["inputs"]["negative_prompt"].lower()
+        for term in (
+            "duplicated action",
+            "reversed motion",
+            "morphing",
+            "looping gesture",
+            "extra objects",
+        ):
+            assert term in neg, f"missing coherence negative-prompt term: {term!r}"

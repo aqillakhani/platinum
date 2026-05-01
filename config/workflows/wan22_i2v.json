@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "comment": "Wan 2.2 14B I2V workflow (S8.17 rewrite). Two-expert MoE: HIGH expert runs steps 0-15, LOW expert runs steps 15-30 with samples handoff. Uses Wan 2.1 VAE -- the Wan 2.2 14B I2V experts inherit the 2.1 VAE encoder; the 2.2 VAE is for the 2.2 5B family only. Requires ComfyUI-WanVideoWrapper + ComfyUI-VideoHelperSuite extensions. Filenames match the Kijai/WanVideo_comfy single-file repackages downloaded by vast_setup.sh.",
+    "comment": "Wan 2.2 14B I2V workflow (S8.17 rewrite, S8.A.2 sampler tune). Two-expert MoE: HIGH expert runs steps 0-5, LOW expert runs steps 5-10 with samples handoff (S8.A.2 dropped from 15+15=30 -- community + Lightx2v guidance: I2V step return drops sharply after ~12, and CFG above ~3 over-constrains image-to-prompt). cfg=2.5 selected from 2.0-3.0 recommended I2V band. Uses Wan 2.1 VAE -- the 2.2 14B I2V experts inherit the 2.1 VAE encoder; the 2.2 VAE is for the 2.2 5B family only. Requires ComfyUI-WanVideoWrapper + ComfyUI-VideoHelperSuite extensions. Filenames match the Kijai/WanVideo_comfy single-file repackages downloaded by vast_setup.sh.",
     "role": {
       "image_in": "5",
       "prompt": "6",
@@ -59,7 +59,7 @@
     "inputs": {
       "t5": ["4", 0],
       "positive_prompt": "PLACEHOLDER",
-      "negative_prompt": "blurry, low quality, jpeg artifacts, distorted, deformed, mutated, extra limbs, missing limbs, watermark, text, signature, oversaturated, amateur, cartoon, sketch, painting, 3d render, motionless picture, still image, frozen frame",
+      "negative_prompt": "blurry, low quality, jpeg artifacts, distorted, deformed, mutated, extra limbs, missing limbs, watermark, text, signature, oversaturated, amateur, cartoon, sketch, painting, 3d render, motionless picture, still image, frozen frame, duplicated action, repeated motion, action reset, looping gesture, reversed motion, backward direction, duplicate limbs, extra objects, floating copies, morphing, warping, face deformation, flickering",
       "force_offload": true
     }
   },
@@ -84,14 +84,14 @@
       "model": ["1", 0],
       "image_embeds": ["7", 0],
       "text_embeds": ["6", 0],
-      "steps": 20,
-      "cfg": 6.0,
+      "steps": 10,
+      "cfg": 2.5,
       "shift": 8.0,
       "seed": 0,
       "force_offload": true,
       "scheduler": "unipc",
       "riflex_freq_index": 0,
-      "end_step": 10
+      "end_step": 5
     }
   },
   "9": {
@@ -101,14 +101,14 @@
       "image_embeds": ["7", 0],
       "text_embeds": ["6", 0],
       "samples": ["8", 0],
-      "steps": 20,
-      "cfg": 6.0,
+      "steps": 10,
+      "cfg": 2.5,
       "shift": 8.0,
       "seed": 0,
       "force_offload": true,
       "scheduler": "unipc",
       "riflex_freq_index": 0,
-      "start_step": 10
+      "start_step": 5
     }
   },
   "10": {
