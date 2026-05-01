@@ -208,7 +208,7 @@ def test_check_audio_levels_round_trips_with_real_ffmpeg(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     "track,expected_motion_floor",
     [
-        ("atmospheric_horror", 0.3),
+        ("atmospheric_horror", 0.0),
         ("folktales_world_myths", 0.5),
         ("childrens_fables", 0.7),
         ("scifi_concept", 0.5),

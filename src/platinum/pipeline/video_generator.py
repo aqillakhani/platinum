@@ -307,10 +307,11 @@ class VideoGeneratorStage(Stage):
         test_overrides = ctx.config.settings.get("test", {})
         injected_comfy = test_overrides.get("comfy_client")
         injected_template = test_overrides.get("workflow_template")
+        comfyui_cfg = ctx.config.settings.get("comfyui", {})
         comfy = injected_comfy or HttpComfyClient(
-            host=ctx.config.settings.get("comfyui", {}).get(
-                "host", "http://localhost:8188"
-            ),
+            host=comfyui_cfg.get("host", "http://localhost:8188"),
+            poll_interval=float(comfyui_cfg.get("poll_interval", 2.0)),
+            max_polls=int(comfyui_cfg.get("max_polls", 600)),
         )
 
         if injected_template is not None:

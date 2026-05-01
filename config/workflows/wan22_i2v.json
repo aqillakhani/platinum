@@ -18,8 +18,8 @@
       "model": "Wan2_2-I2V-A14B-HIGH_bf16.safetensors",
       "base_precision": "bf16",
       "quantization": "disabled",
-      "load_device": "main_device",
-      "attention_mode": "sdpa"
+      "load_device": "offload_device",
+      "attention_mode": "sageattn"
     }
   },
   "2": {
@@ -28,8 +28,8 @@
       "model": "Wan2_2-I2V-A14B-LOW_bf16.safetensors",
       "base_precision": "bf16",
       "quantization": "disabled",
-      "load_device": "main_device",
-      "attention_mode": "sdpa"
+      "load_device": "offload_device",
+      "attention_mode": "sageattn"
     }
   },
   "3": {
@@ -84,14 +84,14 @@
       "model": ["1", 0],
       "image_embeds": ["7", 0],
       "text_embeds": ["6", 0],
-      "steps": 30,
+      "steps": 20,
       "cfg": 6.0,
       "shift": 8.0,
       "seed": 0,
       "force_offload": true,
       "scheduler": "unipc",
       "riflex_freq_index": 0,
-      "end_step": 15
+      "end_step": 10
     }
   },
   "9": {
@@ -101,14 +101,14 @@
       "image_embeds": ["7", 0],
       "text_embeds": ["6", 0],
       "samples": ["8", 0],
-      "steps": 30,
+      "steps": 20,
       "cfg": 6.0,
       "shift": 8.0,
       "seed": 0,
       "force_offload": true,
       "scheduler": "unipc",
       "riflex_freq_index": 0,
-      "start_step": 15
+      "start_step": 10
     }
   },
   "10": {

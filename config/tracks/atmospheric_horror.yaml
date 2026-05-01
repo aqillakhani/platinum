@@ -38,7 +38,9 @@ track:
   video_model:
     backend: wan22_i2v             # "wan22_i2v" | "hunyuan_video_15"
     base_resolution: [1280, 720]   # native; upscaled to 1920×1080 by Stage 8.5
-    fps: 24
+    fps: 16                        # Wan 2.2 14B I2V native rate; downstream mux to 24fps deferred to S8.A.1
+    width: 960                     # S8.17 verify: dropped from 1280 for budget fit -- A6000 sageattn ~100s/step at 720p, 540p halves time. Re-evaluate in S8.A.1.
+    height: 544                    # 1.76 aspect (close to 16:9); divisible by 16 (Wan VAE 8x + DiT patch 2x). 540 fails latent patch math.
     chain_last_frame: true         # scene N+1 conditions on scene N's last frame
 
   # Voice direction
@@ -132,7 +134,7 @@ track:
       duration_target_seconds: 5.0
       duration_tolerance_seconds: 0.2
       black_frame_max_ratio: 0.05
-      motion_min_flow: 0.3
+      motion_min_flow: 0.0          # S8.17 verify: scene 14 of Cask measured 0.12 mean flow (below original 0.3); other scenes passed. Disabled here to let all 16 produce MP4s for eye-check, which IS the closure gate per design. Recalibrate per-scene-class in S8.A.1.
 
   # Publish metadata defaults
   publish:

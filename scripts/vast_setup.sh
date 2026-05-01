@@ -270,6 +270,10 @@ if [ -f "$WANWRAPPER_DIR/requirements.txt" ]; then
     source "$COMFYUI_DIR/venv/bin/activate"
     pip install -r "$WANWRAPPER_DIR/requirements.txt" || \
         log "WARN: WanVideoWrapper requirements install failed"
+    # sageattention enables WanVideoModelLoader's attention_mode=sageattn -- the
+    # workflow JSON requires this. Pure-Triton pkg, no CUDA build. ~13% step
+    # speedup on Ampere; advertised 2x on Ada+. S8.18 verify discovery.
+    pip install sageattention || log "WARN: sageattention install failed"
     pip cache purge || true
     deactivate
 fi

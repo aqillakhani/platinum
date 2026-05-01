@@ -8,6 +8,14 @@ app:
   active_tracks:
     - atmospheric_horror
 
+# ComfyUI client polling settings (HttpComfyClient). Wan 2.2 14B I2V sampling
+# at 1280x720x77f x 30 steps with sdpa attention runs ~60 min/scene on A6000;
+# defaults sized for that workload with margin. Keyframe gen (<1 min) is
+# unaffected -- it finishes well before the timeout.
+comfyui:
+  poll_interval: 5.0
+  max_polls: 2400
+
 # Pipeline behaviour
 pipeline:
   max_retries: 3
