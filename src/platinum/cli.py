@@ -560,6 +560,62 @@ def keyframes(
     console.print(f"[green]Keyframes complete for {story}.[/green]")
 
 
+@app.command(name="motion-prompts")
+def motion_prompts_cmd(
+    story: str = typer.Argument(..., help="Story id (keyframes must be approved)."),
+    rerun_all: bool = typer.Option(
+        False, "--rerun-all",
+        help="Force regeneration: clear scene.motion_prompt before running.",
+    ),
+) -> None:
+    """Generate keyframe-grounded motion prompts for each approved keyframe (S8.A.4).
+
+    Inserts between keyframe_review and video so Wan 2.2 I2V gets a 5-second
+    motion prompt that fits the chosen keyframe's depicted state instead of
+    re-using the Flux still-image visual_prompt (which causes action duplication
+    / reverse motion / object multiplication -- the S8.18 verify failure mode).
+
+    Cost: ~$0.005/scene on Haiku 4.5 (vision). Idempotent -- skips scenes
+    whose motion_prompt is already set unless --rerun-all is passed.
+    """
+    import json
+    import logging
+
+    from platinum.models.story import Story
+    from platinum.pipeline.context import PipelineContext
+    from platinum.pipeline.motion_prompts import MotionPromptsStage
+
+    cfg = Config()
+    story_path = cfg.stories_dir / story / "story.json"
+    if not story_path.exists():
+        console.print(
+            f"[red]Story not found:[/red] {story} (looked in {story_path})"
+        )
+        raise typer.Exit(code=1)
+
+    s = Story.load(story_path)
+
+    if rerun_all:
+        for sc in s.scenes:
+            sc.motion_prompt = None
+
+    ctx = PipelineContext(
+        config=cfg, logger=logging.getLogger("platinum.motion_prompts"),
+    )
+    stage = MotionPromptsStage()
+    try:
+        result = asyncio.run(stage.run(s, ctx))
+    except Exception as exc:
+        console.print(
+            f"[red]motion_prompts failed for {story}: {exc}[/red]"
+        )
+        raise
+
+    s.save(story_path)
+    console.print(json.dumps(result, indent=2, default=str))
+    console.print(f"[green]motion_prompts complete for {story}.[/green]")
+
+
 @app.command()
 def video(
     story: str = typer.Argument(..., help="Story id (must have keyframes COMPLETE)."),

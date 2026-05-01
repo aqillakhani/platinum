@@ -41,12 +41,13 @@ class _StageC(Stage):
         return {"c": 3}
 
 
-def test_canonical_has_twenty_stages() -> None:
-    """S7.1.B5.5: pipeline grew by another stage (pose_depth_maps) inserted
-    between character_references and keyframe_generator. Cumulative count
-    after S7.1.B4.5 + B5.5 is 20."""
-    assert len(CANONICAL_STAGE_NAMES) == 20
-    # PRD stages 1 and 20 as sanity anchors.
+def test_canonical_has_twenty_one_stages() -> None:
+    """S8.A.8: pipeline grew to 21 stages with motion_prompts inserted
+    between keyframe_review and video_generator (S8.A.4). Cumulative
+    growth: PRD baseline 17 + S7.1.B4.5 character_references + S7.1.B5.5
+    pose_depth_maps + S7 keyframe_review + S8.A motion_prompts = 21."""
+    assert len(CANONICAL_STAGE_NAMES) == 21
+    # PRD stages 1 and last as sanity anchors.
     assert CANONICAL_STAGE_NAMES[0] == "source_fetcher"
     assert CANONICAL_STAGE_NAMES[-1] == "publisher"
 

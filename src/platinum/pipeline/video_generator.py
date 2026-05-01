@@ -83,6 +83,28 @@ def _seed_for_scene(scene_index: int, *, retry: int = 0) -> int:
     return scene_index * 1000 + retry
 
 
+def _select_video_prompt(scene) -> str:
+    """S8.A.6: prefer scene.motion_prompt over scene.visual_prompt for I2V.
+
+    motion_prompt is the keyframe-grounded 5-second motion prompt produced
+    by the motion_prompts stage (it sees the chosen keyframe and writes a
+    motion that fits its depicted state). visual_prompt is the Flux-style
+    still-image prompt that produced the keyframe -- reusing it for I2V
+    causes Wan to re-perform actions the keyframe has already completed
+    (mask-on-mask, reverse stair-walk, extra torches -- the failure modes
+    seen in S8.18 verify).
+
+    getattr keeps SimpleNamespace mocks in older tests working; the real
+    Scene model has the field with default None so production paths flow
+    through visual_prompt unchanged when motion_prompts hasn't run.
+    """
+    return (
+        getattr(scene, "motion_prompt", None)
+        or scene.visual_prompt
+        or ""
+    )
+
+
 async def generate_video_for_scene(
     scene,  # platinum.models.story.Scene
     *,
@@ -134,7 +156,7 @@ async def generate_video_for_scene(
         workflow = inject_video(
             workflow_template,
             image_in=server_filename,
-            prompt=scene.visual_prompt or "",
+            prompt=_select_video_prompt(scene),
             seed=seed,
             output_prefix=f"scene_{scene.index:03d}_raw",
             width=width,

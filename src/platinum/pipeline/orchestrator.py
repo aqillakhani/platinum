@@ -30,6 +30,7 @@ CANONICAL_STAGE_NAMES: list[str] = [
     "pose_depth_maps",
     "keyframe_generator",
     "keyframe_review",
+    "motion_prompts",
     "video_generator",
     "upscaler",
     "voice_generator",
