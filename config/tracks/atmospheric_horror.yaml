@@ -39,8 +39,8 @@ track:
     backend: wan22_i2v             # "wan22_i2v" | "hunyuan_video_15"
     base_resolution: [1280, 720]   # native; upscaled to 1920×1080 by Stage 8.5
     fps: 16                        # Wan 2.2 14B I2V native rate; downstream mux to 24fps deferred to S8.A.1
-    width: 960                     # S8.17 verify: dropped from 1280 for budget fit -- A6000 sageattn ~100s/step at 720p, 540p halves time. Re-evaluate in S8.A.1.
-    height: 544                    # 1.76 aspect (close to 16:9); divisible by 16 (Wan VAE 8x + DiT patch 2x). 540 fails latent patch math.
+    width: 544                     # 9:16 portrait to match keyframes (768x1344). S8.18 verify shipped 960x544 landscape, which stretched portrait keyframes horizontally. 544 = 34*16; divisible by 16 for Wan VAE 8x + DiT patch 2x.
+    height: 960                    # 9:16 portrait, same pixel budget as the wrong landscape config (522,240 px). aspect 0.567 ≈ 9/16=0.5625.
     chain_last_frame: true         # scene N+1 conditions on scene N's last frame
 
   # Voice direction
