@@ -171,6 +171,11 @@ class Scene:
     pose_ref_path: str | None = None
     depth_ref_path: str | None = None
     composition_notes: str | None = None
+    # S8.A.3 -- keyframe-grounded motion prompt produced by motion_prompts
+    # stage after keyframe approval. video_generator prefers this over
+    # visual_prompt when present; falls back to visual_prompt when None
+    # (so pre-S8.A stories keep working unchanged).
+    motion_prompt: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -201,6 +206,7 @@ class Scene:
             "pose_ref_path": self.pose_ref_path,
             "depth_ref_path": self.depth_ref_path,
             "composition_notes": self.composition_notes,
+            "motion_prompt": self.motion_prompt,
         }
 
     @classmethod
@@ -233,6 +239,7 @@ class Scene:
             pose_ref_path=d.get("pose_ref_path"),
             depth_ref_path=d.get("depth_ref_path"),
             composition_notes=d.get("composition_notes"),
+            motion_prompt=d.get("motion_prompt"),
         )
 
 

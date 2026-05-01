@@ -170,3 +170,32 @@ def test_story_from_dict_backfills_missing_characters_field() -> None:
     }
     story = Story.from_dict(raw)
     assert story.characters == {}
+
+
+def test_scene_motion_prompt_defaults_to_none() -> None:
+    """S8.A.3: motion_prompt is the keyframe-grounded video prompt that the
+    motion_prompts stage emits after keyframe approval. Defaults None so
+    pre-S8.A stories still serve their visual_prompt to Wan unchanged.
+    """
+    scene = _build_minimal_scene()
+    assert scene.motion_prompt is None
+
+
+def test_scene_round_trip_preserves_motion_prompt() -> None:
+    """S8.A.3: to_dict / from_dict preserves motion_prompt."""
+    scene = _build_minimal_scene(
+        motion_prompt=(
+            "Slow dolly forward toward Montresor as torchlight flickers; "
+            "candle smoke drifts upward; subjects hold their pose."
+        ),
+    )
+    rt = Scene.from_dict(scene.to_dict())
+    assert rt.motion_prompt is not None
+    assert "dolly forward" in rt.motion_prompt
+
+
+def test_scene_from_dict_backfills_missing_motion_prompt() -> None:
+    """S8.A.3: pre-S8.A story.json (no motion_prompt key) loads with None."""
+    raw = {"id": "s1", "index": 1, "narration_text": "x"}
+    scene = Scene.from_dict(raw)
+    assert scene.motion_prompt is None
