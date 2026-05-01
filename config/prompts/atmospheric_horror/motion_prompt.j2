@@ -11,4 +11,25 @@ ORIGINAL FLUX PROMPT (the prompt that produced this keyframe — useful for unde
 
 Look carefully at the keyframe. Identify what state it depicts (subject pose, props in hand, what action has already been performed). Then write a 5-second motion prompt that continues forward from that state without re-performing any action the keyframe has already completed.
 
+REQUIRED MOTION CONTENT (the S8.A verify found that under-motion is now the dominant failure — Wan 2.2 produces near-static output for dim or low-detail keyframes when the prompt is too subtle. Counteract this):
+
+1. Include AT LEAST ONE of:
+   - An explicit camera move with a magnitude or distance: "slow dolly forward 30cm over the 5 seconds", "tilt down 15 degrees", "push in 20% closer", "pan right tracking subject's head", "slow track left across the corridor".
+   - A specific subject micro-motion that is physically possible from the keyframe state: "head tilts forward 10 degrees", "fingers tighten on the goblet", "shoulders rise once on a slow inhale", "eyes shift from down to up over 2 seconds".
+   - A specific environmental element with quantified motion: "torch flame swirls and crackles, casting 2-3 distinct shadow shifts on the wall", "candle wax beads and rolls down the side", "smoke drifts upward and spreads across the upper third of the frame", "dust motes drift rightward through the light beam".
+
+2. AVOID phrases that produce static output. The following are flagged as too weak to drive Wan's motion:
+   - "subtle motion" / "subtle play" / "subtle shift" — Wan reads this as "no motion".
+   - "almost imperceptibly" / "barely perceptible" / "minimal" — same problem.
+   - Pure mood/atmosphere language without a kinetic verb: "the air grows still", "shadows deepen with menace".
+   - Camera moves with no magnitude: "slow camera movement", "gentle camera work".
+
+3. For dim/dark scenes (large shadow areas, low-detail backgrounds), prioritize foreground subject motion over background atmosphere. Wan can't reliably animate large dark regions; it CAN animate a face, a hand, a flame, a piece of cloth.
+
+4. Stay under 80 words. One paragraph. No bullet points.
+
+EXAMPLES of motion prompts that survive the under-motion failure mode:
+- "Slow dolly forward 40cm toward Montresor's face. His jaw muscle tightens once. Eyes shift from the floor up to the camera over the final two seconds. The candle flame guts twice — distinct flickers a half-second apart — casting two shadow shifts across his crimson collar."
+- "Push in 20% on Fortunato's mouth. Wine catches the torchlight as he tilts the bottle one more degree. His throat moves once with the swallow. Behind him, dust drifts diagonally rightward through the light beam from the archway."
+
 Submit your motion prompt via the submit_motion_prompt tool.
