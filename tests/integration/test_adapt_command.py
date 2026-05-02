@@ -116,7 +116,12 @@ def _router_factory() -> Any:
             }
         return {
             "id": "vp", "content": [{"type": "tool_use", "name": name, "input": {
-                "scenes": [{"index": i, "visual_prompt": f"vp{i}", "negative_prompt": f"np{i}"}
+                # "Montresor" must appear in each visual_prompt to satisfy the
+                # S8.B.5 post-condition (the synthesized bible above declares
+                # visible_characters=["Montresor"] for every scene).
+                "scenes": [{"index": i,
+                             "visual_prompt": f"vp{i} Montresor in candlelit study",
+                             "negative_prompt": f"np{i}"}
                             for i in range(1, 9)],
             }}], "stop_reason": "tool_use",
             "usage": {"input_tokens": 1, "output_tokens": 1,

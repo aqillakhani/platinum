@@ -5,6 +5,30 @@ TRACK AESTHETIC
 
 PALETTE: {{ palette }}
 DEFAULT NEGATIVE PROMPT: {{ default_negative }}
+{% if bible is defined and bible %}
+
+STORY BIBLE CONTEXT (an upstream Opus 4.7 pass read the whole story; treat the directives in this block as load-bearing — they fix the per-scene drift the model used to produce when working from narration alone)
+
+WORLD ATMOSPHERE
+{{ bible.world_genre_atmosphere }}
+
+CHARACTER CONTINUITY (use these locked-in {face, costume, posture} signatures verbatim wherever the named character appears in a scene; do not paraphrase):
+{% for name, sig in bible.character_continuity.items() %}- {{ name }}
+  Face: {{ sig.face }}
+  Costume: {{ sig.costume }}
+  Posture: {{ sig.posture }}
+{% endfor %}
+ENVIRONMENT CONTINUITY (use these locked-in environment descriptions for any scene set in the named locale):
+{% for env, desc in bible.environment_continuity.items() %}- {{ env }}: {{ desc }}
+{% endfor %}
+STORY BIBLE LEAD INSTRUCTIONS (binding):
+- Lead each visual_prompt with the scene's hero_shot from the bible.
+- Name EVERY character in visible_characters explicitly by name (use the bible's character_continuity description for each).
+- Include EVERY prop in props_visible by name with a strong visual modifier ("brass bells dangling from the cap tip" beats "bell-cap").
+- The light_source must appear in the visual_prompt as the primary lit anchor.
+- brightness_floor is binding: low = chiaroscuro permitted (a face lit, the rest dark); medium = a discernible foreground + a partly-visible environment; high = a fully-lit composition. NEVER write a prompt that bans every light source.
+- The negative_prompt MUST NOT exclude any of: candle, torch, flame, lantern, "light source" — the rewriter's previous failure mode was banning the lit anchors Flux needs.
+{% endif %}
 
 CONVENTIONS
 
@@ -68,6 +92,16 @@ over-loaded dark prompts; mean RGB hits 0-3 and the keyframe is unviewable):
 
 SCENES
 {% for scene in scenes %}{{ scene.index }}. {{ scene.narration_text }}
+{% if scene.bible is defined and scene.bible %}
+   Hero shot:           {{ scene.bible.hero_shot }}
+   Visible characters:  {{ scene.bible.visible_characters | join(', ') }}
+   Gaze map:            {% for who, where in scene.bible.gaze_map.items() %}{{ who }} → {{ where }}{% if not loop.last %}; {% endif %}{% endfor %}
+   Props (must include): {{ scene.bible.props_visible | join(', ') }}
+   Blocking:            {{ scene.bible.blocking }}
+   Light source:        {{ scene.bible.light_source }}
+   Color anchors:       {{ scene.bible.color_anchors | join(', ') }}
+   Brightness floor:    {{ scene.bible.brightness_floor }}
+{% endif %}
 
 {% endfor %}
 {% if characters is defined and characters %}

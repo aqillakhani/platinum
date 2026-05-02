@@ -43,6 +43,30 @@ def cli_project(tmp_path: Path) -> Iterator[Path]:
     yield tmp_path
 
 
+def _minimal_bible(scene_indices: list[int]):  # type: ignore[no-untyped-def]
+    """Build a StoryBible covering the given scene indices with empty
+    visible_characters so the S8.B.5 post-condition is a no-op (these
+    rerun-rejected tests verify exact prompt equality, not character
+    naming)."""
+    from platinum.models.story_bible import BibleScene, StoryBible
+
+    return StoryBible(
+        world_genre_atmosphere="test",
+        character_continuity={},
+        environment_continuity={},
+        scenes=[
+            BibleScene(
+                index=i, narrative_beat=f"b{i}", hero_shot="medium",
+                visible_characters=[], gaze_map={},
+                props_visible=[], blocking="centered",
+                light_source="single candle", color_anchors=[],
+                brightness_floor="low",
+            )
+            for i in scene_indices
+        ],
+    )
+
+
 @pytest.fixture
 def rejected_story_factory(cli_project: Path, monkeypatch):
     """Build a story with story_curator + visual_prompts COMPLETE; one scene REJECTED."""
@@ -95,6 +119,7 @@ def rejected_story_factory(cli_project: Path, monkeypatch):
                 StageRun(stage="visual_prompts", status=StageStatus.COMPLETE,
                          completed_at=datetime.now(UTC)),
             ],
+            bible=_minimal_bible([1, 2, 3]),
         )
         d = cli_project / "data" / "stories" / story.id
         d.mkdir(parents=True, exist_ok=True)

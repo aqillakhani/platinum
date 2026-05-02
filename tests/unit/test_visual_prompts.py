@@ -13,11 +13,15 @@ from platinum.models.story import Adapted, Scene, Source, Story
 
 
 def _track() -> dict:
+    """Load the atmospheric_horror track but force story_bible disabled —
+    these tests pre-date S8.B and exercise the narration-only rewriter path."""
     track_path = (
         Path(__file__).resolve().parents[2]
         / "config" / "tracks" / "atmospheric_horror.yaml"
     )
-    return yaml.safe_load(track_path.read_text(encoding="utf-8"))["track"]
+    cfg = yaml.safe_load(track_path.read_text(encoding="utf-8"))["track"]
+    cfg.setdefault("story_bible", {})["enabled"] = False
+    return cfg
 
 
 def _story_with_scenes(n: int = 4) -> Story:

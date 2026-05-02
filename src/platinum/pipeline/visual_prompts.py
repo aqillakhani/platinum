@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from platinum.models.story import ReviewStatus, Scene, Story
+from platinum.models.story_bible import StoryBible
 from platinum.pipeline.character_extraction import extract_character_names
 from platinum.pipeline.context import PipelineContext
 from platinum.pipeline.stage import Stage
@@ -79,6 +80,41 @@ def _build_request(
     deviation_feedback: list | None = None,
     characters: dict[str, str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
+    bible = story.bible
+    bible_by_index = {bs.index: bs for bs in bible.scenes} if bible else {}
+    scenes_ctx: list[dict] = []
+    for s in story.scenes:
+        bs = bible_by_index.get(s.index)
+        scene_bible: dict | None = None
+        if bs is not None:
+            scene_bible = {
+                "narrative_beat": bs.narrative_beat,
+                "hero_shot": bs.hero_shot,
+                "visible_characters": list(bs.visible_characters),
+                "gaze_map": dict(bs.gaze_map),
+                "props_visible": list(bs.props_visible),
+                "blocking": bs.blocking,
+                "light_source": bs.light_source,
+                "color_anchors": list(bs.color_anchors),
+                "brightness_floor": bs.brightness_floor,
+            }
+        scenes_ctx.append({
+            "index": s.index,
+            "narration_text": s.narration_text,
+            "bible": scene_bible,  # Always present (None when no bible) so
+                                    # the StrictUndefined Jinja env's
+                                    # ``{% if scene.bible %}`` resolves cleanly.
+        })
+    bible_ctx: dict | None = None
+    if bible is not None:
+        bible_ctx = {
+            "world_genre_atmosphere": bible.world_genre_atmosphere,
+            "character_continuity": {
+                name: dict(sig) for name, sig in bible.character_continuity.items()
+            },
+            "environment_continuity": dict(bible.environment_continuity),
+        }
+
     system = [
         {"type": "text", "text": render_template(
             prompts_dir=prompts_dir, track=story.track,
@@ -92,12 +128,10 @@ def _build_request(
                 "aesthetic": track_cfg["visual"]["aesthetic"],
                 "palette": track_cfg["visual"]["palette"],
                 "default_negative": track_cfg["visual"]["negative_prompt"],
-                "scenes": [
-                    {"index": s.index, "narration_text": s.narration_text}
-                    for s in story.scenes
-                ],
+                "scenes": scenes_ctx,
                 "characters": characters or {},
                 "deviation_feedback": deviation_feedback,
+                "bible": bible_ctx,
             },
         )}
     ]
@@ -107,12 +141,19 @@ def _build_request(
 def _zip_into_scenes(
     story_scenes: list[Scene], tool_input: dict,
     *, scene_filter: set[int] | None = None,
+    bible: StoryBible | None = None,
 ) -> list[Scene]:
     """Mutate scenes with new visual_prompt + negative_prompt by index match.
 
     When scene_filter is set, only apply to scenes whose index is in the
     filter. For REJECTED scenes that get applied, also clear review_feedback
     and keyframe_path and flip status to REGENERATE.
+
+    When ``bible`` is provided (S8.B.5), enforces a post-condition: every
+    name in ``bible.scenes[i].visible_characters`` must appear (case
+    insensitive) in the rewritten ``visual_prompt`` for scene i. Mismatch
+    raises ``ClaudeProtocolError`` so the orchestrator's single-retry path
+    can take a second swing.
 
     Raises ClaudeProtocolError on count mismatch or missing scene index.
     """
@@ -121,6 +162,9 @@ def _zip_into_scenes(
         raise ClaudeProtocolError(
             f"visual_prompts count {len(raw)} != scene count {len(story_scenes)}"
         )
+    bible_by_index = (
+        {bs.index: bs for bs in bible.scenes} if bible is not None else {}
+    )
     by_index = {item["index"]: item for item in raw}
     out: list[Scene] = []
     for scene in story_scenes:
@@ -131,6 +175,22 @@ def _zip_into_scenes(
             )
         if scene_filter is not None and scene.index not in scene_filter:
             continue
+        # Bible post-condition: every visible character name (case insensitive)
+        # must appear in the rewritten visual_prompt. Catches the prototype's
+        # scene-2 character-drop regression before it corrupts the story.
+        bs = bible_by_index.get(scene.index)
+        if bs is not None and bs.visible_characters:
+            vp_lower = item["visual_prompt"].lower()
+            missing = [
+                name for name in bs.visible_characters
+                if name.lower() not in vp_lower
+            ]
+            if missing:
+                raise ClaudeProtocolError(
+                    f"visual_prompt for scene {scene.index} missing required "
+                    f"character(s) {missing}; expected from bible "
+                    f"visible_characters={bs.visible_characters}"
+                )
         scene.visual_prompt = item["visual_prompt"]
         scene.negative_prompt = item["negative_prompt"]
         # S7.1.B2.3 -- optional composition_notes + character_refs from the new
@@ -180,6 +240,16 @@ async def visual_prompts(
             f"visual_prompts requires scene_breakdown to have populated story.scenes "
             f"first (story={story.id})."
         )
+    # S8.B.5: when the track opts into the story_bible pre-pass, the rewriter
+    # is no longer allowed to run on narration alone. Fail fast with a clear
+    # pointer at the bible command rather than silently producing prompts that
+    # drift from the bible's directives.
+    if track_cfg.get("story_bible", {}).get("enabled", False) and story.bible is None:
+        raise RuntimeError(
+            f"visual_prompts requires story.bible for track {story.track!r} "
+            f"(story_bible.enabled=true). Run "
+            f"`platinum bible {story.id}` first."
+        )
     if characters is None:
         from_disk = (
             _load_characters(story.id, stories_dir) if stories_dir else {}
@@ -199,7 +269,10 @@ async def visual_prompts(
         story_id=story.id, stage="visual_prompts",
         db_path=db_path, recorder=recorder,
     )
-    scenes = _zip_into_scenes(story.scenes, result.tool_input, scene_filter=scene_filter)
+    scenes = _zip_into_scenes(
+        story.scenes, result.tool_input,
+        scene_filter=scene_filter, bible=story.bible,
+    )
     return scenes, result
 
 

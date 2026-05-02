@@ -38,14 +38,20 @@ def _make_context(tmp_path: Path, repo_root: Path, *, recorder) -> PipelineConte
     """Build a PipelineContext that mirrors the real layout for stages.
 
     The Stage code reads track YAML and prompts from the project root, so
-    we copy them under tmp_path's config/.
+    we copy them under tmp_path's config/. The track YAML's story_bible
+    block is force-disabled so these pre-S8.B tests exercise the
+    narration-only rewriter path; bible-aware coverage lives in
+    tests/unit/test_visual_prompts_with_bible.py.
     """
+    import yaml as _yaml
+
     (tmp_path / "config" / "tracks").mkdir(parents=True)
     shutil.copytree(repo_root / "config" / "prompts", tmp_path / "config" / "prompts")
-    shutil.copy(
-        repo_root / "config" / "tracks" / "atmospheric_horror.yaml",
-        tmp_path / "config" / "tracks" / "atmospheric_horror.yaml",
-    )
+    track_path = tmp_path / "config" / "tracks" / "atmospheric_horror.yaml"
+    src = repo_root / "config" / "tracks" / "atmospheric_horror.yaml"
+    cfg_yaml = _yaml.safe_load(src.read_text(encoding="utf-8"))
+    cfg_yaml["track"].setdefault("story_bible", {})["enabled"] = False
+    track_path.write_text(_yaml.safe_dump(cfg_yaml), encoding="utf-8")
     (tmp_path / "config" / "settings.yaml").write_text(
         "app:\n  log_level: INFO\n", encoding="utf-8"
     )
