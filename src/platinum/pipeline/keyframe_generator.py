@@ -511,6 +511,32 @@ class KeyframeGeneratorStage(Stage):
 
     name: ClassVar[str] = "keyframe_generator"
 
+    def __init__(self, *, scene_filter: set[int] | None = None) -> None:
+        """Build the stage.
+
+        ``scene_filter`` (S8.B.7): if set, ``is_complete`` only inspects
+        the named scene indices; otherwise every scene's ``keyframe_path``
+        is checked. The CLI plumbs this from --scenes / --rerun-rejected
+        / --rerun-regen-requested so partial reruns no longer get silently
+        skipped by the base ``Stage.is_complete`` impl, which only checks
+        ``latest_stage_run.status == COMPLETE``.
+        """
+        self.scene_filter = scene_filter
+
+    def is_complete(self, story: Any) -> bool:  # noqa: ANN401 -- Story duck type
+        """Per-scene-aware. True iff every target scene has a keyframe.
+
+        Targets = scenes whose ``index`` is in ``scene_filter`` if a filter
+        was set at construction; otherwise every scene in the story. A
+        story with zero scenes vacuously satisfies "all targets have a
+        keyframe" — the orchestrator will skip a no-op run.
+        """
+        if self.scene_filter is not None:
+            targets = [s for s in story.scenes if s.index in self.scene_filter]
+        else:
+            targets = list(story.scenes)
+        return all(s.keyframe_path is not None for s in targets)
+
     async def run(self, story: Any, ctx: Any) -> dict[str, Any]:
         from platinum.utils.aesthetics import RemoteAestheticScorer
         from platinum.utils.comfyui import HttpComfyClient

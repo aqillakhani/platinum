@@ -73,3 +73,27 @@ def test_keyframes_phase2_stages_prepends_bible_when_enabled() -> None:
     stages = _keyframes_phase2_stages(_track_cfg(bible_enabled=True))
     names = [s.name for s in stages]
     assert names == ["story_bible", "pose_depth_maps", "keyframe_generator"]
+
+
+def test_keyframes_phase2_stages_threads_scene_filter_to_keyframe_generator() -> None:
+    """S8.B.7: --scenes / --rerun-rejected feed a scene_filter into the
+    helper, which forwards it to KeyframeGeneratorStage so its per-scene
+    is_complete inspects only the active subset. Pin this so the
+    plumbing isn't accidentally severed by future refactors."""
+    from platinum.cli import _keyframes_phase2_stages
+
+    stages = _keyframes_phase2_stages(
+        _track_cfg(bible_enabled=False), scene_filter={1, 3, 5},
+    )
+    keyframe_stage = next(s for s in stages if s.name == "keyframe_generator")
+    assert keyframe_stage.scene_filter == {1, 3, 5}
+
+
+def test_keyframes_phase2_stages_default_scene_filter_is_none() -> None:
+    """When the CLI doesn't pass --scenes, the keyframe_generator stage's
+    scene_filter is None and the per-scene is_complete inspects every scene."""
+    from platinum.cli import _keyframes_phase2_stages
+
+    stages = _keyframes_phase2_stages(_track_cfg(bible_enabled=False))
+    keyframe_stage = next(s for s in stages if s.name == "keyframe_generator")
+    assert keyframe_stage.scene_filter is None

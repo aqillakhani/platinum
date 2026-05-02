@@ -64,7 +64,9 @@ def _adapt_stages(track_cfg: dict) -> list:
     return stages
 
 
-def _keyframes_phase2_stages(track_cfg: dict) -> list:
+def _keyframes_phase2_stages(
+    track_cfg: dict, *, scene_filter: set[int] | None = None,
+) -> list:
     """Build the keyframes-command phase-2 stage list for a given track.
 
     Prepends ``StoryBibleStage`` when the track enables it — defensive
@@ -72,6 +74,12 @@ def _keyframes_phase2_stages(track_cfg: dict) -> list:
     snapshot. ``StoryBibleStage.is_complete`` skips when the bible already
     covers every scene, so the prepend is essentially free in the normal
     case where adapt has already run the bible.
+
+    ``scene_filter`` (S8.B.7) is forwarded into ``KeyframeGeneratorStage``
+    so its per-scene ``is_complete`` only inspects the active subset.
+    Without this, partial reruns (--scenes / --rerun-rejected) silently
+    short-circuited the orchestrator once the stage had ever produced
+    a single COMPLETE StageRun.
     """
     from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
     from platinum.pipeline.pose_depth_maps import PoseDepthMapStage
@@ -80,7 +88,10 @@ def _keyframes_phase2_stages(track_cfg: dict) -> list:
     stages: list = []
     if track_cfg.get("story_bible", {}).get("enabled", False):
         stages.append(StoryBibleStage())
-    stages.extend([PoseDepthMapStage(), KeyframeGeneratorStage()])
+    stages.extend([
+        PoseDepthMapStage(),
+        KeyframeGeneratorStage(scene_filter=scene_filter),
+    ])
     return stages
 
 
@@ -663,7 +674,9 @@ def keyframes(
     # defensive safety net — it skips cleanly when the bible already
     # covers every scene.
     track_cfg = cfg.track(s.track)
-    orchestrator = Orchestrator(stages=_keyframes_phase2_stages(track_cfg))
+    orchestrator = Orchestrator(
+        stages=_keyframes_phase2_stages(track_cfg, scene_filter=scene_filter),
+    )
 
     try:
         asyncio.run(orchestrator.run(s, ctx))
