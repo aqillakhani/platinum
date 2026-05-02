@@ -9,15 +9,15 @@ WHAT TO PRODUCE
 
 1. world_genre_atmosphere — one short paragraph setting the recurring mood / period / region.
 
-2. character_continuity — for every named character that appears in any scene's narration, write a {face, costume, posture} signature that MUST persist across all their scenes. Be specific (skin/hair color, costume color anchors, hat / cape / accessory landmarks). The downstream rewriter will copy this verbatim into each scene's visual_prompt.
+2. character_continuity — for EVERY named character mentioned anywhere in the story, including characters who never appear on-screen but whose name is spoken (e.g. an off-stage rival, a relative referenced in dialogue), write a {face, costume, posture} signature that MUST persist across all their scenes. Do not omit a character because the narrator only names them once. Be specific (skin/hair color, costume color anchors, hat / cape / accessory landmarks). The downstream rewriter will copy this verbatim into each scene's visual_prompt; missing entries break continuity.
 
 3. environment_continuity — for every recurring locale, write one paragraph naming persistent visual anchors (wall texture, lighting source, shared props).
 
 4. scenes — exactly one entry per Story scene. Indices must match Story.scenes (1-based). Each entry has:
    - narrative_beat: one sentence naming the moment (NOT the narration verbatim).
    - hero_shot: cinematic frame description (lens / angle / distance: "two-shot, medium, eye-level"; "extreme close-up, profile"; "wide, low-angle").
-   - visible_characters: every named character in frame. Empty list only for landscapes.
-   - gaze_map: per-character gaze direction (where each is looking).
+   - visible_characters: every named character in frame. Empty list ONLY for pure landscape / object-focus shots. If a character has a gaze_map entry they MUST appear in visible_characters; conversely every name in visible_characters MUST appear as a gaze_map key. Two-character interactions (dialogue, action, gaze, contact) require BOTH names — never collapse a duo to a single hero.
+   - gaze_map: per-character gaze direction (where each is looking). One entry per name in visible_characters.
    - props_visible: explicit story-critical objects in frame ("brass bells dangling from jester cap", "trowel", "wine bottle").
    - blocking: spatial layout ("Fortunato foreground-right, swaying; Montresor mid-ground-left, still").
    - light_source: at least one named light source ("single beeswax candle, foreground right"; "carnival lantern overhead"). NEVER none.
@@ -31,4 +31,4 @@ EXPOSURE GUARDRAIL — IMPORTANT
 You are NEVER allowed to recommend pure void or "ban every light source". Every scene must have at least one named light_source. For dim/intimate scenes set brightness_floor=low; do NOT escalate to "medium" or "high" if narration calls for darkness. The rewriter trusts you to pick the floor honestly so it can constrain Flux without over-darkening.
 
 OUTPUT FORMAT
-Use the submit_story_bible tool exactly once. Every required field must be populated. Indices must match Story scene indices 1..N.
+Use the submit_story_bible tool exactly once. The four required keys — world_genre_atmosphere (string), character_continuity (object), environment_continuity (object), scenes (array) — must appear at the TOP LEVEL of the tool input. Do NOT nest them under a "story_bible" or any other wrapper key; the schema rejects wrappers. Every required field must be populated. Indices must match Story scene indices 1..N.

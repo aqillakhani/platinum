@@ -15,6 +15,11 @@ track:
     lighting: "volumetric haze, single dominant key, hard shadows, lens flare restraint"
     influences: ["Denis Villeneuve", "Blade Runner 2049", "Arrival", "Dune"]
     negative_prompt: "cartoon, anime, fantasy, medieval, photorealistic-modern-day"
+  # Story bible pre-pass (S8.B). Disabled until per-track prompts are validated.
+  story_bible:
+    enabled: false
+    model: claude-opus-4-7
+    max_tokens: 16000
   image_model:
     backend: flux_dev
     candidates_per_scene: 3

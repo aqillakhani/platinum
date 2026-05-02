@@ -15,6 +15,15 @@ track:
     min_seconds: 480               # 8 minutes
     max_seconds: 720               # 12 minutes
 
+  # Story bible pre-pass (S8.B). One Opus 4.7 call per story produces a structured directive
+  # consumed by the visual_prompts rewriter (per-scene hero_shot, visible_characters, props,
+  # blocking, light_source, brightness_floor). Fixes the S8.A content-fidelity gap where Flux
+  # drifted to generic "moody horror" without story-wide grounding.
+  story_bible:
+    enabled: true
+    model: claude-opus-4-7
+    max_tokens: 16000
+
   # Visual aesthetic — injected into Claude prompts and Flux prompt prefixes.
   visual:
     aesthetic: "cinematic dark, low-key chiaroscuro lighting, heavy atmosphere, muted desaturated palette with occasional crimson or amber accent, heavy film grain, oil painting quality"

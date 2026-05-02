@@ -1,0 +1,649 @@
+{
+  "request": {
+    "model": "claude-opus-4-7",
+    "max_tokens": 16000,
+    "system": [
+      {
+        "type": "text",
+        "text": "You are the head editor and showrunner for a cinematic short-film series in the \"Atmospheric Horror & Dark Tales\" track.\n\nYour job is to adapt public-domain literary horror into 8-12 minute narrated short films that feel like the work of a real animation studio -- not \"good for AI.\" Quality is non-negotiable.\n\nVOICE DIRECTION\nSlow, measured, low-pitched male narrator. Deliberate pauses. No theatrics — restraint sells the dread.\n\nThe narrator speaks at roughly 130 words per minute. You may use these emotion tags inline in narration to direct the voice actor:\n  - [whisper]\n  - [breath]\n  - [pause]\n\nUse them sparingly. Restraint sells dread.\n\nVISUAL AESTHETIC\ncinematic dark, low-key chiaroscuro lighting, heavy atmosphere, muted desaturated palette with occasional crimson or amber accent, heavy film grain, oil painting quality\n\nPalette: deep shadow, candlelight amber, ash grey, blood crimson\nLighting: single-source low-key, volumetric fog, candle and oil-lamp ambience\nInfluences: Guillermo del Toro, Mike Flanagan, Hammer Horror\n\nDEFAULT NEGATIVE PROMPT (for Flux): bright daylight, saturated, cartoon, anime, plastic, smooth, sterile, flat lighting, modern technology, neon\n\nGENERAL PRINCIPLES\n- Prefer sensory specificity over abstract dread (\"the smell of cold iron\" beats \"an unsettling presence\").\n- Trust silence. A pause carries more weight than another adjective.\n- Keep narration second-person sparingly; first-person and close third are the workhorses.\n- Avoid telegraphing the ending in the synopsis or tone notes.\n- All structured outputs must populate every required field. Schema enforcement is strict.\n"
+      },
+      {
+        "type": "text",
+        "text": "You are the head editor and showrunner for \"Atmospheric Horror & Dark Tales\", reading a story end-to-end before any visual prompt is written.\n\nYour job: produce a STORY BIBLE — a structured directive that downstream visual_prompt writers will lead with for every scene.\n\nWHY THIS MATTERS\nThe visual_prompt stage previously ran per-scene with no whole-story context. Result: characters drifted between scenes, story-critical props were dropped, and Flux defaulted to generic \"moody horror\" instead of the specific narrative beat. Your bible fixes this.\n\nWHAT TO PRODUCE\n\n1. world_genre_atmosphere — one short paragraph setting the recurring mood / period / region.\n\n2. character_continuity — for EVERY named character mentioned anywhere in the story, including characters who never appear on-screen but whose name is spoken (e.g. an off-stage rival, a relative referenced in dialogue), write a {face, costume, posture} signature that MUST persist across all their scenes. Do not omit a character because the narrator only names them once. Be specific (skin/hair color, costume color anchors, hat / cape / accessory landmarks). The downstream rewriter will copy this verbatim into each scene's visual_prompt; missing entries break continuity.\n\n3. environment_continuity — for every recurring locale, write one paragraph naming persistent visual anchors (wall texture, lighting source, shared props).\n\n4. scenes — exactly one entry per Story scene. Indices must match Story.scenes (1-based). Each entry has:\n   - narrative_beat: one sentence naming the moment (NOT the narration verbatim).\n   - hero_shot: cinematic frame description (lens / angle / distance: \"two-shot, medium, eye-level\"; \"extreme close-up, profile\"; \"wide, low-angle\").\n   - visible_characters: every named character in frame. Empty list ONLY for pure landscape / object-focus shots. If a character has a gaze_map entry they MUST appear in visible_characters; conversely every name in visible_characters MUST appear as a gaze_map key. Two-character interactions (dialogue, action, gaze, contact) require BOTH names — never collapse a duo to a single hero.\n   - gaze_map: per-character gaze direction (where each is looking). One entry per name in visible_characters.\n   - props_visible: explicit story-critical objects in frame (\"brass bells dangling from jester cap\", \"trowel\", \"wine bottle\").\n   - blocking: spatial layout (\"Fortunato foreground-right, swaying; Montresor mid-ground-left, still\").\n   - light_source: at least one named light source (\"single beeswax candle, foreground right\"; \"carnival lantern overhead\"). NEVER none.\n   - color_anchors: signature colors that must persist (motley red+yellow, Montresor's black cloak).\n   - brightness_floor: \"low\" | \"medium\" | \"high\".\n       * low = chiaroscuro permitted (a face lit, the rest dark).\n       * medium = a discernible foreground + a partly-visible environment.\n       * high = a fully-lit composition.\n\nEXPOSURE GUARDRAIL — IMPORTANT\nYou are NEVER allowed to recommend pure void or \"ban every light source\". Every scene must have at least one named light_source. For dim/intimate scenes set brightness_floor=low; do NOT escalate to \"medium\" or \"high\" if narration calls for darkness. The rewriter trusts you to pick the floor honestly so it can constrain Flux without over-darkening.\n\nOUTPUT FORMAT\nUse the submit_story_bible tool exactly once. Every required field must be populated. Indices must match Story scene indices 1..N.\n",
+        "cache_control": {
+          "type": "ephemeral"
+        }
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": "TRACK AESTHETIC\ncinematic dark, low-key chiaroscuro lighting, heavy atmosphere, muted desaturated palette with occasional crimson or amber accent, heavy film grain, oil painting quality\n\nPALETTE\ndeep shadow, candlelight amber, ash grey, blood crimson\n\nADAPTED SOURCE (the story we are filming)\nDuring the riot of carnival, the nobleman Montresor smiles at the friend who has wronged him and offers a single, irresistible temptation â€” a cask of rare Amontillado, waiting in the family vaults. Down they descend, through nitre and bone and candle-smoke, while Montresor's courtesy never slips. A confession across fifty years of silence.\n\nNARRATION SCRIPT (in scene order)\nThe thousand injuries of Fortunato I had borne as I best could. [pause] But when he ventured upon insult, I vowed revenge.\n\nYou, who know the nature of my soul, will not suppose I gave any utterance to a threat. At length, I would be avenged. That was settled. The very certainty of it forbade any risk. I must not only punish â€” I must punish with impunity. A wrong is unredressed when retribution overtakes its redresser. It is equally unredressed when the avenger fails to make himself felt as such by him who has done the wrong.\n\nNeither by word nor by deed had I given Fortunato cause to doubt my goodwill. I continued, as was my habit, to smile in his face. [pause] He did not perceive that my smile, now, was at the thought of his immolation.\n\nHe had a weak point, this Fortunato. He prided himself upon his knowledge of wine. In painting and in gems he was a quack, like most of his countrymen. But in old vintages he was sincere. And in this, I did not differ from him.\n\nIt was about dusk, one evening during the supreme madness of the carnival, that I met him. He accosted me with excessive warmth, for he had been drinking much. He wore motley â€” a tight parti-striped dress, and on his head the conical cap and bells. I was so pleased to see him I thought I should never have done wringing his hand.\n\n\"My dear Fortunato,\" I said, \"you are luckily met. I have received a pipe of what passes for Amontillado â€” and I have my doubts.\"\n\n\"Amontillado? [breath] A pipe? Impossible. In the middle of the carnival?\"\n\n\"I have my doubts. And I was silly enough to pay the full price without consulting you. You were not to be found, and I was fearful of losing a bargain.\"\n\n\"Amontillado.\"\n\n\"I must satisfy my doubts. As you are engaged, I am on my way to Luchesi. If anyone has a critical turn, it is he â€”\"\n\n\"Luchesi cannot tell Amontillado from sherry.\"\n\n\"And yet some fools will have it that his taste is a match for your own.\"\n\n\"Come. Let us go.\"\n\n\"Whither?\"\n\n\"To your vaults.\"\n\nI protested. The vaults were insufferably damp. He had a cold. Luchesi â€” [pause] But he would hear none of it. He took my arm. I put on a mask of black silk, drew my cloak close about me, and suffered him to hurry me to my palazzo.\n\nThere were no servants at home. I had told them I should not return until morning, with explicit orders not to stir from the house. Such orders, I knew, were sufficient to ensure their immediate disappearance, every one.\n\nI took two flambeaux from their sconces, gave one to Fortunato, and bowed him through the rooms to the archway that opened upon the vaults. Down a long winding staircase we went, I begging him to be cautious as he followed. We came at length to the damp ground of the catacombs of the Montresors.\n\nHis step was unsteady. The bells upon his cap jingled as he walked.\n\n\"The pipe,\" he said.\n\n\"It is farther on. But observe the white web-work that gleams from these walls.\"\n\nHe turned to me with two filmy eyes, distilling the rheum of intoxication.\n\n\"Nitre?\"\n\n\"Nitre,\" I replied. \"How long have you had that cough?\"\n\nHe could not answer for many minutes. [pause] \"It is nothing.\"\n\n\"Come,\" I said. \"We will go back. Your health is precious. You are rich, respected, admired, beloved. You are happy, as once I was. You are a man to be missed. We will go back. There is Luchesi â€”\"\n\n\"Enough. The cough is nothing. I shall not die of a cough.\"\n\n\"True,\" I said. \"True. A draught of this Medoc will defend us from the damps.\"\n\nI knocked the neck from a bottle that lay in a long row upon the mould.\n\nHe raised it to his lips with a leer. \"I drink,\" he said, \"to the buried that repose around us.\"\n\n\"And I, to your long life.\"\n\nWe went on. The vaults were vast. We passed walls of piled bones, casks and puncheons intermingling, into the inmost recesses. I paused, and seized him by the arm above the elbow.\n\n\"The nitre. See how it increases. We are below the river's bed. Come â€” we will go back.\"\n\n\"It is nothing. Another draught of the Medoc.\"\n\nI broke a flagon of De Grave. He emptied it at a breath. His eyes flashed. He laughed, and threw the bottle upward with a strange gesture I did not understand.\n\n\"You do not comprehend?\"\n\n\"Not I.\"\n\n\"Then you are not of the brotherhood. You are not of the masons.\"\n\n\"Yes,\" I said. \"Yes, yes.\"\n\n\"You? Impossible. A mason?\"\n\n\"A mason,\" I replied.\n\n\"A sign.\"\n\n\"It is this.\" From beneath my cloak I produced a trowel.\n\n\"You jest,\" he said, recoiling. \"But â€” let us proceed to the Amontillado.\"\n\n\"Be it so.\" I replaced the tool and offered him my arm. He leaned upon it heavily.\n\nWe passed through low arches, descended, descended again, and arrived at a deep crypt where the foulness of the air made our flambeaux glow rather than flame. At its farthest end opened another, smaller crypt. Three of its walls were lined to the vault with human bones. From the fourth, the bones had been thrown down in a mound. Behind them lay a recess â€” four feet deep, three wide, perhaps seven high â€” backed by solid granite.\n\n\"Proceed,\" I said. \"Herein is the Amontillado. As for Luchesi â€”\"\n\n\"He is an ignoramus.\" He stepped unsteadily forward. In an instant he had reached the wall, and stood bewildered. [pause] A moment more, and I had fettered him to the granite. Two iron staples; a short chain; a padlock. The work of a few seconds. He was too astounded to resist.\n\nI withdrew the key and stepped back.\n\n\"Pass your hand over the wall. You cannot help feeling the nitre. It is very damp. Once more â€” let me implore you to return. [pause] No? Then I must positively leave you. But first, I must render you all the little attentions in my power.\"\n\n\"The Amontillado,\" he murmured, still astonished.\n\n\"True,\" I said. \"The Amontillado.\"\n\nI busied myself among the bones. Beneath them lay building stone and mortar. With these, and with my trowel, I began vigorously to wall up the entrance of the niche.\n\nI had scarcely laid the first tier when I knew his drunkenness had worn off. A low moan came from the depth of the recess. [pause] Not the cry of a drunken man. Then silence. I laid the second tier, and the third, and the fourth. Then the chain rattled, furious, for many minutes. I sat down upon the bones to listen, the better to be satisfied. When the clanking ceased, I resumed: the fifth, the sixth, the seventh.\n\nThe wall was now level with my breast. I held the torch above the masonry and cast a feeble light upon the figure within.\n\nA succession of loud, shrill screams burst from his throat. For a moment I trembled. I drew my rapier and groped with it into the recess â€” but a thought reassured me. I laid my hand upon the solid granite. I was satisfied. I returned to the wall. I answered his cries. I echoed them. [pause] I surpassed them in volume and in strength. And the clamourer grew still.\n\nIt was midnight. The eighth tier, the ninth, the tenth. A portion of the eleventh. One stone remained.\n\nThen, from within the niche, came a low laugh that lifted the hairs upon my head. After it, a sad voice â€” that I scarcely recognized as Fortunato's.\n\n\"Ha â€” ha â€” ha. A very good joke. An excellent jest. We shall laugh about it at the palazzo â€” over our wine.\"\n\n\"The Amontillado,\" I said.\n\n\"Yes â€” the Amontillado. But is it not getting late? Will not they be awaiting us â€” the Lady Fortunato and the rest? Let us be gone.\"\n\n\"Yes,\" I said. \"Let us be gone.\"\n\n[pause] [whisper] \"For the love of God, Montresor.\"\n\n\"Yes,\" I said. \"For the love of God.\"\n\nI listened for a reply. None came. I called aloud â€” \"Fortunato.\"\n\nNo answer.\n\n\"Fortunato â€”\"\n\nNo answer still. I thrust the torch through the last aperture and let it fall within. There came back only a jingling of the bells. [pause] My heart grew sick â€” on account of the dampness of the catacombs. I hastened to make an end of my labour. I forced the last stone into its place. I plastered it up. Against the new masonry I rebuilt the old rampart of bones.\n\nFor half a century, no mortal has disturbed them.\n\n[pause] [whisper] In pace requiescat.\n\nPER-SCENE NARRATION BLOCKS (one entry per Story.scene)\n\n--- scene 1 ---\nThe thousand injuries of Fortunato I had borne as I best could. [pause] But when he ventured upon insult, I vowed revenge.\n\nYou, who know the nature of my soul, will not suppose I gave any utterance to a threat. At length, I would be avenged. That was settled. The very certainty of it forbade any risk. I must not only punish â€” I must punish with impunity. A wrong is unredressed when retribution overtakes its redresser. It is equally unredressed when the avenger fails to make himself felt as such by him who has done the wrong.\n\n\n--- scene 2 ---\nNeither by word nor by deed had I given Fortunato cause to doubt my goodwill. I continued, as was my habit, to smile in his face. [pause] He did not perceive that my smile, now, was at the thought of his immolation.\n\nHe had a weak point, this Fortunato. He prided himself upon his knowledge of wine. In painting and in gems he was a quack, like most of his countrymen. But in old vintages he was sincere. And in this, I did not differ from him.\n\n\n--- scene 3 ---\nIt was about dusk, one evening during the supreme madness of the carnival, that I met him. He accosted me with excessive warmth, for he had been drinking much. He wore motley â€” a tight parti-striped dress, and on his head the conical cap and bells. I was so pleased to see him I thought I should never have done wringing his hand.\n\n\"My dear Fortunato,\" I said, \"you are luckily met. I have received a pipe of what passes for Amontillado â€” and I have my doubts.\"\n\n\n--- scene 4 ---\n\"Amontillado? [breath] A pipe? Impossible. In the middle of the carnival?\"\n\n\"I have my doubts. And I was silly enough to pay the full price without consulting you. You were not to be found, and I was fearful of losing a bargain.\"\n\n\"Amontillado.\"\n\n\"I must satisfy my doubts. As you are engaged, I am on my way to Luchesi. If anyone has a critical turn, it is he â€”\"\n\n\"Luchesi cannot tell Amontillado from sherry.\"\n\n\"And yet some fools will have it that his taste is a match for your own.\"\n\n\"Come. Let us go.\"\n\n\"Whither?\"\n\n\"To your vaults.\"\n\n\n--- scene 5 ---\nI protested. The vaults were insufferably damp. He had a cold. Luchesi â€” [pause] But he would hear none of it. He took my arm. I put on a mask of black silk, drew my cloak close about me, and suffered him to hurry me to my palazzo.\n\nThere were no servants at home. I had told them I should not return until morning, with explicit orders not to stir from the house. Such orders, I knew, were sufficient to ensure their immediate disappearance, every one.\n\n\n--- scene 6 ---\nI took two flambeaux from their sconces, gave one to Fortunato, and bowed him through the rooms to the archway that opened upon the vaults. Down a long winding staircase we went, I begging him to be cautious as he followed. We came at length to the damp ground of the catacombs of the Montresors.\n\nHis step was unsteady. The bells upon his cap jingled as he walked.\n\n\"The pipe,\" he said.\n\n\"It is farther on. But observe the white web-work that gleams from these walls.\"\n\nHe turned to me with two filmy eyes, distilling the rheum of intoxication.\n\n\"Nitre?\"\n\n\"Nitre,\" I replied. \"How long have you had that cough?\"\n\n\n--- scene 7 ---\nHe could not answer for many minutes. [pause] \"It is nothing.\"\n\n\"Come,\" I said. \"We will go back. Your health is precious. You are rich, respected, admired, beloved. You are happy, as once I was. You are a man to be missed. We will go back. There is Luchesi â€”\"\n\n\"Enough. The cough is nothing. I shall not die of a cough.\"\n\n\"True,\" I said. \"True. A draught of this Medoc will defend us from the damps.\"\n\nI knocked the neck from a bottle that lay in a long row upon the mould.\n\nHe raised it to his lips with a leer. \"I drink,\" he said, \"to the buried that repose around us.\"\n\n\"And I, to your long life.\"\n\n\n--- scene 8 ---\nWe went on. The vaults were vast. We passed walls of piled bones, casks and puncheons intermingling, into the inmost recesses. I paused, and seized him by the arm above the elbow.\n\n\"The nitre. See how it increases. We are below the river's bed. Come â€” we will go back.\"\n\n\"It is nothing. Another draught of the Medoc.\"\n\nI broke a flagon of De Grave. He emptied it at a breath. His eyes flashed. He laughed, and threw the bottle upward with a strange gesture I did not understand.\n\n\n--- scene 9 ---\n\"You do not comprehend?\"\n\n\"Not I.\"\n\n\"Then you are not of the brotherhood. You are not of the masons.\"\n\n\"Yes,\" I said. \"Yes, yes.\"\n\n\"You? Impossible. A mason?\"\n\n\"A mason,\" I replied.\n\n\"A sign.\"\n\n\"It is this.\" From beneath my cloak I produced a trowel.\n\n\"You jest,\" he said, recoiling. \"But â€” let us proceed to the Amontillado.\"\n\n\"Be it so.\" I replaced the tool and offered him my arm. He leaned upon it heavily.\n\n\n--- scene 10 ---\nWe passed through low arches, descended, descended again, and arrived at a deep crypt where the foulness of the air made our flambeaux glow rather than flame. At its farthest end opened another, smaller crypt. Three of its walls were lined to the vault with human bones. From the fourth, the bones had been thrown down in a mound. Behind them lay a recess â€” four feet deep, three wide, perhaps seven high â€” backed by solid granite.\n\n\"Proceed,\" I said. \"Herein is the Amontillado. As for Luchesi â€”\"\n\n\"He is an ignoramus.\"\n\n\n--- scene 11 ---\nHe stepped unsteadily forward. In an instant he had reached the wall, and stood bewildered. [pause] A moment more, and I had fettered him to the granite. Two iron staples; a short chain; a padlock. The work of a few seconds. He was too astounded to resist.\n\nI withdrew the key and stepped back.\n\n\"Pass your hand over the wall. You cannot help feeling the nitre. It is very damp. Once more â€” let me implore you to return. [pause] No? Then I must positively leave you. But first, I must render you all the little attentions in my power.\"\n\n\n--- scene 12 ---\n\"The Amontillado,\" he murmured, still astonished.\n\n\"True,\" I said. \"The Amontillado.\"\n\nI busied myself among the bones. Beneath them lay building stone and mortar. With these, and with my trowel, I began vigorously to wall up the entrance of the niche.\n\nI had scarcely laid the first tier when I knew his drunkenness had worn off. A low moan came from the depth of the recess. [pause] Not the cry of a drunken man. Then silence. I laid the second tier, and the third, and the fourth. Then the chain rattled, furious, for many minutes. I sat down upon the bones to listen, the better to be satisfied. When the clanking ceased, I resumed: the fifth, the sixth, the seventh.\n\n\n--- scene 13 ---\nThe wall was now level with my breast. I held the torch above the masonry and cast a feeble light upon the figure within.\n\nA succession of loud, shrill screams burst from his throat. For a moment I trembled. I drew my rapier and groped with it into the recess â€” but a thought reassured me. I laid my hand upon the solid granite. I was satisfied. I returned to the wall. I answered his cries. I echoed them. [pause] I surpassed them in volume and in strength. And the clamourer grew still.\n\n\n--- scene 14 ---\nIt was midnight. The eighth tier, the ninth, the tenth. A portion of the eleventh. One stone remained.\n\nThen, from within the niche, came a low laugh that lifted the hairs upon my head. After it, a sad voice â€” that I scarcely recognized as Fortunato's.\n\n\"Ha â€” ha â€” ha. A very good joke. An excellent jest. We shall laugh about it at the palazzo â€” over our wine.\"\n\n\"The Amontillado,\" I said.\n\n\"Yes â€” the Amontillado. But is it not getting late? Will not they be awaiting us â€” the Lady Fortunato and the rest? Let us be gone.\"\n\n\"Yes,\" I said. \"Let us be gone.\"\n\n\n--- scene 15 ---\n[pause] [whisper] \"For the love of God, Montresor.\"\n\n\"Yes,\" I said. \"For the love of God.\"\n\nI listened for a reply. None came. I called aloud â€” \"Fortunato.\"\n\nNo answer.\n\n\"Fortunato â€”\"\n\nNo answer still. I thrust the torch through the last aperture and let it fall within. There came back only a jingling of the bells. [pause] My heart grew sick â€” on account of the dampness of the catacombs. I hastened to make an end of my labour. I forced the last stone into its place. I plastered it up. Against the new masonry I rebuilt the old rampart of bones.\n\n\n--- scene 16 ---\nFor half a century, no mortal has disturbed them.\n\n[pause] [whisper] In pace requiescat.\n\n\n\nTASK\nRead the whole story above. Then produce the story bible per the system instructions: world_genre_atmosphere, character_continuity (every named character), environment_continuity (every recurring locale), and one scene entry per Story.scene index 1..16.\n\nSubmit via the submit_story_bible tool.\n"
+      }
+    ],
+    "tools": [
+      {
+        "name": "submit_story_bible",
+        "description": "Submit the whole-story narrative directive consumed by visual_prompts. One call per story; every field required.",
+        "input_schema": {
+          "type": "object",
+          "required": [
+            "world_genre_atmosphere",
+            "character_continuity",
+            "environment_continuity",
+            "scenes"
+          ],
+          "properties": {
+            "world_genre_atmosphere": {
+              "type": "string"
+            },
+            "character_continuity": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "required": [
+                  "face",
+                  "costume",
+                  "posture"
+                ],
+                "properties": {
+                  "face": {
+                    "type": "string"
+                  },
+                  "costume": {
+                    "type": "string"
+                  },
+                  "posture": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "environment_continuity": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "scenes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "index",
+                  "narrative_beat",
+                  "hero_shot",
+                  "visible_characters",
+                  "gaze_map",
+                  "props_visible",
+                  "blocking",
+                  "light_source",
+                  "color_anchors",
+                  "brightness_floor"
+                ],
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "narrative_beat": {
+                    "type": "string"
+                  },
+                  "hero_shot": {
+                    "type": "string"
+                  },
+                  "visible_characters": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "gaze_map": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "props_visible": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "blocking": {
+                    "type": "string"
+                  },
+                  "light_source": {
+                    "type": "string"
+                  },
+                  "color_anchors": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "brightness_floor": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "tool_choice": {
+      "type": "tool",
+      "name": "submit_story_bible"
+    }
+  },
+  "response": {
+    "id": "msg_01VYYyXvehNcTdycFrvGxmxe",
+    "container": null,
+    "content": [
+      {
+        "id": "toolu_012UcLbEcc5r39z1XBKgeTww",
+        "caller": {
+          "type": "direct"
+        },
+        "input": {
+          "world_genre_atmosphere": "Late 18th-century Italian carnival night bleeding into the subterranean catacombs beneath a noble palazzo. Gothic horror in the Hammer/del Toro register: oil-painting chiaroscuro, candlelit interiors, masquerade revelry glimpsed only at the threshold before the world narrows to a single torch in stone tunnels. Persistent atmosphere of damp granite, nitre-frosted walls, bone-piled niches, wine-soured breath, and the slow inevitability of a confession spoken across fifty years of silence. Muted desaturated palette pierced only by candle-amber, motley crimson-and-gold, and the cold pewter of stone.",
+          "character_continuity": {
+            "Montresor": {
+              "face": "Pale aristocratic Italian man in his late thirties, gaunt high cheekbones, thin lips set in a courteous half-smile, dark close-set eyes with heavy lids, neatly trimmed black hair pulled back, clean-shaven; expression unreadable, almost reverent — a smile that never reaches the eyes",
+              "costume": "Floor-length black wool cloak with deep hood, high-collared dark charcoal frock coat with tarnished silver buttons, black silk half-mask covering eyes and brow (donned from scene 5 onward), black leather gloves, dark breeches and tall boots; a trowel concealed beneath the cloak",
+              "posture": "Upright, composed, hands folded or clasped behind the back; movements deliberate and economical; head tilted slightly forward in an attitude of attentive courtesy"
+            },
+            "Fortunato": {
+              "face": "Florid, heavy-jowled Italian man in his fifties, ruddy wine-flushed cheeks, watery bloodshot eyes glazed with drink, thick salt-and-pepper moustache, fleshy nose, sweat-dampened brow",
+              "costume": "Tight parti-striped motley jester's costume in crimson and mustard-yellow diamonds, conical jester's cap of the same stripes tipped with three small brass bells, soft pointed slippers, no cloak; later: an iron collar and short rusted chain at the throat, padlocked to the granite wall",
+              "posture": "Swaying, unsteady on his feet, leaning forward into companions, gesturing broadly with a wine bottle; gait lurching; head lolling slightly so the cap-bells jingle"
+            },
+            "Luchesi": {
+              "face": "Never seen on screen — referenced only in dialogue. (If ever depicted as imagined silhouette: portly older Venetian connoisseur, white powdered wig, ruddy complexion.)",
+              "costume": "Not depicted; off-stage character only",
+              "posture": "Not depicted; off-stage character only"
+            },
+            "Lady Fortunato": {
+              "face": "Never seen on screen — referenced only in dialogue late in the story. (If ever depicted as imagined silhouette: pale Venetian noblewoman, dark hair piled high, candlelit at distance.)",
+              "costume": "Not depicted; off-stage character only",
+              "posture": "Not depicted; off-stage character only"
+            }
+          },
+          "environment_continuity": {
+            "Carnival Street": "Narrow Venetian-style cobbled alley at dusk during carnival, hung with sagging paper lanterns burning amber, drifting fog and smoke, masked revelers blurred in the deep background, confetti and torn ribbons underfoot, plaster walls peeling crimson and ochre, distant tambourines implied; palette of ash grey street, candle-amber lanterns, motley crimson-and-yellow accents",
+            "Montresor Palazzo Interior": "Cavernous stone-and-plaster halls of an old Italian noble house, empty of servants, tall arched doorways, faded tapestries in dusty crimson, iron sconces holding flambeaux, a black archway opening on a long winding staircase descending into the vaults; floor of worn flagstones, single-source candle and torchlight, deep shadow pooling in corners",
+            "Catacomb Staircase": "Long winding stone staircase spiraling down, walls of damp dressed stone slick with moisture, iron handrail rusted, torchlight casting wheeling shadows on curving walls, treads worn shallow at the centre; air visibly thickening with mist as it descends",
+            "Catacomb Corridors": "Vast Montresor family vaults: low barrel-vaulted tunnels of dark stone, walls patched with white nitre webbing and pale crystalline frost, niches stacked with dust-yellowed human skulls and long bones, intermingled wooden wine casks and puncheons, scattered dark wine bottles lying in long rows on mouldering racks, floor of damp earth and pebbles, single flambeau as light source casting low amber pool, drifting pale fog",
+            "Inner Crypt and Niche": "Deepest crypt where torch-flame glows rather than flames in the foul air; three walls lined floor-to-vault with stacked human bones, the fourth wall's bones thrown down in a heap revealing a recess four feet deep, three wide, seven high, backed by solid granite; two iron staples and a short chain set into the granite, a small heap of building stone and fresh mortar, a trowel; flambeau glow reduced to a sullen amber smoulder in the heavy air"
+          },
+          "scenes": [
+            {
+              "index": 1,
+              "narrative_beat": "Montresor, in present-day silhouette, vows revenge for an unforgivable insult.",
+              "hero_shot": "Medium close-up, three-quarter profile, slightly low-angle, shallow depth — Montresor's face half-emerging from black hood, candle just out of frame catching one cheekbone in amber",
+              "visible_characters": [
+                "Montresor"
+              ],
+              "gaze_map": {
+                "Montresor": "into middle distance off-camera-right, unblinking"
+              },
+              "props_visible": [
+                "black wool cloak",
+                "single guttering candle (off-frame source)"
+              ],
+              "blocking": "Montresor centered, isolated against pure black void; only the right half of his face and the edge of his collar lit",
+              "light_source": "single beeswax candle off-frame right, low and close",
+              "color_anchors": [
+                "deep shadow black",
+                "candlelight amber on cheekbone"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 2,
+              "narrative_beat": "Montresor reflects that he has hidden his hatred behind a courteous smile, knowing Fortunato's vanity in wine will be the lure.",
+              "hero_shot": "Tight close-up, eye-level, on Montresor's mouth and eyes — the faintest courteous smile, the eyes dead",
+              "visible_characters": [
+                "Montresor"
+              ],
+              "gaze_map": {
+                "Montresor": "directly forward into camera, level and patient"
+              },
+              "props_visible": [
+                "a single dust-grey wine bottle on a shelf in the soft background",
+                "tarnished silver button at collar"
+              ],
+              "blocking": "Montresor centered, foreground-only; background a brown-black smear of palazzo interior",
+              "light_source": "oil lamp on a side table, foreground left, low warm amber",
+              "color_anchors": [
+                "ash grey",
+                "candlelight amber",
+                "cold black of cloak"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 3,
+              "narrative_beat": "At dusk during carnival, Montresor encounters the drunken Fortunato in motley and baits him with the rumour of an Amontillado.",
+              "hero_shot": "Two-shot, medium, eye-level — Montresor and Fortunato meeting in the alley, hands clasped between them",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Montresor": "fixed warmly on Fortunato's face",
+                "Fortunato": "wine-glazed, lifted toward Montresor with delight"
+              },
+              "props_visible": [
+                "jester's conical cap with three brass bells",
+                "parti-striped motley",
+                "Montresor's black cloak",
+                "amber paper lanterns overhead",
+                "wine bottle dangling from Fortunato's hand"
+              ],
+              "blocking": "Fortunato foreground-right, swaying, gripping Montresor's hand; Montresor mid-ground-left, upright and composed; blurred masked revelers in deep background",
+              "light_source": "carnival paper lanterns overhead, warm amber",
+              "color_anchors": [
+                "motley crimson-and-yellow",
+                "Montresor's cloak black",
+                "lantern amber",
+                "ash grey alley stone"
+              ],
+              "brightness_floor": "medium"
+            },
+            {
+              "index": 4,
+              "narrative_beat": "Fortunato, hooked by pride, dismisses the rival Luchesi and insists they go at once to Montresor's vaults.",
+              "hero_shot": "Over-the-shoulder from Montresor onto Fortunato — Fortunato leaning in, eyes flashing with offended connoisseurship",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Fortunato": "locked on Montresor's eyes, intent and competitive",
+                "Montresor": "downcast slightly, the courteous half-smile"
+              },
+              "props_visible": [
+                "jester cap and bells",
+                "wine bottle in Fortunato's grip",
+                "Montresor's gloved hand"
+              ],
+              "blocking": "Fortunato fills frame foreground, slightly off-center right; Montresor's dark shoulder and edge of jaw frame left foreground; alley narrowing behind",
+              "light_source": "single overhead carnival lantern, warm amber, casting top-down rim",
+              "color_anchors": [
+                "crimson-and-yellow motley",
+                "lantern amber",
+                "deep alley shadow"
+              ],
+              "brightness_floor": "medium"
+            },
+            {
+              "index": 5,
+              "narrative_beat": "Montresor dons a black silk mask and his cloak and lets Fortunato hurry him toward the deserted palazzo.",
+              "hero_shot": "Medium wide, low-angle from behind, tracking — the two figures moving away into a torchlit archway of the palazzo",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Montresor": "forward into the archway, mask now in place",
+                "Fortunato": "forward and slightly upward at the looming arch, eager"
+              },
+              "props_visible": [
+                "black silk half-mask on Montresor",
+                "Montresor's drawn cloak",
+                "Fortunato's bell-cap",
+                "iron sconce flambeau at the archway"
+              ],
+              "blocking": "Fortunato foreground-right pulling Montresor by the arm; Montresor half a step behind, cloak swirling; tall arched doorway swallowing them mid-frame",
+              "light_source": "single iron-sconce flambeau at the palazzo archway, foreground right",
+              "color_anchors": [
+                "black silk mask",
+                "crimson-and-yellow motley",
+                "torch amber",
+                "ash grey stone"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 6,
+              "narrative_beat": "They descend the long winding staircase into the catacombs; Fortunato spots the white nitre and begins to cough.",
+              "hero_shot": "Wide, high-angle looking down the spiral of the staircase — two small figures with torches winding away into darkness",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Montresor": "down at Fortunato's faltering step",
+                "Fortunato": "up at the nitre-frosted wall, mouth open"
+              },
+              "props_visible": [
+                "two flambeaux",
+                "white nitre webbing on the curving wall",
+                "iron handrail",
+                "jester cap-bells mid-jingle"
+              ],
+              "blocking": "Fortunato lower in frame on the curving stair, one hand on the wall; Montresor a step above and behind, torch raised",
+              "light_source": "two pitch flambeaux, one per figure, casting paired amber pools on damp stone",
+              "color_anchors": [
+                "torch amber",
+                "nitre white-grey",
+                "wet stone black",
+                "motley crimson-and-yellow"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 7,
+              "narrative_beat": "Montresor offers feigned concern and breaks open a bottle of Medoc; Fortunato toasts the buried dead.",
+              "hero_shot": "Two-shot, medium, eye-level — Fortunato tipping a broken-necked bottle to his lips, Montresor watching with raised torch",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Fortunato": "upward along the raised bottle, leering",
+                "Montresor": "level and steady on Fortunato's throat"
+              },
+              "props_visible": [
+                "broken-necked Medoc bottle",
+                "long row of dust-grey wine bottles on mouldering rack",
+                "flambeau in Montresor's hand",
+                "piled bones along wall"
+              ],
+              "blocking": "Fortunato foreground-right tilted back, drinking; Montresor mid-ground-left, torch up, free hand at his side",
+              "light_source": "Montresor's flambeau, mid-ground left, single warm amber source",
+              "color_anchors": [
+                "Medoc bottle dark green-black",
+                "torch amber",
+                "bone yellow-grey",
+                "motley crimson"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 8,
+              "narrative_beat": "Deeper among walls of bones and casks, Fortunato drains a flagon of De Grave and makes a strange, unrecognized gesture.",
+              "hero_shot": "Medium wide, low-angle — Fortunato laughing, arm thrown up, the empty bottle arcing above his head; Montresor a still silhouette beside him",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Fortunato": "up at his own raised hand, eyes flashing",
+                "Montresor": "fixed on Fortunato's gesturing hand, brow faintly furrowed"
+              },
+              "props_visible": [
+                "empty De Grave flagon mid-arc",
+                "walls of stacked human bones",
+                "wine casks and puncheons",
+                "flambeau"
+              ],
+              "blocking": "Fortunato center-frame, body twisted, arm aloft; Montresor frame-left, two paces back, torch lowered",
+              "light_source": "single flambeau held by Montresor, frame-left, low amber",
+              "color_anchors": [
+                "bone yellow-grey",
+                "torch amber",
+                "motley crimson-and-yellow",
+                "wet stone black"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 9,
+              "narrative_beat": "Fortunato challenges Montresor's claim to the masons; Montresor produces a trowel from beneath his cloak.",
+              "hero_shot": "Medium close-up, slightly low-angle — Montresor's gloved hand drawing back the cloak to reveal a heavy iron trowel; Fortunato recoiling at frame edge",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Montresor": "down at the revealed trowel, faint smile",
+                "Fortunato": "down at the trowel, brow knitting in confused alarm"
+              },
+              "props_visible": [
+                "iron mason's trowel",
+                "Montresor's black cloak parted",
+                "Fortunato's jester sleeve at frame edge",
+                "flambeau glow"
+              ],
+              "blocking": "Montresor center, cloak open; Fortunato frame-right, half a step back, torso recoiling but feet rooted",
+              "light_source": "Fortunato's flambeau off-frame right, side-lighting the trowel",
+              "color_anchors": [
+                "iron grey trowel",
+                "cloak black",
+                "torch amber",
+                "motley crimson"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 10,
+              "narrative_beat": "They reach the deepest crypt and the bone-mounded recess that will be Fortunato's tomb.",
+              "hero_shot": "Wide, eye-level — both men entering the inner crypt, the bone-walled chamber and dark recess opening before them",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Montresor": "ahead at the dark recess, calm",
+                "Fortunato": "ahead at the recess, swaying, peering"
+              },
+              "props_visible": [
+                "three walls lined floor-to-vault with human bones",
+                "mound of thrown-down bones",
+                "dark recess in granite wall",
+                "two iron staples and short chain set in granite",
+                "small pile of building stone and mortar",
+                "trowel partly concealed beneath cloak",
+                "two flambeaux glowing dully"
+              ],
+              "blocking": "Fortunato a step ahead, foreground-center, cap-bells dipped; Montresor half a pace behind frame-left, torch raised",
+              "light_source": "two flambeaux, glowing rather than flaming in the foul air, sullen amber",
+              "color_anchors": [
+                "bone yellow-grey",
+                "granite charcoal",
+                "smouldering torch amber",
+                "motley crimson"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 11,
+              "narrative_beat": "Montresor chains the astonished Fortunato to the granite wall with two iron staples, a short chain, and a padlock.",
+              "hero_shot": "Medium, eye-level, slight Dutch tilt — Montresor closing the padlock at Fortunato's throat; Fortunato wide-eyed, hands hanging slack",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Montresor": "down at the padlock in his gloved hands, intent",
+                "Fortunato": "down at the chain, dawning bewilderment"
+              },
+              "props_visible": [
+                "iron collar and short chain",
+                "two iron staples in granite",
+                "heavy iron padlock",
+                "key in Montresor's free hand",
+                "granite wall behind",
+                "Fortunato's bell-cap askew"
+              ],
+              "blocking": "Fortunato pinned against granite, frame-right; Montresor close in, frame-left, hands at Fortunato's throat",
+              "light_source": "flambeau wedged into bone-pile mid-ground, low sullen amber from below",
+              "color_anchors": [
+                "iron grey chain",
+                "granite charcoal",
+                "motley crimson-and-yellow",
+                "torch amber"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 12,
+              "narrative_beat": "Montresor begins to wall up the niche; the first low moan rises from the recess between tiers of stone.",
+              "hero_shot": "Medium, profile two-shot through the rising wall — Montresor frame-left laying a stone with the trowel, Fortunato frame-right behind the masonry, half-shadowed",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Montresor": "down at the mortar joint, focused",
+                "Fortunato": "out toward Montresor through the gap, dawning horror"
+              },
+              "props_visible": [
+                "trowel in motion",
+                "stack of building stones",
+                "trough of fresh mortar",
+                "first four tiers of new masonry",
+                "iron chain at Fortunato's throat",
+                "scattered bones underfoot"
+              ],
+              "blocking": "Rising stone wall bisects frame; Montresor crouched on the outside left; Fortunato standing chained on the inside right",
+              "light_source": "flambeau planted in the bone-pile, foreground left, low amber",
+              "color_anchors": [
+                "mortar grey",
+                "stone ash",
+                "torch amber",
+                "motley crimson behind the wall"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 13,
+              "narrative_beat": "When the wall is breast-high, Fortunato shrieks; Montresor draws his rapier, then mockingly echoes and outmatches the screams.",
+              "hero_shot": "Medium close-up, low-angle — Montresor on the outside, rapier half-drawn, head tipped back as he answers the screams; faint figure of Fortunato glimpsed beyond the masonry",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Montresor": "upward and into the recess, mouth open in echoed cry",
+                "Fortunato": "outward through the narrowing aperture, screaming"
+              },
+              "props_visible": [
+                "thin steel rapier half-drawn",
+                "torch held aloft",
+                "seven tiers of fresh masonry",
+                "remaining gap in the wall",
+                "iron chain rattling"
+              ],
+              "blocking": "Montresor foreground-right outside the wall; the wall itself dominates frame-center; Fortunato barely lit beyond, frame-left",
+              "light_source": "raised flambeau in Montresor's hand, casting feeble light across the masonry's top",
+              "color_anchors": [
+                "rapier steel cold blue-grey",
+                "torch amber",
+                "stone ash",
+                "blood crimson motley glimpsed beyond"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 14,
+              "narrative_beat": "At midnight, with one stone left, a low laugh comes from inside; Fortunato's broken voice begs to return to the palazzo.",
+              "hero_shot": "Tight close-up on the last small aperture in the wall — Montresor's listening face beyond it, a sliver of shadow within",
+              "visible_characters": [
+                "Montresor",
+                "Fortunato"
+              ],
+              "gaze_map": {
+                "Montresor": "sidelong into the aperture, head tilted to listen",
+                "Fortunato": "from within, eyes glinting at the gap"
+              },
+              "props_visible": [
+                "last open stone aperture",
+                "ten finished tiers of masonry plus partial eleventh",
+                "single remaining stone resting on Montresor's palm",
+                "trowel"
+              ],
+              "blocking": "Aperture centered in frame; Montresor's masked face frame-right just outside; Fortunato's eyes barely catching torchlight frame-left within",
+              "light_source": "flambeau wedged on the bone-pile, foreground low, sullen amber",
+              "color_anchors": [
+                "stone ash",
+                "iron grey trowel",
+                "amber glint in Fortunato's eye",
+                "deep recess black"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 15,
+              "narrative_beat": "Fortunato's last whispered plea goes unanswered; Montresor drops the torch within and forces the final stone into place, rebuilding the bone-rampart.",
+              "hero_shot": "Medium wide, low-angle — Montresor in silhouette setting the final stone, the bone-pile being heaped back against the new masonry",
+              "visible_characters": [
+                "Montresor"
+              ],
+              "gaze_map": {
+                "Montresor": "down and forward at the final mortar joint, blank-faced"
+              },
+              "props_visible": [
+                "final stone seated in mortar",
+                "fresh plaster smear",
+                "rampart of bones being restacked",
+                "Montresor's trowel",
+                "faint amber glow fading from within the niche where the dropped torch lies"
+              ],
+              "blocking": "Montresor foreground-right, crouched, trowel in hand; finished wall fills mid-ground; bone-pile heaped at left, partly restored",
+              "light_source": "fading torchlight from within the sealed niche, leaking through last seam; secondary low oil-lamp on the floor outside",
+              "color_anchors": [
+                "mortar grey",
+                "bone yellow-grey",
+                "dying torch amber",
+                "deep shadow black"
+              ],
+              "brightness_floor": "low"
+            },
+            {
+              "index": 16,
+              "narrative_beat": "Half a century later, the catacombs lie undisturbed; Montresor's whispered Latin closes the confession.",
+              "hero_shot": "Wide, static, low-angle — the bone-rampart rebuilt against the unseen masonry, dust thick, no human figure",
+              "visible_characters": [],
+              "gaze_map": {},
+              "props_visible": [
+                "restored rampart of stacked human bones",
+                "thick grey dust and cobweb",
+                "a single guttering oil lamp on the floor casting one last amber pool",
+                "vault ceiling lost in shadow above"
+              ],
+              "blocking": "Bone rampart centered against rear wall; floor empty; cobwebs strung across foreground; no figures",
+              "light_source": "single nearly-spent oil lamp on the floor, foreground left, low amber",
+              "color_anchors": [
+                "bone yellow-grey",
+                "dust ash grey",
+                "dying lamp amber",
+                "deep shadow black"
+              ],
+              "brightness_floor": "low"
+            }
+          ]
+        },
+        "name": "submit_story_bible",
+        "type": "tool_use"
+      }
+    ],
+    "model": "claude-opus-4-7",
+    "role": "assistant",
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "type": "message",
+    "usage": {
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 2708
+      },
+      "cache_creation_input_tokens": 2708,
+      "cache_read_input_tokens": 0,
+      "inference_geo": "global",
+      "input_tokens": 6868,
+      "output_tokens": 8385,
+      "server_tool_use": null,
+      "service_tier": "standard"
+    },
+    "stop_details": null
+  }
+}

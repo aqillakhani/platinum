@@ -15,6 +15,11 @@ track:
     lighting: "soft diffused, rain-window, steam, dappled forest"
     influences: ["Studio Ghibli (Whisper of the Heart, Only Yesterday)", "Joe Hisaishi visual sensibility"]
     negative_prompt: "action, fast cuts, harsh lighting, neon, horror"
+  # Story bible pre-pass (S8.B). Disabled until per-track prompts are validated.
+  story_bible:
+    enabled: false
+    model: claude-opus-4-7
+    max_tokens: 16000
   image_model:
     backend: flux_dev
     candidates_per_scene: 3
