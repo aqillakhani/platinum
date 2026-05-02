@@ -35,6 +35,37 @@ def cli_project(tmp_path: Path) -> Iterator[Path]:
     yield tmp_path
 
 
+def _minimal_bible(scene_indices: list[int]):  # type: ignore[no-untyped-def]
+    """Return a StoryBible covering the given scene indices.
+
+    Used by keyframes integration tests so the S8.B-prepended StoryBibleStage
+    sees ``story.bible`` already populated and skips via ``is_complete``. The
+    content is intentionally trivial — these tests aren't about bible quality.
+    """
+    from platinum.models.story_bible import BibleScene, StoryBible
+
+    return StoryBible(
+        world_genre_atmosphere="test atmosphere",
+        character_continuity={},
+        environment_continuity={},
+        scenes=[
+            BibleScene(
+                index=i,
+                narrative_beat=f"beat {i}",
+                hero_shot="medium shot",
+                visible_characters=[],
+                gaze_map={},
+                props_visible=[],
+                blocking="centered",
+                light_source="single candle",
+                color_anchors=[],
+                brightness_floor="low",
+            )
+            for i in scene_indices
+        ],
+    )
+
+
 def _seed_adapted_story(project: Path, story_id: str, n_scenes: int = 3) -> Path:
     """Build a Story with N scenes, all visual_prompts populated, visual_prompts COMPLETE."""
     from platinum.models.story import (
@@ -45,6 +76,7 @@ def _seed_adapted_story(project: Path, story_id: str, n_scenes: int = 3) -> Path
         Story,
     )
 
+    indices = list(range(n_scenes))
     s = Story(
         id=story_id,
         track="atmospheric_horror",
@@ -65,7 +97,7 @@ def _seed_adapted_story(project: Path, story_id: str, n_scenes: int = 3) -> Path
                 visual_prompt=f"prompt {i}",
                 negative_prompt="bright daylight",
             )
-            for i in range(n_scenes)
+            for i in indices
         ],
         stages=[
             StageRun(
@@ -75,6 +107,7 @@ def _seed_adapted_story(project: Path, story_id: str, n_scenes: int = 3) -> Path
                 completed_at=datetime(2026, 4, 25),
             )
         ],
+        bible=_minimal_bible(indices),
     )
     story_dir = project / "data" / "stories" / story_id
     story_dir.mkdir(parents=True)
@@ -339,6 +372,7 @@ def test_keyframes_skips_charref_runs_pose_and_keyframe_when_picks_present(
             )
         ],
         characters={"Fortunato": str(fortunato_pick)},
+        bible=_minimal_bible([1]),
     )
     s.save(story_dir / "story.json")
 

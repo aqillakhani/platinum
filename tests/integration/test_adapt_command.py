@@ -85,6 +85,35 @@ def _router_factory() -> Any:
                 "usage": {"input_tokens": 1, "output_tokens": 1,
                           "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
             }
+        if name == "submit_story_bible":
+            # S8.B: synthetic bible covering the 8 scenes scene_breakdown emits.
+            return {
+                "id": "bb", "content": [{"type": "tool_use", "name": name, "input": {
+                    "world_genre_atmosphere": "carnival to catacombs.",
+                    "character_continuity": {
+                        "Montresor": {"face": "lean", "costume": "black cloak",
+                                       "posture": "patient"},
+                    },
+                    "environment_continuity": {"palazzo": "ash-grey wall"},
+                    "scenes": [
+                        {
+                            "index": i,
+                            "narrative_beat": f"beat {i}",
+                            "hero_shot": "medium shot",
+                            "visible_characters": ["Montresor"],
+                            "gaze_map": {"Montresor": "off-camera"},
+                            "props_visible": ["candle"],
+                            "blocking": "centered",
+                            "light_source": "single beeswax candle",
+                            "color_anchors": ["black"],
+                            "brightness_floor": "low",
+                        }
+                        for i in range(1, 9)
+                    ],
+                }}], "stop_reason": "tool_use",
+                "usage": {"input_tokens": 1, "output_tokens": 1,
+                          "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            }
         return {
             "id": "vp", "content": [{"type": "tool_use", "name": name, "input": {
                 "scenes": [{"index": i, "visual_prompt": f"vp{i}", "negative_prompt": f"np{i}"}

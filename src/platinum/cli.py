@@ -44,6 +44,46 @@ def _stub(name: str, session: str) -> None:
     raise typer.Exit(code=1)
 
 
+def _adapt_stages(track_cfg: dict) -> list:
+    """Build the adapt-command stage list for a given track.
+
+    Inserts ``StoryBibleStage`` between ``SceneBreakdownStage`` and
+    ``VisualPromptsStage`` when ``track_cfg.story_bible.enabled`` is true.
+    Tracks without a story_bible block (legacy YAMLs, stub tracks pre-S8.B)
+    fall through to the original three-stage list.
+    """
+    from platinum.pipeline.scene_breakdown import SceneBreakdownStage
+    from platinum.pipeline.story_adapter import StoryAdapterStage
+    from platinum.pipeline.story_bible import StoryBibleStage
+    from platinum.pipeline.visual_prompts import VisualPromptsStage
+
+    stages: list = [StoryAdapterStage(), SceneBreakdownStage()]
+    if track_cfg.get("story_bible", {}).get("enabled", False):
+        stages.append(StoryBibleStage())
+    stages.append(VisualPromptsStage())
+    return stages
+
+
+def _keyframes_phase2_stages(track_cfg: dict) -> list:
+    """Build the keyframes-command phase-2 stage list for a given track.
+
+    Prepends ``StoryBibleStage`` when the track enables it — defensive
+    safety net for stories whose bible was wiped or imported from an older
+    snapshot. ``StoryBibleStage.is_complete`` skips when the bible already
+    covers every scene, so the prepend is essentially free in the normal
+    case where adapt has already run the bible.
+    """
+    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
+    from platinum.pipeline.pose_depth_maps import PoseDepthMapStage
+    from platinum.pipeline.story_bible import StoryBibleStage
+
+    stages: list = []
+    if track_cfg.get("story_bible", {}).get("enabled", False):
+        stages.append(StoryBibleStage())
+    stages.extend([PoseDepthMapStage(), KeyframeGeneratorStage()])
+    return stages
+
+
 # ---------------------------------------------------------------------------
 # Real commands
 # ---------------------------------------------------------------------------
@@ -219,8 +259,6 @@ def adapt(
     from platinum.models.story import ReviewStatus, StageStatus, Story
     from platinum.pipeline.context import PipelineContext
     from platinum.pipeline.orchestrator import Orchestrator
-    from platinum.pipeline.scene_breakdown import SceneBreakdownStage
-    from platinum.pipeline.story_adapter import StoryAdapterStage
     from platinum.pipeline.visual_prompts import VisualPromptsStage
 
     if rerun_rejected and rerun_all_prompts:
@@ -377,11 +415,9 @@ def adapt(
         return
 
     ctx = PipelineContext(config=cfg, logger=logging.getLogger("platinum.adapt"))
-    orchestrator = Orchestrator(stages=[
-        StoryAdapterStage(), SceneBreakdownStage(), VisualPromptsStage(),
-    ])
-
     for s in eligible:
+        track_cfg = cfg.track(s.track)
+        orchestrator = Orchestrator(stages=_adapt_stages(track_cfg))
         console.print(f"[cyan]Adapting {s.id} (track={s.track})...[/cyan]")
         try:
             asyncio.run(orchestrator.run(s, ctx))
@@ -390,6 +426,91 @@ def adapt(
             raise
 
     console.print(f"[green]Adapted {len(eligible)} story candidate(s).[/green]")
+
+
+@app.command()
+def bible(
+    story: str = typer.Argument(..., help="Story id (must have scene_breakdown COMPLETE)."),
+    rerun: bool = typer.Option(
+        False, "--rerun",
+        help="Clear story.bible before running so the bible regenerates from scratch.",
+    ),
+) -> None:
+    """Run the story_bible pre-pass standalone (S8.B).
+
+    Reads the whole story end-to-end and produces a structured directive
+    (world atmosphere + character_continuity + per-scene hero_shot,
+    visible_characters, props, blocking, light_source, brightness_floor)
+    that the visual_prompts rewriter consumes to keep Flux on the
+    specific narrative beat. One Opus 4.7 call per story (~$0.30).
+
+    Preconditions:
+      * Story exists under data/stories/<id>/story.json.
+      * The story's track has story_bible.enabled=true (atmospheric_horror
+        only, until per-track validation lands).
+      * scene_breakdown stage is COMPLETE.
+
+    Use --rerun after a prompt revision to regenerate the bible from
+    scratch.
+    """
+    import logging
+
+    from platinum.models.story import StageStatus, Story
+    from platinum.pipeline.context import PipelineContext
+    from platinum.pipeline.orchestrator import Orchestrator
+    from platinum.pipeline.story_bible import StoryBibleStage
+
+    cfg = Config()
+    story_path = cfg.stories_dir / story / "story.json"
+    if not story_path.exists():
+        console.print(
+            f"[red]Story not found:[/red] {story} (looked in {story_path})"
+        )
+        raise typer.Exit(code=1)
+
+    s = Story.load(story_path)
+
+    track_cfg = cfg.track(s.track)
+    if not track_cfg.get("story_bible", {}).get("enabled", False):
+        console.print(
+            f"[red]Track {s.track!r} has story_bible disabled (or not configured). "
+            f"The bible pre-pass is opt-in per track.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    sb = s.latest_stage_run("scene_breakdown")
+    if sb is None or sb.status != StageStatus.COMPLETE:
+        console.print(
+            f"[red]Story {story} has no completed scene_breakdown; "
+            f"run 'platinum adapt --story {story}' first.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    if rerun:
+        s.bible = None
+        console.print(f"[yellow]--rerun: cleared existing bible for {story}.[/yellow]")
+
+    ctx = PipelineContext(config=cfg, logger=logging.getLogger("platinum.bible"))
+    orchestrator = Orchestrator(stages=[StoryBibleStage()])
+
+    console.print(f"[cyan]Generating story bible for {story}...[/cyan]")
+    try:
+        asyncio.run(orchestrator.run(s, ctx))
+    except Exception as exc:
+        console.print(f"[red]bible failed for {story}: {exc}[/red]")
+        raise
+
+    s.save(story_path)
+    if s.bible is None:
+        console.print(
+            f"[yellow]Bible already complete for {story} (no work needed).[/yellow]"
+        )
+    else:
+        console.print(
+            f"[green]Bible written for {story}: "
+            f"{len(s.bible.scenes)} scenes, "
+            f"{len(s.bible.character_continuity)} characters.[/green]"
+        )
 
 
 @app.command()
@@ -422,7 +543,6 @@ def keyframes(
 
     from platinum.models.story import ReviewStatus, StageStatus, Story
     from platinum.pipeline.context import PipelineContext
-    from platinum.pipeline.keyframe_generator import KeyframeGeneratorStage
     from platinum.pipeline.orchestrator import Orchestrator
 
     cfg = Config()
@@ -445,7 +565,6 @@ def keyframes(
     from pathlib import Path
 
     from platinum.pipeline.character_references import CharacterReferenceStage
-    from platinum.pipeline.pose_depth_maps import PoseDepthMapStage
 
     # Parse --scenes "1,8,16" -> {1, 8, 16}. Values are matched against
     # `scene.index` (which the scene_breakdown stage emits as 1-indexed),
@@ -539,11 +658,12 @@ def keyframes(
     # Phase 2: pose+depth preprocessor pass + the keyframe render itself.
     # Both stages are resume-aware (is_complete returns True when their
     # outputs are already on disk), so re-runs after a partial failure
-    # pick up where the previous run halted.
-    orchestrator = Orchestrator(stages=[
-        PoseDepthMapStage(),
-        KeyframeGeneratorStage(),
-    ])
+    # pick up where the previous run halted. When the track enables the
+    # story_bible pre-pass (S8.B), the bible stage is prepended as a
+    # defensive safety net — it skips cleanly when the bible already
+    # covers every scene.
+    track_cfg = cfg.track(s.track)
+    orchestrator = Orchestrator(stages=_keyframes_phase2_stages(track_cfg))
 
     try:
         asyncio.run(orchestrator.run(s, ctx))
