@@ -185,16 +185,22 @@ async def call(
     db_path: Path,
     recorder: Recorder | None = None,
     client_factory: Callable[[], anthropic.AsyncAnthropic] | None = None,
+    max_tokens: int = 8192,
 ) -> ClaudeResult:
     """One Claude call in tool-use forced mode.
 
     With `recorder=None` (production), talks to the real SDK [Task 8].
     With a recorder injected (tests / fixture-replay), the recorder owns
     the request -> response transformation.
+
+    ``max_tokens`` defaults to 8192 (current visual_prompts ceiling). The
+    story_bible stage (S8.B) overrides to 16000 because the prototype
+    validated 8000 truncated continuity blocks; bumping the default would
+    raise spend on every other call unnecessarily.
     """
     request = {
         "model": model,
-        "max_tokens": 8192,
+        "max_tokens": max_tokens,
         "system": _attach_cache_control(system),
         "messages": messages,
         "tools": [tool],

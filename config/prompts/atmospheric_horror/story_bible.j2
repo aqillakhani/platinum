@@ -1,0 +1,23 @@
+TRACK AESTHETIC
+{{ aesthetic }}
+
+PALETTE
+{{ palette }}
+
+ADAPTED SOURCE (the story we are filming)
+{{ adapted_synopsis }}
+
+NARRATION SCRIPT (in scene order)
+{{ adapted_narration_script }}
+
+PER-SCENE NARRATION BLOCKS (one entry per Story.scene)
+{% for scene in scenes %}
+--- scene {{ scene.index }} ---
+{{ scene.narration_text }}
+
+{% endfor %}
+
+TASK
+Read the whole story above. Then produce the story bible per the system instructions: world_genre_atmosphere, character_continuity (every named character), environment_continuity (every recurring locale), and one scene entry per Story.scene index 1..{{ scenes | length }}.
+
+Submit via the submit_story_bible tool.
