@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -26,6 +27,35 @@ from platinum.utils.prompts import (
 
 logger = logging.getLogger(__name__)
 MODEL = "claude-opus-4-7"
+
+
+# S8.B.6 exposure guardrail. The prototype's scene-1 regression had Sonnet
+# bake "blackness consumes the room... only void" into the visual_prompt
+# while banning "candle, torch, flame, lantern, light source" in the
+# negative_prompt — Flux complied too well and mean RGB collapsed to ~2.0.
+# Two regexes catch this pattern:
+#   * BANNED: lit-anchor words must NOT appear in negative_prompt.
+#   * REQUIRED: at least one positive light word MUST appear in visual_prompt.
+# Word boundaries prevent false matches ("delight" → no, "candlelight" → yes).
+_BANNED_NEGATIVE_RE = re.compile(
+    r"\b(candle\w*|torch\w*|flame\w*|lantern\w*|lamp\w*|fire\w*|light source)\b",
+    re.IGNORECASE,
+)
+_REQUIRED_LIGHT_RE = re.compile(
+    r"\b("
+    r"candle\w*|"
+    r"torch\w*|"
+    r"flame\w*|"
+    r"lantern\w*|"
+    r"lamp\w*|"
+    r"fire\w*|"
+    r"sunlit|sunlight|daylight|moonlit|moonlight|"
+    r"lit|lights?|"
+    r"aglow|glow(?:ing)?|"
+    r"illuminat\w*"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 VISUAL_PROMPTS_TOOL: dict[str, Any] = {
@@ -190,6 +220,25 @@ def _zip_into_scenes(
                     f"visual_prompt for scene {scene.index} missing required "
                     f"character(s) {missing}; expected from bible "
                     f"visible_characters={bs.visible_characters}"
+                )
+        # S8.B.6 exposure guardrail. Only enforced when bible is present —
+        # the bible-required path is the one that ships the directive
+        # "negative_prompt MUST NOT exclude any of: candle, torch, flame,
+        # lantern, light source". Prevents the prototype's scene-1 regression
+        # from corrupting the story.
+        if bs is not None:
+            banned = _BANNED_NEGATIVE_RE.findall(item["negative_prompt"])
+            if banned:
+                raise ClaudeProtocolError(
+                    f"visual_prompts scene {scene.index}: negative_prompt bans "
+                    f"lit anchor(s) {banned}; Flux needs these as light sources. "
+                    f"Remove them from negative_prompt."
+                )
+            if not _REQUIRED_LIGHT_RE.search(item["visual_prompt"]):
+                raise ClaudeProtocolError(
+                    f"visual_prompts scene {scene.index}: visual_prompt has no "
+                    f"named light source. Add at least one of: candle, torch, "
+                    f"lantern, lamp, fire, sun, daylight, moonlight, lit, glow."
                 )
         scene.visual_prompt = item["visual_prompt"]
         scene.negative_prompt = item["negative_prompt"]

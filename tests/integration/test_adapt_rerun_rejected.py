@@ -305,7 +305,10 @@ def test_rerun_rejected_only_applies_new_prompts_to_REJECTED(
     # it reads the JSON and returns the "response" field.
     fixture_path = cli_project / "fixture.json"
     response = _make_visual_prompts_response([
-        {"index": 1, "visual_prompt": "REWRITTEN scene 1 with amber",
+        # Scene 1 is the REJECTED scene the test rewrites; it must include
+        # a lit anchor to satisfy the S8.B.6 exposure guardrail. Scenes 2/3
+        # are scene_filter-skipped so the guardrail never inspects them.
+        {"index": 1, "visual_prompt": "REWRITTEN scene 1 with amber candlelight",
          "negative_prompt": "bright daylight"},
         {"index": 2, "visual_prompt": "WOULD-be-rewritten scene 2",
          "negative_prompt": "bright daylight"},
@@ -342,7 +345,7 @@ def test_rerun_rejected_only_applies_new_prompts_to_REJECTED(
 
     rt = Story.load(story_path)
     # Scene 1 (was REJECTED): visual_prompt rewritten, status now REGENERATE
-    assert rt.scenes[0].visual_prompt == "REWRITTEN scene 1 with amber"
+    assert rt.scenes[0].visual_prompt == "REWRITTEN scene 1 with amber candlelight"
     assert rt.scenes[0].review_status == ReviewStatus.REGENERATE
     assert rt.scenes[0].review_feedback is None
     assert rt.scenes[0].keyframe_path is None

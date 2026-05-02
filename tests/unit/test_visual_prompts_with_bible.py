@@ -231,7 +231,7 @@ async def test_zip_post_condition_passes_when_all_visible_characters_present(
     async def synth(req):
         return _synth_response(2, visual_prompts=[
             "Montresor in candlelit study",  # scene 1 — has Montresor
-            "Montresor and Fortunato meeting in carnival",  # scene 2 — both
+            "Montresor and Fortunato meeting in lantern-lit carnival",  # both
         ])
 
     scenes, _ = await visual_prompts(
@@ -239,7 +239,7 @@ async def test_zip_post_condition_passes_when_all_visible_characters_present(
         prompts_dir=PROMPTS_DIR, db_path=db_path, recorder=synth,
     )
     assert scenes[0].visual_prompt == "Montresor in candlelit study"
-    assert scenes[1].visual_prompt == "Montresor and Fortunato meeting in carnival"
+    assert scenes[1].visual_prompt == "Montresor and Fortunato meeting in lantern-lit carnival"
 
 
 @pytest.mark.asyncio
@@ -263,9 +263,12 @@ async def test_zip_post_condition_raises_when_visible_character_missing(
 
     async def synth(req):
         # Scene 2 drops Fortunato — the rewriter regression we're guarding.
+        # Both prompts include a lit anchor so the exposure guardrail (S8.B.6)
+        # passes and the visible-characters check (S8.B.5) is the actual
+        # failure point this test pins.
         return _synth_response(2, visual_prompts=[
             "Montresor in candlelit study",
-            "Montresor alone with a wine bottle",
+            "Montresor alone with a wine bottle in lamplight",
         ])
 
     with pytest.raises(ClaudeProtocolError, match=r"scene 2.*Fortunato|Fortunato.*scene 2"):
@@ -290,7 +293,7 @@ async def test_zip_post_condition_is_case_insensitive(tmp_path: Path) -> None:
 
     async def synth(req):
         return _synth_response(1, visual_prompts=[
-            "MONTRESOR and FORTUNATO at the carnival",  # all caps
+            "MONTRESOR and FORTUNATO at the lantern-lit carnival",  # all caps
         ])
 
     scenes, _ = await visual_prompts(
