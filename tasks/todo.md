@@ -204,3 +204,76 @@ Quality gates:
 - **Prompt-quality iteration.** Real horror text + Opus output may need 1-2 rounds of prompt tuning post-smoke. Not architectural; a couple of `system.j2` / `adapt.j2` edits.
 - **Bulk options on `platinum adapt`.** No `--limit N` or parallelism. Sequential is fine for the volume we're at; revisit if we ever need >50 stories per session.
 - **Per-track config loader module.** Currently we read track YAML directly via `Config.track(id)`. A `platinum/tracks/` package could encapsulate per-track config + prompts + source filters, but YAGNI for now.
+
+
+---
+
+## Session 8.B — Story bible pre-pass (closure 2026-05-02)
+
+**Goal:** fix the S8.A content-fidelity gap where Flux drifted to generic
+moody horror by inserting a whole-story narrative pre-pass between
+`scene_breakdown` and `visual_prompts`.
+
+**Phases shipped (all on `main`, 6 commits ahead of origin):**
+1. `b77fceb` S8.B.1 — `StoryBible`/`BibleScene` dataclasses + `Story.bible` round-trip with back-compat.
+2. `4fbf7e5` S8.B.2 — `StoryBibleStage` skeleton + tool schema + `_zip_into_story` + j2 seeds.
+3. `24224be` S8.B.3 — track config + recorded Cask bible fixture (~$0.63 Opus); tightened system_bible.j2 (character_continuity exhaustiveness, gaze↔visible consistency, no-wrapper output rule).
+4. `e8f2525` S8.B.4 — `platinum bible <id>` CLI + `_adapt_stages`/`_keyframes_phase2_stages` track-aware composition.
+5. `d843e75` S8.B.5 — visual_prompts.j2 STORY BIBLE CONTEXT block; `_build_request` threads bible; `_zip_into_scenes` visible-characters post-condition; bible-required guard.
+6. `9dcf725` S8.B.6 — exposure guardrail (banned-light-tokens in negative_prompt + required-light-vocab in visual_prompt).
+7. `eaadd1f` S8.B.7 — per-scene-aware `KeyframeGeneratorStage.is_complete` (the prototype's silent-skip bug).
+
+**Test count:** 547 → 652 (+105 net, 27 skipped).
+
+**Cost so far:** ~$0.63 Opus (one bible recording). Plan budgeted ~$0.35
+local; the actual Opus output ran 8385 tokens vs the ~4K estimate, hence
+~2× the local budget. Still under the $5 abort.
+
+**Surprises / lessons:**
+1. **Opus wraps tool_use input under tool name.** First Opus 4.7 call to
+   `submit_story_bible` produced `{"story_bible": {...four required keys...}}`
+   instead of the four keys at top level. Tightened the OUTPUT FORMAT
+   prose in system_bible.j2 (explicit "do NOT nest under a wrapper key")
+   and unwrapped the recorded fixture in place. No defensive unwrap in
+   the production path — fail-fast catches drift, the post-fix prompt
+   prevents recurrence.
+2. **StrictUndefined Jinja errors on missing dict keys.** Tests rendering
+   the visual_prompts template directly (without `_build_request`) fail
+   with `UndefinedError: 'dict object' has no attribute 'bible'` because
+   StrictUndefined is set globally. Fix: defensive `{% if bible is defined and bible %}`
+   and `{% if scene.bible is defined and scene.bible %}` in the template;
+   `_build_request` always sets `scene["bible"]` (None or dict) so direct
+   callers don't need the `is defined` guard.
+3. **Bible-required guard turned 19 pre-S8.B tests red.** The
+   atmospheric_horror track has bible enabled now, so any test that
+   constructs a track-cfg from the real YAML and runs visual_prompts
+   without seeding a bible hits the guard. Remediation: pre-S8.B unit
+   tests force `track_cfg.story_bible.enabled = False` in their helper;
+   integration tests either seed a minimal bible (rerun-rejected,
+   keyframes) or override the track YAML on disk to disable bible
+   (test_adapt_stages.py).
+4. **Opus chose to depict scene 2 as solo Montresor monologue.** The
+   recorded Cask bible put `visible_characters=["Montresor"]` on scene 2
+   (interior monologue about Fortunato). The S8.A prototype memory called
+   this a "character drop", but it's actually a defensible directorial
+   choice — the narration is past-tense reflection. Pinned the iconic
+   scene 9 (trowel reveal) as having both characters in visible_characters
+   so the test catches a real regression there without over-constraining
+   directorial intent.
+5. **`torches?` regex doesn't match "torch".** Initial banned/required
+   regex `\btorches?\b` actually means "torche or torches" — the `?`
+   only quantifies the trailing `s`. Fixed by using `torch(?:es)?`, then
+   widened to `torch\w*` for catch-all (matches torch, torches, torchlit,
+   torchlight). Same correction for candle\w*, flame\w*, lantern\w*,
+   lamp\w*, fire\w*.
+6. **`is_complete` had no `ctx` so couldn't read runtime config.** Plan's
+   pseudocode skipped this detail. Solved by accepting `scene_filter` at
+   `KeyframeGeneratorStage.__init__`; the CLI plumbs it through
+   `_keyframes_phase2_stages(track_cfg, scene_filter=...)` after computing
+   the filter from --scenes / --rerun-regen-requested.
+
+**Not yet done (S8.B.8 + verify):**
+- Memory update (project_s8_B_complete.md, MEMORY.md).
+- `git push origin main` to publish 7 unpushed commits.
+- A6000 verify rental (separate session): pull origin, regenerate Cask
+  bible + visual_prompts + 16 keyframes, eye-check ≥14/16 content-faithful.
