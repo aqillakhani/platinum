@@ -17,6 +17,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from platinum.models.story_bible import StoryBible
+
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -294,6 +296,11 @@ class Story:
     # produced by CharacterReferenceStage. Resolved at render time when
     # a Scene's character_refs[0] needs an IPAdapterFaceID input.
     characters: dict[str, str] = field(default_factory=dict)
+    # S8.B.1: optional whole-story narrative directive produced by the
+    # story_bible pre-pass. Visual_prompts rewriter consumes this when the
+    # track has story_bible.enabled=true. None on stories without a bible
+    # (default; back-compat with all pre-S8.B story.json files).
+    bible: StoryBible | None = None
 
     # --- Serialization ---------------------------------------------------
 
@@ -310,6 +317,7 @@ class Story:
             "review_gates": dict(self.review_gates),
             "stages": [r.to_dict() for r in self.stages],
             "characters": dict(self.characters),
+            "bible": self.bible.to_dict() if self.bible else None,
         }
 
     @classmethod
@@ -326,6 +334,7 @@ class Story:
             review_gates=dict(d.get("review_gates", {})),
             stages=[StageRun.from_dict(r) for r in d.get("stages", [])],
             characters=dict(d.get("characters", {})),
+            bible=StoryBible.from_dict(d["bible"]) if d.get("bible") else None,
         )
 
     # --- File I/O --------------------------------------------------------
