@@ -58,6 +58,38 @@ _REQUIRED_LIGHT_RE = re.compile(
 )
 
 
+class VisualPromptsRewriteViolation(ClaudeProtocolError):
+    """A per-scene post-condition violation that the Stage retry layer
+    can recover from by re-prompting Opus with the violation as
+    ``deviation_feedback`` (S8.B.10).
+
+    Distinct from base ``ClaudeProtocolError``: protocol errors (count
+    mismatch, missing scene index, malformed tool_use) signal a deeper
+    failure that retry can't fix and continue to raise the base class.
+
+    Attributes:
+        scene_index: 1-based scene index that violated.
+        emitted_prompt: The visual_prompt Opus produced for that scene
+            (used as ``current_prompt`` in the retry's deviation_feedback).
+        feedback: Operator-style instruction telling Opus how to correct
+            the violation (rendered into the j2 template's
+            ``DEVIATION FEEDBACK`` block).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        scene_index: int,
+        emitted_prompt: str,
+        feedback: str,
+    ) -> None:
+        super().__init__(message)
+        self.scene_index = scene_index
+        self.emitted_prompt = emitted_prompt
+        self.feedback = feedback
+
+
 VISUAL_PROMPTS_TOOL: dict[str, Any] = {
     "name": "submit_visual_prompts",
     "description": "Submit per-scene Flux visual + negative prompts.",
@@ -216,29 +248,62 @@ def _zip_into_scenes(
                 if name.lower() not in vp_lower
             ]
             if missing:
-                raise ClaudeProtocolError(
+                raise VisualPromptsRewriteViolation(
                     f"visual_prompt for scene {scene.index} missing required "
                     f"character(s) {missing}; expected from bible "
-                    f"visible_characters={bs.visible_characters}"
+                    f"visible_characters={bs.visible_characters}",
+                    scene_index=scene.index,
+                    emitted_prompt=item["visual_prompt"],
+                    feedback=(
+                        f"Your previous visual_prompt was missing required "
+                        f"character(s) {missing}. The story bible's "
+                        f"visible_characters declares {list(bs.visible_characters)} "
+                        f"as required for scene {scene.index}. Re-emit the "
+                        f"visual_prompt naming each character explicitly "
+                        f"(use the character_continuity description from the bible)."
+                    ),
                 )
         # S8.B.6 exposure guardrail. Only enforced when bible is present —
         # the bible-required path is the one that ships the directive
         # "negative_prompt MUST NOT exclude any of: candle, torch, flame,
-        # lantern, light source". Prevents the prototype's scene-1 regression
-        # from corrupting the story.
+        # lantern, lamp, fire, light source" (S8.B.9 expanded). Prevents the
+        # prototype's scene-1 regression from corrupting the story.
         if bs is not None:
             banned = _BANNED_NEGATIVE_RE.findall(item["negative_prompt"])
             if banned:
-                raise ClaudeProtocolError(
+                raise VisualPromptsRewriteViolation(
                     f"visual_prompts scene {scene.index}: negative_prompt bans "
                     f"lit anchor(s) {banned}; Flux needs these as light sources. "
-                    f"Remove them from negative_prompt."
+                    f"Remove them from negative_prompt.",
+                    scene_index=scene.index,
+                    emitted_prompt=item["visual_prompt"],
+                    feedback=(
+                        f"Your previous negative_prompt was: "
+                        f"'{item['negative_prompt']}'. It contained banned "
+                        f"light-anchor word(s) {banned}, which Flux needs as "
+                        f"light sources. Remove ALL forms of {banned} from the "
+                        f"negative_prompt -- these are case-insensitive word "
+                        f"stems, so 'lamps', 'lamplight', 'firelight' etc. all "
+                        f"trip the gate. If you need to forbid a related "
+                        f"concept, phrase it without these stems (e.g. 'bright "
+                        f"daylight' instead of 'no overhead lamp glow')."
+                    ),
                 )
             if not _REQUIRED_LIGHT_RE.search(item["visual_prompt"]):
-                raise ClaudeProtocolError(
+                raise VisualPromptsRewriteViolation(
                     f"visual_prompts scene {scene.index}: visual_prompt has no "
                     f"named light source. Add at least one of: candle, torch, "
-                    f"lantern, lamp, fire, sun, daylight, moonlight, lit, glow."
+                    f"lantern, lamp, fire, sun, daylight, moonlight, lit, glow.",
+                    scene_index=scene.index,
+                    emitted_prompt=item["visual_prompt"],
+                    feedback=(
+                        f"Your previous visual_prompt had no positive light "
+                        f"word. Add at least one named lit anchor: candle, "
+                        f"torch, lantern, lamp, fire, daylight, moonlight, "
+                        f"glow, lit, illuminated. The bible declares scene "
+                        f"{scene.index}'s light_source as: '{bs.light_source}'; "
+                        f"lead with that."
+                    ),
                 )
         scene.visual_prompt = item["visual_prompt"]
         scene.negative_prompt = item["negative_prompt"]
@@ -347,19 +412,47 @@ class VisualPromptsStage(Stage):
         runtime = ctx.config.settings.get("runtime", {})
         scene_filter_raw = runtime.get("scene_filter")
         scene_filter = set(scene_filter_raw) if scene_filter_raw is not None else None
-        deviation_feedback = runtime.get("deviation_feedback")
+        runtime_feedback = runtime.get("deviation_feedback")
         # B3.3: tests / CLI can pin a specific cast via runtime config; None
         # falls through to disk -> auto-extract precedence in visual_prompts().
         characters_override = runtime.get("characters")
-        _, claude_result = await visual_prompts(
-            story=story, track_cfg=track_cfg,
-            prompts_dir=ctx.config.prompts_dir,
-            db_path=ctx.db_path, recorder=recorder,
-            scene_filter=scene_filter,
-            deviation_feedback=deviation_feedback,
-            stories_dir=ctx.config.stories_dir,
-            characters=characters_override,
-        )
+
+        async def _call(deviation_feedback: list | None) -> ClaudeResult:
+            _, result = await visual_prompts(
+                story=story, track_cfg=track_cfg,
+                prompts_dir=ctx.config.prompts_dir,
+                db_path=ctx.db_path, recorder=recorder,
+                scene_filter=scene_filter,
+                deviation_feedback=deviation_feedback,
+                stories_dir=ctx.config.stories_dir,
+                characters=characters_override,
+            )
+            return result
+
+        # S8.B.10 single-retry-with-feedback. Bible-required tracks have
+        # post-condition guardrails on the rewriter response (visible_chars
+        # present, no banned light tokens in negative_prompt, at least one
+        # positive light word in visual_prompt). Opus drifts despite the
+        # j2 directive (S8.B verify saw "lamp" in scene 5, then "flame" in
+        # scene 6 on a clean second attempt). Catch the per-scene
+        # ``VisualPromptsRewriteViolation`` once and re-prompt with the
+        # violation as deviation_feedback so Opus self-corrects without
+        # burning a full operator-driven adapt run. Single-retry only --
+        # a second consecutive violation propagates so operator can
+        # intervene. Plain ``ClaudeProtocolError`` (count mismatch,
+        # missing scene index) is NOT retried -- those signal a deeper
+        # protocol issue retry can't fix.
+        try:
+            claude_result = await _call(runtime_feedback)
+        except VisualPromptsRewriteViolation as exc:
+            retry_feedback = list(runtime_feedback or [])
+            retry_feedback.append({
+                "index": exc.scene_index,
+                "current_prompt": exc.emitted_prompt,
+                "feedback": exc.feedback,
+            })
+            claude_result = await _call(retry_feedback)
+
         return {
             "model": claude_result.usage.model,
             "input_tokens": claude_result.usage.input_tokens,
