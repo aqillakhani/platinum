@@ -369,3 +369,76 @@ async def test_visual_prompts_raises_when_bible_required_but_missing(
             story=story, track_cfg=track_cfg,
             prompts_dir=PROMPTS_DIR, db_path=db_path, recorder=synth,
         )
+
+
+# ---------- max_tokens routing (S8.B verify) ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_visual_prompts_uses_track_cfg_max_tokens_when_present(
+    tmp_path: Path,
+) -> None:
+    """Track yaml may pin a per-track ``visual_prompts.max_tokens`` (mirroring
+    the existing ``story_bible.max_tokens`` knob). When set, the value is
+    forwarded to ``claude.call`` so long bible-aware responses on 16-scene
+    stories don't truncate against the 8192 default ceiling. Discovered
+    during S8.B verify on the 16-scene Cask story: bible-aware visual_prompts
+    response hit exactly 8192 output_tokens and Sonnet returned an empty
+    scenes array."""
+    from platinum.models.db import create_all
+    from platinum.pipeline.visual_prompts import visual_prompts
+
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+    story = _story_with_scenes(2)
+    story.bible = _bible(
+        [1, 2], visible_per_scene={1: ["Montresor"], 2: ["Montresor", "Fortunato"]},
+    )
+
+    track_cfg = _track()
+    track_cfg.setdefault("visual_prompts", {})["max_tokens"] = 16000
+
+    captured: dict = {}
+
+    async def synth(req):
+        captured["max_tokens"] = req["max_tokens"]
+        return _synth_response(2)
+
+    await visual_prompts(
+        story=story, track_cfg=track_cfg,
+        prompts_dir=PROMPTS_DIR, db_path=db_path, recorder=synth,
+    )
+    assert captured["max_tokens"] == 16000
+
+
+@pytest.mark.asyncio
+async def test_visual_prompts_defaults_max_tokens_to_8192_when_absent(
+    tmp_path: Path,
+) -> None:
+    """Back-compat: tracks without a ``visual_prompts.max_tokens`` knob fall
+    through to the historical 8192 ceiling — the rewriter's request size
+    matches every pre-S8.B fixture."""
+    from platinum.models.db import create_all
+    from platinum.pipeline.visual_prompts import visual_prompts
+
+    db_path = tmp_path / "p.db"
+    create_all(db_path)
+    story = _story_with_scenes(2)
+    story.bible = _bible(
+        [1, 2], visible_per_scene={1: ["Montresor"], 2: ["Montresor", "Fortunato"]},
+    )
+
+    track_cfg = _track()
+    track_cfg.pop("visual_prompts", None)
+
+    captured: dict = {}
+
+    async def synth(req):
+        captured["max_tokens"] = req["max_tokens"]
+        return _synth_response(2)
+
+    await visual_prompts(
+        story=story, track_cfg=track_cfg,
+        prompts_dir=PROMPTS_DIR, db_path=db_path, recorder=synth,
+    )
+    assert captured["max_tokens"] == 8192

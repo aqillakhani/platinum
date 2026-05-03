@@ -313,10 +313,19 @@ async def visual_prompts(
         deviation_feedback=deviation_feedback,
         characters=characters,
     )
+    # S8.B.8: bible-aware prompts on full-length stories (16+ scenes) blew past
+    # the 8192 default ceiling on the Cask verify — Opus returned an empty
+    # scenes array because the tool call was truncated mid-flight. Mirror the
+    # story_bible.max_tokens pattern: per-track override with 8192 fallback so
+    # legacy tracks/short stories keep their prior request size.
+    max_tokens = int(
+        track_cfg.get("visual_prompts", {}).get("max_tokens", 8192)
+    )
     result = await claude_call(
         model=MODEL, system=system, messages=messages, tool=VISUAL_PROMPTS_TOOL,
         story_id=story.id, stage="visual_prompts",
         db_path=db_path, recorder=recorder,
+        max_tokens=max_tokens,
     )
     scenes = _zip_into_scenes(
         story.scenes, result.tool_input,

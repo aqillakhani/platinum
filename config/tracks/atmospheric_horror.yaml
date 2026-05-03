@@ -24,6 +24,14 @@ track:
     model: claude-opus-4-7
     max_tokens: 16000
 
+  # Visual_prompts rewriter ceiling. Default in claude.call is 8192, which
+  # truncated the bible-aware response on the 16-scene Cask story (Opus
+  # returned an empty scenes array because the tool call ran out of tokens).
+  # 16000 covers the longest atmospheric_horror stories the Phase 5 backlog
+  # contemplates (~20 scenes max). Discovered S8.B verify (S8.B.8).
+  visual_prompts:
+    max_tokens: 16000
+
   # Visual aesthetic — injected into Claude prompts and Flux prompt prefixes.
   visual:
     aesthetic: "cinematic dark, low-key chiaroscuro lighting, heavy atmosphere, muted desaturated palette with occasional crimson or amber accent, heavy film grain, oil painting quality"
