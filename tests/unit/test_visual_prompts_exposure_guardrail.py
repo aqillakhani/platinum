@@ -231,6 +231,55 @@ async def test_visual_prompt_word_match_uses_boundaries(tmp_path: Path) -> None:
         )
 
 
+# ---------- Spec-vs-impl drift: directive must list every banned stem -----
+
+
+def test_j2_directive_lists_all_banned_negative_stems() -> None:
+    """The visual_prompts.j2 directive listing tokens forbidden in
+    negative_prompt MUST mention every stem the post-condition regex
+    bans. Otherwise Opus is judged on rules it wasn't given.
+
+    Spec drift discovered S8.B verify (S8.B.9): the directive listed
+    candle/torch/flame/lantern/'light source' but the regex also bans
+    lamp\\w* and fire\\w*. Opus respected the directive and emitted
+    "lamp" in scene 5's negative_prompt; the regex rejected the response;
+    the verify run hit ClaudeProtocolError after a $0.87 Opus call.
+    """
+    from platinum.pipeline.visual_prompts import _BANNED_NEGATIVE_RE  # noqa: F401
+    from platinum.utils.prompts import render_template
+
+    bible_ctx = {
+        "world_genre_atmosphere": "x",
+        "character_continuity": {},
+        "environment_continuity": {},
+    }
+    rendered = render_template(
+        prompts_dir=PROMPTS_DIR,
+        track="atmospheric_horror",
+        name="visual_prompts.j2",
+        context={
+            "aesthetic": "a", "palette": "p", "default_negative": "n",
+            "scenes": [], "characters": {}, "deviation_feedback": None,
+            "bible": bible_ctx,
+        },
+    )
+    directive_idx = rendered.find("negative_prompt MUST NOT exclude")
+    assert directive_idx >= 0, (
+        "Directive 'negative_prompt MUST NOT exclude' not found in rendered j2."
+    )
+    directive_line = rendered[directive_idx:directive_idx + 300]
+
+    # Each stem in the regex post-condition must appear in the directive.
+    # Regex bans: candle\\w*|torch\\w*|flame\\w*|lantern\\w*|lamp\\w*|fire\\w*|light source
+    stems = ["candle", "torch", "flame", "lantern", "lamp", "fire", "light source"]
+    missing = [s for s in stems if s not in directive_line.lower()]
+    assert not missing, (
+        f"j2 directive missing banned stems {missing}. Directive: "
+        f"{directive_line!r}. Each stem in _BANNED_NEGATIVE_RE must be "
+        f"explicitly listed so Opus knows what to avoid."
+    )
+
+
 # ---------- Back-compat: skipped when no bible -------------------------
 
 

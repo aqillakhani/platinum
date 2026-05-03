@@ -27,7 +27,7 @@ STORY BIBLE LEAD INSTRUCTIONS (binding):
 - Include EVERY prop in props_visible by name with a strong visual modifier ("brass bells dangling from the cap tip" beats "bell-cap").
 - The light_source must appear in the visual_prompt as the primary lit anchor.
 - brightness_floor is binding: low = chiaroscuro permitted (a face lit, the rest dark); medium = a discernible foreground + a partly-visible environment; high = a fully-lit composition. NEVER write a prompt that bans every light source.
-- The negative_prompt MUST NOT exclude any of: candle, torch, flame, lantern, "light source" — the rewriter's previous failure mode was banning the lit anchors Flux needs.
+- The negative_prompt MUST NOT exclude any of: candle, torch, flame, lantern, lamp, fire, "light source" (case insensitive, all word stems — "lamps", "lamplight", "firelight" all count). The rewriter's previous failure mode was banning the lit anchors Flux needs; the post-condition regex rejects any of these tokens in negative_prompt regardless of qualifier ("no streetlamps" still trips the gate). If you need to forbid a related concept, phrase it without these stems (e.g. "bright daylight" instead of "no overhead lamp glow").
 {% endif %}
 
 CONVENTIONS
