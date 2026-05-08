@@ -291,3 +291,82 @@ async def test_stage_retries_on_missing_character_violation(
     second_user_msg = calls[1]["messages"][0]["content"]
     assert "DEVIATION FEEDBACK" in second_user_msg
     assert "Montresor" in second_user_msg
+
+
+# ---------- Multi-scene violations from one call retry together (S8.C) -------
+
+
+@pytest.mark.asyncio
+async def test_stage_retries_with_all_violations_when_multi_scene_drift(
+    tmp_path: Path, repo_root: Path,
+) -> None:
+    """S8.C regression. When Opus drifts on multiple scenes in the same
+    response (cask story: scene 10 banned "torches" in negative_prompt +
+    scene 7 emitted no light word), the prior single-violation retry only
+    fixed the first detected scene; the second violation surfaced on the
+    retry and propagated as a hard failure. ``_zip_into_scenes`` now packs
+    every per-scene violation into one exception via
+    ``additional_violations``; the Stage feeds them all into a single
+    deviation_feedback list so one retry round can fix every violation
+    Opus emitted."""
+    from platinum.pipeline.visual_prompts import VisualPromptsStage
+
+    calls: list[dict] = []
+
+    async def synth(req: dict) -> dict:
+        calls.append(req)
+        if len(calls) == 1:
+            # Scene 1 emits no light word; scene 2 bans "torch" in neg.
+            # Two independent violations from one Opus call.
+            return _vp_response([
+                ("Montresor in deep shadow, void, blackness everywhere",
+                 "neon, plastic"),
+                ("Montresor in vault, candle on stone",
+                 "bright daylight, torch"),
+            ])
+        # Retry: both clean.
+        return _vp_response([
+            ("Montresor by candlelight, beeswax candle on table",
+             "neon, plastic"),
+            ("Montresor in vault, candle on stone",
+             "bright daylight, anime"),
+        ])
+
+    ctx = _make_bible_context(tmp_path, repo_root, recorder=synth)
+    story = _seeded_story_with_bible()
+    stage = VisualPromptsStage()
+
+    await stage.run(story, ctx)
+
+    assert len(calls) == 2, "exactly one retry covers all violations"
+    second_user_msg = calls[1]["messages"][0]["content"]
+    # The deviation feedback block in the retry's user message must mention
+    # BOTH scene indices -- otherwise Opus only sees one of the two and
+    # the unfixed one will surface again on the retry response.
+    assert "DEVIATION FEEDBACK" in second_user_msg
+    assert "Scene 1" in second_user_msg
+    assert "Scene 2" in second_user_msg
+    # Both scenes finalised cleanly.
+    assert "candle" in (story.scenes[0].visual_prompt or "").lower()
+    assert "torch" not in (story.scenes[1].negative_prompt or "")
+
+
+def test_violation_carries_additional_violations_for_multi_drift() -> None:
+    """The exception type must let _zip_into_scenes attach extras after
+    constructing the primary, so Stage.run can ``all_violations()`` to
+    enumerate them in deviation_feedback order."""
+    from platinum.pipeline.visual_prompts import VisualPromptsRewriteViolation
+
+    primary = VisualPromptsRewriteViolation(
+        "scene 1 missing light",
+        scene_index=1, emitted_prompt="vp1", feedback="add candle",
+    )
+    extra = VisualPromptsRewriteViolation(
+        "scene 2 banned torch",
+        scene_index=2, emitted_prompt="vp2", feedback="remove torch",
+    )
+    primary.additional_violations = [extra]
+    out = primary.all_violations()
+    assert [v.scene_index for v in out] == [1, 2]
+    assert out[0] is primary
+    assert out[1] is extra

@@ -39,6 +39,13 @@ track:
     lighting: "single-source low-key, volumetric fog, candle and oil-lamp ambience"
     influences: ["Guillermo del Toro", "Mike Flanagan", "Hammer Horror"]
     negative_prompt: "bright daylight, saturated, cartoon, anime, plastic, smooth, sterile, flat lighting, modern technology, neon"
+    # S8.C: period anchor + styling tail. The S8.B keyframes scored 4-5/10
+    # because Flux drifted to generic "moody horror" without era-specific
+    # composition cues. These two fields are surfaced in system.j2 and as a
+    # binding directive in visual_prompts.j2 so every produced prompt opens
+    # with the era anchor right after the camera token.
+    period: "1840s Italian Carnevale di Venezia"
+    period_styling: "oil-painting cinematography, 19th century academic art"
 
   # Image generation — Flux.1 Dev locally is default. Flip to "pro_api" if Dev's atmosphere is insufficient.
   image_model:

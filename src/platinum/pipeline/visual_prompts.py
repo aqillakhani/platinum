@@ -74,6 +74,13 @@ class VisualPromptsRewriteViolation(ClaudeProtocolError):
         feedback: Operator-style instruction telling Opus how to correct
             the violation (rendered into the j2 template's
             ``DEVIATION FEEDBACK`` block).
+        additional_violations: Other per-scene violations from the same
+            Opus call (S8.C: when Opus drifts on multiple scenes in one
+            response, single-retry only fixed the first detected one
+            and the next call introduced a new violation elsewhere).
+            ``_zip_into_scenes`` packs every violation into one exception
+            so ``VisualPromptsStage.run`` can feed all of them into
+            ``deviation_feedback`` on the single retry.
     """
 
     def __init__(
@@ -83,11 +90,22 @@ class VisualPromptsRewriteViolation(ClaudeProtocolError):
         scene_index: int,
         emitted_prompt: str,
         feedback: str,
+        additional_violations: list["VisualPromptsRewriteViolation"] | None = None,
     ) -> None:
         super().__init__(message)
         self.scene_index = scene_index
         self.emitted_prompt = emitted_prompt
         self.feedback = feedback
+        self.additional_violations: list[VisualPromptsRewriteViolation] = (
+            list(additional_violations) if additional_violations else []
+        )
+
+    def all_violations(self) -> list["VisualPromptsRewriteViolation"]:
+        """Return every violation from the same Opus call, primary first.
+
+        Convenience for the Stage retry layer so it doesn't have to
+        special-case "primary vs. extras"."""
+        return [self, *self.additional_violations]
 
 
 VISUAL_PROMPTS_TOOL: dict[str, Any] = {
@@ -190,6 +208,12 @@ def _build_request(
                 "aesthetic": track_cfg["visual"]["aesthetic"],
                 "palette": track_cfg["visual"]["palette"],
                 "default_negative": track_cfg["visual"]["negative_prompt"],
+                # S8.C period anchor + styling tail. Empty-string defaults keep
+                # tracks that haven't opted in (and pre-S8.C test fixtures)
+                # rendering cleanly under StrictUndefined -- the j2's period
+                # block is `{% if period %}`-guarded.
+                "period": track_cfg["visual"].get("period", ""),
+                "period_styling": track_cfg["visual"].get("period_styling", ""),
                 "scenes": scenes_ctx,
                 "characters": characters or {},
                 "deviation_feedback": deviation_feedback,
@@ -228,7 +252,15 @@ def _zip_into_scenes(
         {bs.index: bs for bs in bible.scenes} if bible is not None else {}
     )
     by_index = {item["index"]: item for item in raw}
-    out: list[Scene] = []
+
+    # Pass 1: validate every in-scope scene; collect all violations from the
+    # same Opus response so the retry layer can feed them all back at once.
+    # S8.C verify discovered that single-violation raise-on-first masked
+    # multi-scene drift -- the Stage's single-retry path fixed scene 10's
+    # banned-neg, then scene 7's missing-light surfaced on the retry and
+    # propagated as a hard failure. Collect-all-then-raise lets one retry
+    # round address every violation Opus emitted.
+    violations: list[VisualPromptsRewriteViolation] = []
     for scene in story_scenes:
         item = by_index.get(scene.index)
         if item is None:
@@ -237,10 +269,10 @@ def _zip_into_scenes(
             )
         if scene_filter is not None and scene.index not in scene_filter:
             continue
+        bs = bible_by_index.get(scene.index)
         # Bible post-condition: every visible character name (case insensitive)
         # must appear in the rewritten visual_prompt. Catches the prototype's
         # scene-2 character-drop regression before it corrupts the story.
-        bs = bible_by_index.get(scene.index)
         if bs is not None and bs.visible_characters:
             vp_lower = item["visual_prompt"].lower()
             missing = [
@@ -248,7 +280,7 @@ def _zip_into_scenes(
                 if name.lower() not in vp_lower
             ]
             if missing:
-                raise VisualPromptsRewriteViolation(
+                violations.append(VisualPromptsRewriteViolation(
                     f"visual_prompt for scene {scene.index} missing required "
                     f"character(s) {missing}; expected from bible "
                     f"visible_characters={bs.visible_characters}",
@@ -262,8 +294,9 @@ def _zip_into_scenes(
                         f"visual_prompt naming each character explicitly "
                         f"(use the character_continuity description from the bible)."
                     ),
-                )
-        # S8.B.6 exposure guardrail. Only enforced when bible is present —
+                ))
+                continue  # one violation per scene; skip the exposure checks
+        # S8.B.6 exposure guardrail. Only enforced when bible is present --
         # the bible-required path is the one that ships the directive
         # "negative_prompt MUST NOT exclude any of: candle, torch, flame,
         # lantern, lamp, fire, light source" (S8.B.9 expanded). Prevents the
@@ -271,7 +304,7 @@ def _zip_into_scenes(
         if bs is not None:
             banned = _BANNED_NEGATIVE_RE.findall(item["negative_prompt"])
             if banned:
-                raise VisualPromptsRewriteViolation(
+                violations.append(VisualPromptsRewriteViolation(
                     f"visual_prompts scene {scene.index}: negative_prompt bans "
                     f"lit anchor(s) {banned}; Flux needs these as light sources. "
                     f"Remove them from negative_prompt.",
@@ -288,9 +321,10 @@ def _zip_into_scenes(
                         f"concept, phrase it without these stems (e.g. 'bright "
                         f"daylight' instead of 'no overhead lamp glow')."
                     ),
-                )
+                ))
+                continue
             if not _REQUIRED_LIGHT_RE.search(item["visual_prompt"]):
-                raise VisualPromptsRewriteViolation(
+                violations.append(VisualPromptsRewriteViolation(
                     f"visual_prompts scene {scene.index}: visual_prompt has no "
                     f"named light source. Add at least one of: candle, torch, "
                     f"lantern, lamp, fire, sun, daylight, moonlight, lit, glow.",
@@ -304,7 +338,22 @@ def _zip_into_scenes(
                         f"{scene.index}'s light_source as: '{bs.light_source}'; "
                         f"lead with that."
                     ),
-                )
+                ))
+                continue
+
+    if violations:
+        primary = violations[0]
+        primary.additional_violations = violations[1:]
+        raise primary
+
+    # Pass 2: all clean -- mutate scenes in place. This is now safe because
+    # validation has already inspected every in-scope scene; we never leave
+    # the story in a half-applied state.
+    out: list[Scene] = []
+    for scene in story_scenes:
+        item = by_index[scene.index]
+        if scene_filter is not None and scene.index not in scene_filter:
+            continue
         scene.visual_prompt = item["visual_prompt"]
         scene.negative_prompt = item["negative_prompt"]
         # S7.1.B2.3 -- optional composition_notes + character_refs from the new
@@ -429,28 +478,33 @@ class VisualPromptsStage(Stage):
             )
             return result
 
-        # S8.B.10 single-retry-with-feedback. Bible-required tracks have
-        # post-condition guardrails on the rewriter response (visible_chars
-        # present, no banned light tokens in negative_prompt, at least one
-        # positive light word in visual_prompt). Opus drifts despite the
-        # j2 directive (S8.B verify saw "lamp" in scene 5, then "flame" in
-        # scene 6 on a clean second attempt). Catch the per-scene
-        # ``VisualPromptsRewriteViolation`` once and re-prompt with the
-        # violation as deviation_feedback so Opus self-corrects without
-        # burning a full operator-driven adapt run. Single-retry only --
-        # a second consecutive violation propagates so operator can
-        # intervene. Plain ``ClaudeProtocolError`` (count mismatch,
-        # missing scene index) is NOT retried -- those signal a deeper
-        # protocol issue retry can't fix.
+        # S8.B.10 single-retry-with-feedback (S8.C extended to multi-violation).
+        # Bible-required tracks have post-condition guardrails on the rewriter
+        # response (visible_chars present, no banned light tokens in
+        # negative_prompt, at least one positive light word in visual_prompt).
+        # Opus drifts despite the j2 directive: S8.B verify saw "lamp" in
+        # scene 5, then "flame" in scene 6 on a clean second attempt; S8.C
+        # verify (cask, 16 scenes) saw two simultaneous violations -- scene 10
+        # banned "torches" in negative_prompt + scene 7 emitted no light word
+        # in visual_prompt -- and the prior single-violation retry path fixed
+        # only scene 10 before scene 7 surfaced and propagated.
+        # ``_zip_into_scenes`` now packs every per-scene violation from one
+        # Opus call into a single exception via ``additional_violations``.
+        # Catch it, build a deviation_feedback entry per violation, retry
+        # once. Single retry only -- a second response with any violation
+        # propagates so the operator can intervene. Plain
+        # ``ClaudeProtocolError`` (count mismatch, missing scene index) is
+        # NOT retried -- those signal a deeper protocol issue retry can't fix.
         try:
             claude_result = await _call(runtime_feedback)
         except VisualPromptsRewriteViolation as exc:
             retry_feedback = list(runtime_feedback or [])
-            retry_feedback.append({
-                "index": exc.scene_index,
-                "current_prompt": exc.emitted_prompt,
-                "feedback": exc.feedback,
-            })
+            for v in exc.all_violations():
+                retry_feedback.append({
+                    "index": v.scene_index,
+                    "current_prompt": v.emitted_prompt,
+                    "feedback": v.feedback,
+                })
             claude_result = await _call(retry_feedback)
 
         return {

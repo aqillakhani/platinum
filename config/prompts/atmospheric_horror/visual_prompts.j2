@@ -90,6 +90,80 @@ over-loaded dark prompts; mean RGB hits 0-3 and the keyframe is unviewable):
   subject. (Daylight remains a valid negative cue -- "bright daylight"
   excludes a scene type, not a brightness floor.)
 
+LENGTH BUDGET (S8.C, binding -- Flux drops directives past ~600 chars; the
+S8.B verify run produced 1000-1700-char visual_prompts and Flux rendered
+roughly half of each, scoring 4-5/10 in human eye-check):
+- visual_prompt: 350-600 characters total. Hard cap 700. Count whitespace.
+- negative_prompt: 350-500 characters total. Hard cap 600.
+- Front-load priority order: [camera] [period anchor] [pose+subject]
+  [lit anchor] [props x2] [single styling tail].
+- Do NOT inline the FULL bible character_continuity description into every
+  scene. Use the bible's Face/Costume/Posture signatures as a SOURCE; emit
+  a CONDENSED 8-15-word scene-specific reference per visible character
+  (e.g. "Montresor in black wool cloak, gaunt face, neat dark goatee" --
+  not the full 30-word continuity description). Cross-scene face identity
+  is locked downstream by IP-Adapter; the visual_prompt only needs enough
+  to anchor Flux's render of THIS scene.
+{% if period is defined and period %}
+PERIOD ANCHORING (S8.C, binding -- without this Flux drifts to generic
+"moody horror" or modern dress regardless of bible content):
+- The period "{{ period }}" MUST appear in every visual_prompt, immediately
+  AFTER the camera-framing token, in 5-8 words. Verbatim or near-verbatim.
+- Format: "<camera-token>, {{ period }}, <subject> <pose>, <lit anchor>, ..."
+- The single styling tail clause SHOULD lean on the period_styling cue
+  ("{{ period_styling }}") -- you may shorten or pair it with one mood
+  word (e.g. "oil-painting cinematography, dim mood") but the era cue
+  must remain detectable in the tail.
+- Do NOT spell out individual artist names in the prompt body unless the
+  bible's hero_shot or color_anchors explicitly invokes them.
+{% endif %}
+PROP REPETITION (S8.C, binding for small or load-bearing props -- single
+mentions get dropped by Flux):
+- Every prop in the scene's bible.props_visible list MUST appear TWICE in
+  the visual_prompt with DIFFERENT modifiers (not the same noun-adjective
+  pair repeated). The second mention can ride on the lit-anchor or
+  composition clause.
+- GOOD: "iron mason's trowel held flat across his gloved palm... the
+  worn-handled blade catching the torchlight"
+- BAD:  "the trowel" + "the trowel" (same noun, no modifier variation)
+- Exempt: a prop the lighting clause already names (e.g. the torch in
+  "amber torchlight from upper-right") only needs ONE explicit prop
+  mention beyond the lighting clause.
+
+MOOD WORDS DON'T RENDER -- TRANSLATE TO PIXEL CUES (S8.C, binding):
+- The bible's emotional_energy field is an authoring guide, not a Flux
+  directive. Bare mood adjectives ("ominous", "tense", "decadent",
+  "predatory", "sinister", "patient hatred", "dread") render as nothing
+  or as garbled overlay text.
+- Every mood adjective in the visual_prompt MUST be paired with a 2-4
+  word PIXEL cue describing what light, body, or material renders the
+  mood. Examples:
+  - "ominous"   -> "deep shadows pooling in the corners"
+  - "tense"     -> "white knuckles on the goblet, jaw clenched"
+  - "predatory" -> "thin smile, eyes flat and unblinking"
+  - "patient"   -> "still hands, no body motion, set jaw"
+  - "decadent"  -> "rich brocade fabric, gold thread embroidery"
+  - "sinister"  -> "lips curled in a half-smile, eyes lit from below"
+  - "dread"     -> "wide eyes, opened mouth, frozen mid-action"
+- Bare mood adjectives without a paired pixel cue are forbidden.
+
+NEGATIVE PROMPT REQUIREMENTS (S8.C, binding -- 350-500 chars total):
+Every negative_prompt MUST include items from each of these classes:
+- Modernity bans: at least three of {modern clothing, contemporary,
+  21st century, modern hair, plastic, polyester, polished smooth surfaces,
+  modern eyewear, sneakers, jeans}
+- Quality bans: at least three of {smooth airbrushed skin, oversaturated
+  HDR, anime, cartoon, illustration, digital art look, photoshop look}
+- Lighting bans (when scene is candlelit/torchlit): at least two of
+  {full face illumination, flat overhead lighting, ring light look,
+  daylight studio, fluorescent}
+- AI artifact bans: at least one of {extra fingers, mangled hands,
+  asymmetric eyes, blurry face}
+Combine those with at most 4 scene-specific exclusions (e.g. "Fortunato
+smiling broadly", "trowel out of frame"). The exposure-guardrail bans
+(no candle/torch/flame/lantern/lamp/fire/light source word stems) STILL
+APPLY -- those are checked by the post-condition regex.
+
 SCENES
 {% for scene in scenes %}{{ scene.index }}. {{ scene.narration_text }}
 {% if scene.bible is defined and scene.bible %}

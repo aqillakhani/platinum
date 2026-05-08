@@ -16,7 +16,9 @@ VISUAL AESTHETIC
 Palette: {{ track.visual.palette }}
 Lighting: {{ track.visual.lighting }}
 Influences: {{ track.visual.influences | join(", ") }}
-
+{% if track.visual.get('period') %}Period: {{ track.visual.period }}
+Period styling cue: {{ track.visual.period_styling }}
+{% endif %}
 DEFAULT NEGATIVE PROMPT (for Flux): {{ track.visual.negative_prompt }}
 
 GENERAL PRINCIPLES
